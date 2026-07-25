@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>仪表盘 - wow</title>
+    <link rel="stylesheet" href="/css/main.css">
+    <style>
+        /* 仪表盘独有样式 */
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 16px;
+            margin-bottom: 20px;
+        }
+
+        .stat-card {
+            background: #1a2332;
+            border-radius: 8px;
+            padding: 16px 20px;
+            border-left: 4px solid #4CAF50;
+        }
+        .stat-card .label {
+            font-size: 13px;
+            color: #8899aa;
+            margin-bottom: 4px;
+        }
+        .stat-card .value {
+            font-size: 22px;
+            font-weight: 600;
+            color: #eee;
+        }
+        .stat-card .sub {
+            font-size: 13px;
+            color: #667788;
+            margin-top: 4px;
+        }
+        .stat-card.warning { border-left-color: #ff9800; }
+        .stat-card.danger { border-left-color: #f44336; }
+        .stat-card.info { border-left-color: #2196F3; }
+
+        .panel {
+            background: #141e2b;
+            border-radius: 8px;
+            padding: 16px 20px;
+            margin-bottom: 16px;
+        }
+        .panel-title {
+            font-size: 15px;
+            font-weight: 600;
+            color: #ccd;
+            margin-bottom: 12px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid #1a2332;
+        }
+
+        .control-row {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+        .control-row .btn {
+            padding: 8px 20px;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .btn-start { background: #4CAF50; color: white; }
+        .btn-start:hover { background: #43a047; }
+        .btn-stop { background: #f44336; color: white; }
+        .btn-stop:hover { background: #e53935; }
+        .btn-kill { background: #d32f2f; color: white; }
+        .btn-kill:hover { background: #b71c1c; }
+        .btn-restart { background: #ff9800; color: white; }
+        .btn-restart:hover { background: #f57c00; }
+        .btn-script { background: #2196F3; color: white; }
+        .btn-script:hover { background: #1976D2; }
+
+        .script-box {
+            width: 100%;
+            padding: 10px 12px;
+            background: #0d1520;
+            border: 1px solid #1a2332;
+            border-radius: 6px;
+            color: #ccd;
+            font-family: 'Consolas', monospace;
+            font-size: 13px;
+            resize: vertical;
+            min-height: 60px;
+            box-sizing: border-box;
+        }
+
+        .console-box {
+            background: #0a0f18;
+            border-radius: 6px;
+            padding: 12px 16px;
+            height: 280px;
+            overflow-y: auto;
+            font-family: 'Consolas', monospace;
+            font-size: 13px;
+            color: #aabbcc;
+            white-space: pre-wrap;
+            word-break: break-all;
+            line-height: 1.6;
+            border: 1px solid #1a2332;
+        }
+        .console-box .log-error { color: #f44336; }
+        .console-box .log-warn { color: #ff9800; }
+        .console-box .log-info { color: #4CAF50; }
+        .console-box .log-dim { color: #556677; }
+
+        .console-input-row {
+            display: flex;
+            gap: 8px;
+            margin-top: 8px;
+        }
+        .console-input-row input {
+            flex: 1;
+            padding: 8px 12px;
+            background: #0d1520;
+            border: 1px solid #1a2332;
+            border-radius: 6px;
+            color: #ccd;
+            font-family: 'Consolas', monospace;
+            font-size: 13px;
+            outline: none;
+        }
+        .console-input-row input:focus { border-color: #4CAF50; }
+        .console-input-row .btn-send {
+            padding: 8px 16px;
+            background: #2a3a5e;
+            border: none;
+            border-radius: 6px;
+            color: #ccd;
+            cursor: pointer;
+        }
+        .console-input-row .btn-send:hover { background: #3a4a6e; }
+
+        .quick-cmds {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+            margin-top: 6px;
+        }
+        .quick-cmds .cmd-tag {
+            padding: 2px 10px;
+            background: #1a2332;
+            border-radius: 12px;
+            font-size: 12px;
+            color: #8899aa;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .quick-cmds .cmd-tag:hover {
+            background: #2a3a5e;
+            color: #eee;
+        }
+
+        @media (max-width: 900px) {
+            .dashboard-grid {
+                grid-template-columns: 1fr 1fr;
+            }
+        }
+        @media (max-width: 600px) {
+            .dashboard-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="dashboard">
+        <!-- 统计卡片 -->
+        <div class="dashboard-grid" id="stats-grid">
+            <div class="stat-card">
+                <div class="label">💻 CPU 占用</div>
+                <div class="value" id="stat-cpu">--%</div>
+                <div class="sub">实时</div>
+            </div>
+            <div class="stat-card">
+                <div class="label">🧠 内存占用</div>
+                <div class="value" id="stat-mem">-- MB</div>
+                <div class="sub">已分配 / 总量</div>
+            </div>
+            <div class="stat-card">
+                <div class="label">🌐 网络流量</div>
+                <div class="value" id="stat-net">-- / --</div>
+                <div class="sub">入 / 出</div>
+            </div>
+            <div class="stat-card info">
+                <div class="label">⏱️ 运行时间</div>
+                <div class="value" id="stat-uptime">--</div>
+                <div class="sub">已运行</div>
+            </div>
+            <div class="stat-card info">
+                <div class="label">📦 当前方案</div>
+                <div class="value" id="stat-scheme">--</div>
+                <div class="sub">方案名称</div>
+            </div>
+            <div class="stat-card info">
+                <div class="label">👥 玩家数量</div>
+                <div class="value" id="stat-players">0</div>
+                <div class="sub">在线玩家</div>
+            </div>
+        </div>
+
+        <!-- 启动脚本 -->
+        <div class="panel">
+            <div class="panel-title">📜 启动脚本</div>
+            <textarea class="script-box" id="start-script" spellcheck="false"></textarea>
+            <div style="margin-top:8px;">
+                <button class="btn btn-script" id="save-script-btn">💾 保存脚本</button>
+            </div>
+        </div>
+
+        <!-- 服务器控制 -->
+        <div class="panel">
+            <div class="panel-title">🎮 服务器控制</div>
+            <div class="control-row">
+                <button class="btn btn-start" id="btn-start">▶ 启动</button>
+                <button class="btn btn-stop" id="btn-stop">⏹ 停止</button>
+                <button class="btn btn-kill" id="btn-kill">✖ 强制停止</button>
+                <button class="btn btn-restart" id="btn-restart">⟳ 重启</button>
+                <span style="color:#667788;font-size:13px;margin-left:8px;" id="server-status-label">状态: 未知</span>
+            </div>
+        </div>
+
+        <!-- 控制台 -->
+        <div class="panel">
+            <div class="panel-title">🖥️ 控制台</div>
+            <div class="console-box" id="console-box">
+                <span class="log-dim">[系统] 等待服务器日志...</span>
+            </div>
+            <div class="console-input-row">
+                <input type="text" id="console-input" placeholder="输入命令..." spellcheck="false" />
+                <button class="btn-send" id="console-send">发送</button>
+            </div>
+            <div class="quick-cmds" id="quick-cmds">
+                <span class="cmd-tag" data-cmd="list">list</span>
+                <span class="cmd-tag" data-cmd="save-all">save-all</span>
+                <span class="cmd-tag" data-cmd="say 服务器正在运行">say 公告</span>
+                <span class="cmd-tag" data-cmd="stop">stop</span>
+                <span class="cmd-tag" data-cmd="reload">reload</span>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        (function() {
+            // ==================== 状态与引用 ====================
+            const token = sessionStorage.getItem('wow_token');
+            if (!token) {
+                window.location.href = '/login.html';
+                return;
+            }
+
+            const consoleBox = document.getElementById('console-box');
+            const consoleInput = document.getElementById('console-input');
+            const sendBtn = document.getElementById('console-send');
+            const startBtn = document.getElementById('btn-start');
+            const stopBtn = document.getElementById('btn-stop');
+            const killBtn = document.getElementById('btn-kill');
+            const restartBtn = document.getElementById('btn-restart');
+            const statusLabel = document.getElementById('server-status-label');
+            const scriptTextarea = document.getElementById('start-script');
+            const saveScriptBtn = document.getElementById('save-script-btn');
+
+            // 统计元素
+            const statCpu = document.getElementById('stat-cpu');
+            const statMem = document.getElementById('stat-mem');
+            const statNet = document.getElementById('stat-net');
+            const statUptime = document.getElementById('stat-uptime');
+            const statScheme = document.getElementById('stat-scheme');
+            const statPlayers = document.getElementById('stat-players');
+
+            let logPollTimer = null;
+            let statusPollTimer = null;
+            let lastLogSize = 0;
+            let currentScheme = '--';
+
+            // ==================== API 调用封装 ====================
+            async function apiExec(command, args = []) {
+                const resp = await fetch('/api/exec', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + token
+                    },
+                    body: JSON.stringify({ command, args })
+                });
+                if (!resp.ok) {
+                    const err = await resp.json();
+                    throw new Error(err.error || '命令执行失败');
+                }
+                return await resp.json();
+            }
+
+            async function apiGet(path) {
+                const resp = await fetch(path, {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                if (!resp.ok) throw new Error('请求失败');
+                return await resp.json();
+            }
+
+            // ==================== 更新仪表盘 ====================
+            async function updateDashboard() {
+                try {
+                    const status = await apiGet('/api/status');
+                    const running = status.running || false;
+                    statusLabel.textContent = running ? '✅ 运行中' : '⏹️ 已停止';
+                    statusLabel.style.color = running ? '#4CAF50' : '#f44336';
+
+                    // 统计信息（模拟数据，实际由后端提供）
+                    // 此处应调用 /api/metrics 获取真实数据，目前简化
+                    // statCpu.textContent = status.cpu || '0%';
+                    // statMem.textContent = status.memory || '0 MB';
+                    // statUptime.textContent = status.uptime || '0s';
+                    // statPlayers.textContent = status.players || 0;
+
+                    // 获取方案信息
+                    const schemes = await apiGet('/api/schemes');
+                    if (schemes && schemes.current) {
+                        currentScheme = schemes.current;
+                        statScheme.textContent = currentScheme;
+                    }
+
+                    // 获取启动脚本
+                    if (!scriptTextarea.value) {
+                        const config = await apiGet('/api/config/server.start_script');
+                        if (config && config.value) {
+                            scriptTextarea.value = config.value;
+                        } else {
+                            scriptTextarea.value = 'java -Xmx2G -Xms2G -jar server.jar nogui';
+                        }
+                    }
+                } catch (e) {
+                    console.warn('更新仪表盘失败:', e);
+                }
+            }
+
+            // ==================== 日志轮询 ====================
+            async function pollLogs() {
+                try {
+                    const data = await apiGet('/api/logs?lines=50');
+                    if (data.logs && data.logs.length > 0) {
+                        // 只更新新内容（简化实现）
+                        const currentText = consoleBox.innerText;
+                        const newLines = data.logs.join('\n');
+                        if (newLines !== currentText.replace(/^\[系统\].*\n/, '')) {
+                            // 保留最新50行
+                            let lines = data.logs;
+                            if (lines.length > 50) lines = lines.slice(-50);
+                            consoleBox.innerHTML = lines.map(line => {
+                                // 简单着色
+                                let cls = '';
+                                if (line.includes('[ERROR]') || line.includes('error')) cls = 'log-error';
+                                else if (line.includes('[WARN]') || line.includes('warn')) cls = 'log-warn';
+                                else if (line.includes('[INFO]') || line.includes('info')) cls = 'log-info';
+                                return `<span class="${cls}">${escapeHtml(line)}</span>`;
+                            }).join('\n');
+                            consoleBox.scrollTop = consoleBox.scrollHeight;
+                        }
+                    }
+                } catch (e) {
+                    // 静默失败
+                }
+            }
+
+            function escapeHtml(text) {
+                const div = document.createElement('div');
+                div.textContent = text;
+                return div.innerHTML;
+            }
+
+            // ==================== 服务器控制 ====================
+            async function serverAction(action, options = {}) {
+                const cmdMap = {
+                    start: 'server start',
+                    stop: 'server stop',
+                    kill: 'server kill',
+                    restart: 'server restart'
+                };
+                const cmd = cmdMap[action];
+                if (!cmd) return;
+                try {
+                    statusLabel.textContent = '⏳ 执行中...';
+                    const result = await apiExec(cmd, []);
+                    console.log(`${action} 执行结果:`, result);
+                    // 立即刷新状态
+                    setTimeout(updateDashboard, 1000);
+                } catch (e) {
+                    alert(`操作失败: ${e.message}`);
+                    statusLabel.textContent = '❌ 失败';
+                }
+            }
+
+            // ==================== 控制台命令 ====================
+            async function sendConsoleCommand(cmd) {
+                if (!cmd.trim()) return;
+                try {
+                    // 在控制台显示用户输入
+                    consoleBox.innerHTML += `\n> ${escapeHtml(cmd)}`;
+                    consoleBox.scrollTop = consoleBox.scrollHeight;
+                    const result = await apiExec(cmd, []);
+                    // 结果会通过日志轮询显示
+                } catch (e) {
+                    consoleBox.innerHTML += `\n<span class="log-error">错误: ${escapeHtml(e.message)}</span>`;
+                    consoleBox.scrollTop = consoleBox.scrollHeight;
+                }
+                consoleInput.value = '';
+            }
+
+            // ==================== 保存启动脚本 ====================
+            async function saveScript() {
+                const script = scriptTextarea.value.trim();
+                if (!script) {
+                    alert('启动脚本不能为空');
+                    return;
+                }
+                try {
+                    await fetch('/api/config', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': 'Bearer ' + token
+                        },
+                        body: JSON.stringify({ key: 'server.start_script', value: script })
+                    });
+                    alert('启动脚本已保存');
+                } catch (e) {
+                    alert('保存失败: ' + e.message);
+                }
+            }
+
+            // ==================== 事件绑定 ====================
+            startBtn.addEventListener('click', () => serverAction('start'));
+            stopBtn.addEventListener('click', () => serverAction('stop'));
+            killBtn.addEventListener('click', () => serverAction('kill'));
+            restartBtn.addEventListener('click', () => serverAction('restart'));
+            saveScriptBtn.addEventListener('click', saveScript);
+
+            sendBtn.addEventListener('click', () => {
+                sendConsoleCommand(consoleInput.value);
+            });
+            consoleInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    sendConsoleCommand(consoleInput.value);
+                }
+            });
+
+            // 快速命令标签
+            document.querySelectorAll('.cmd-tag').forEach(el => {
+                el.addEventListener('click', () => {
+                    const cmd = el.dataset.cmd;
+                    if (cmd) {
+                        consoleInput.value = cmd;
+                        sendConsoleCommand(cmd);
+                    }
+                });
+            });
+
+            // ==================== 初始化 ====================
+            async function init() {
+                await updateDashboard();
+                // 开始轮询日志
+                logPollTimer = setInterval(pollLogs, 1500);
+                // 开始轮询状态
+                statusPollTimer = setInterval(updateDashboard, 5000);
+                // 立即获取一次日志
+                setTimeout(pollLogs, 500);
+            }
+
+            // 页面卸载时清理定时器
+            window.addEventListener('beforeunload', () => {
+                if (logPollTimer) clearInterval(logPollTimer);
+                if (statusPollTimer) clearInterval(statusPollTimer);
+            });
+
+            // 启动
+            init().catch(e => console.warn('初始化失败:', e));
+        })();
+    </script>
+</body>
+</html>

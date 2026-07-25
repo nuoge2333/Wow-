@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>登录 - wow 服务器管理</title>
+    <link rel="stylesheet" href="/css/main.css">
+    <style>
+        /* 登录页单独样式，尽量简洁 */
+        body {
+            background: #1a1a2e;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            font-family: 'Segoe UI', sans-serif;
+        }
+        .login-container {
+            background: #16213e;
+            padding: 40px;
+            border-radius: 12px;
+            width: 380px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+            color: #eee;
+        }
+        .login-container h1 {
+            text-align: center;
+            color: #4CAF50;
+            margin-bottom: 8px;
+            font-weight: 400;
+        }
+        .login-container .sub {
+            text-align: center;
+            color: #aaa;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+        .form-group {
+            margin-bottom: 18px;
+        }
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-size: 14px;
+            color: #ccc;
+        }
+        .form-group input {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid #2a3a5e;
+            border-radius: 6px;
+            background: #0f1a2f;
+            color: #eee;
+            font-size: 15px;
+            box-sizing: border-box;
+            transition: border 0.2s;
+        }
+        .form-group input:focus {
+            border-color: #4CAF50;
+            outline: none;
+        }
+        .btn-primary {
+            width: 100%;
+            padding: 12px;
+            background: #4CAF50;
+            border: none;
+            border-radius: 6px;
+            color: white;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+        .btn-primary:hover {
+            background: #45a049;
+        }
+        .btn-primary:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+        .error-msg {
+            color: #f44336;
+            font-size: 14px;
+            margin-top: 12px;
+            text-align: center;
+            min-height: 20px;
+        }
+        .success-msg {
+            color: #4CAF50;
+            font-size: 14px;
+            margin-top: 12px;
+            text-align: center;
+            min-height: 20px;
+        }
+        .code-row {
+            display: flex;
+            gap: 10px;
+        }
+        .code-row input {
+            flex: 1;
+        }
+        .code-row .btn-secondary {
+            padding: 10px 16px;
+            background: #2a3a5e;
+            border: none;
+            border-radius: 6px;
+            color: #eee;
+            cursor: pointer;
+            font-size: 14px;
+            white-space: nowrap;
+            transition: background 0.2s;
+        }
+        .code-row .btn-secondary:hover {
+            background: #3a4a6e;
+        }
+        .code-row .btn-secondary:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .footer {
+            text-align: center;
+            margin-top: 20px;
+            font-size: 12px;
+            color: #666;
+        }
+        .footer a {
+            color: #4CAF50;
+            text-decoration: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="login-container">
+        <h1>🎮 wow</h1>
+        <div class="sub">Minecraft 服务器管理面板</div>
+
+        <div id="login-form">
+            <div class="form-group">
+                <label for="email">邮箱地址</label>
+                <input type="email" id="email" placeholder="your@email.com" autocomplete="email" />
+            </div>
+            <div class="form-group">
+                <label for="code">验证码</label>
+                <div class="code-row">
+                    <input type="text" id="code" placeholder="6位数字验证码" maxlength="6" autocomplete="one-time-code" />
+                    <button class="btn-secondary" id="send-code-btn">获取验证码</button>
+                </div>
+            </div>
+            <button class="btn-primary" id="login-btn">登录</button>
+            <div id="message" class="error-msg"></div>
+        </div>
+
+        <div class="footer">
+            验证码将发送到您的邮箱 · <a href="#" id="privacy-link">隐私说明</a>
+        </div>
+    </div>
+
+    <script>
+        (function() {
+            const emailInput = document.getElementById('email');
+            const codeInput = document.getElementById('code');
+            const sendBtn = document.getElementById('send-code-btn');
+            const loginBtn = document.getElementById('login-btn');
+            const msgEl = document.getElementById('message');
+
+            let countdown = 0;
+            let timer = null;
+
+            // 清除消息
+            function setMessage(text, isError = true) {
+                msgEl.textContent = text;
+                msgEl.className = isError ? 'error-msg' : 'success-msg';
+            }
+
+            // 发送验证码
+            async function sendCode() {
+                const email = emailInput.value.trim();
+                if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+                    setMessage('请输入有效的邮箱地址');
+                    return;
+                }
+
+                sendBtn.disabled = true;
+                setMessage('发送中...', false);
+
+                try {
+                    const resp = await fetch('/api/auth/request-code', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ email })
+                    });
+                    const data = await resp.json();
+                    if (resp.ok && data.success) {
+                        setMessage('验证码已发送，请查收邮件', false);
+                        // 倒计时
+                        countdown = 60;
+                        updateSendBtn();
+                        timer = setInterval(() => {
+                            countdown--;
+                            updateSendBtn();
+                            if (countdown <= 0) {
+                                clearInterval(timer);
+                                timer = null;
+                                sendBtn.disabled = false;
+                                sendBtn.textContent = '获取验证码';
+                            }
+                        }, 1000);
+                    } else {
+                        setMessage(data.error || '发送失败，请重试');
+                        sendBtn.disabled = false;
+                    }
+                } catch (e) {
+                    setMessage('网络错误，请检查连接');
+                    sendBtn.disabled = false;
+                }
+            }
+
+            function updateSendBtn() {
+                if (countdown > 0) {
+                    sendBtn.textContent = countdown + 's';
+                } else {
+                    sendBtn.textContent = '获取验证码';
+                }
+            }
+
+            // 登录
+            async function login() {
+                const email = emailInput.value.trim();
+                const code = codeInput.value.trim();
+                if (!email) {
+                    setMessage('请输入邮箱');
+                    return;
+                }
+                if (!code || code.length !== 6) {
+                    setMessage('请输入6位验证码');
+                    return;
+                }
+
+                loginBtn.disabled = true;
+                setMessage('登录中...', false);
+
+                try {
+                    const resp = await fetch('/api/auth/login', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ email, code })
+                    });
+                    const data = await resp.json();
+                    if (resp.ok && data.success && data.token) {
+                        // 保存 token 到 sessionStorage，关闭页面即失效
+                        sessionStorage.setItem('wow_token', data.token);
+                        setMessage('登录成功，正在跳转...', false);
+                        // 跳转到主框架
+                        window.location.href = '/index.html';
+                    } else {
+                        setMessage(data.error || '登录失败，请检查验证码');
+                        loginBtn.disabled = false;
+                    }
+                } catch (e) {
+                    setMessage('网络错误，请检查连接');
+                    loginBtn.disabled = false;
+                }
+            }
+
+            // 事件绑定
+            sendBtn.addEventListener('click', sendCode);
+            loginBtn.addEventListener('click', login);
+
+            // 回车键触发登录
+            codeInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') login();
+            });
+            emailInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    if (codeInput.value.length === 6) login();
+                    else sendCode();
+                }
+            });
+
+            // 如果已经登录，直接跳转到主页
+            const token = sessionStorage.getItem('wow_token');
+            if (token) {
+                // 验证 token 是否有效
+                fetch('/api/auth/verify', {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                }).then(res => res.json())
+                .then(data => {
+                    if (data.valid) {
+                        window.location.href = '/index.html';
+                    } else {
+                        sessionStorage.removeItem('wow_token');
+                    }
+                }).catch(() => {
+                    sessionStorage.removeItem('wow_token');
+                });
+            }
+
+            // 隐私说明（占位）
+            document.getElementById('privacy-link').addEventListener('click', (e) => {
+                e.preventDefault();
+                alert('您的邮箱仅用于本服务器登录验证，不会存储或转发至任何第三方。');
+            });
+        })();
+    </script>
+</body>
+</html>

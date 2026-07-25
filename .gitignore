@@ -1,0 +1,44 @@
+# ====================
+# Node.js 依赖
+# ====================
+node_modules/
+package-lock.json
+
+# ====================
+# 运行时自动生成（体积大）
+# ====================
+core/pool/
+core/jre/
+core/node/
+core/schemes/
+core/down/
+core/wow.yaml
+server/
+
+# ====================
+# 日志与临时文件
+# ====================
+logs/
+*.log
+temp/
+*.tmp
+
+# ====================
+# 编辑器 / 系统
+# ====================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ====================
+# 敏感文件
+# ====================
+.env
+*.pem
+*.key
+*.crt

@@ -1,0 +1,237 @@
+/* ========== 全局重置 ========== */
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+html, body {
+    height: 100%;
+    width: 100%;
+    background: #0f0f1a;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    color: #eee;
+    overflow: hidden;
+}
+
+/* ========== 主框架布局 ========== */
+#app {
+    display: flex;
+    height: 100vh;
+    width: 100vw;
+    background: #1a1a2e;
+}
+
+/* 左侧菜单栏 */
+#menu-frame {
+    width: 220px;
+    min-width: 220px;
+    height: 100%;
+    border: none;
+    background: #1a1a2e;
+}
+
+/* 中间主内容区域 */
+#main-content {
+    flex: 1;
+    height: 100%;
+    background: #0f0f1a;
+    overflow: hidden;
+    position: relative;
+}
+
+#content-frame {
+    width: 100%;
+    height: 100%;
+    border: none;
+    background: #0f0f1a;
+}
+
+/* 右侧通知栏 */
+#notify-frame {
+    width: 280px;
+    min-width: 280px;
+    height: 100%;
+    border: none;
+    background: #1a1a2e;
+    transition: width 0.3s ease, min-width 0.3s ease;
+}
+
+/* 通知栏折叠状态（由父框架控制） */
+#notify-frame.collapsed {
+    width: 40px;
+    min-width: 40px;
+}
+
+/* ========== iframe 滚动条样式（可选） ========== */
+iframe::-webkit-scrollbar {
+    width: 6px;
+}
+iframe::-webkit-scrollbar-track {
+    background: #1a1a2e;
+}
+iframe::-webkit-scrollbar-thumb {
+    background: #2a3a5e;
+    border-radius: 3px;
+}
+iframe::-webkit-scrollbar-thumb:hover {
+    background: #3a4a6e;
+}
+
+/* ========== 通用工具类 ========== */
+.text-center { text-align: center; }
+.text-muted { color: #888; }
+.mt-10 { margin-top: 10px; }
+.mb-10 { margin-bottom: 10px; }
+.mt-20 { margin-top: 20px; }
+.mb-20 { margin-bottom: 20px; }
+
+/* ========== 按钮样式 ========== */
+.btn {
+    display: inline-block;
+    padding: 8px 16px;
+    border: none;
+    border-radius: 4px;
+    font-size: 14px;
+    cursor: pointer;
+    transition: background 0.2s, opacity 0.2s;
+    text-decoration: none;
+    color: white;
+}
+.btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+.btn-primary { background: #4CAF50; }
+.btn-primary:hover:not(:disabled) { background: #45a049; }
+.btn-danger { background: #f44336; }
+.btn-danger:hover:not(:disabled) { background: #d32f2f; }
+.btn-warning { background: #ff9800; }
+.btn-warning:hover:not(:disabled) { background: #fb8c00; }
+.btn-secondary { background: #2a3a5e; }
+.btn-secondary:hover:not(:disabled) { background: #3a4a6e; }
+
+/* ========== 表单 ========== */
+.form-group {
+    margin-bottom: 16px;
+}
+.form-group label {
+    display: block;
+    margin-bottom: 4px;
+    font-size: 14px;
+    color: #ccc;
+}
+.form-group input,
+.form-group select,
+.form-group textarea {
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid #2a3a5e;
+    border-radius: 4px;
+    background: #0f1a2f;
+    color: #eee;
+    font-size: 14px;
+    box-sizing: border-box;
+}
+.form-group input:focus,
+.form-group select:focus,
+.form-group textarea:focus {
+    border-color: #4CAF50;
+    outline: none;
+}
+.form-group textarea {
+    font-family: monospace;
+    resize: vertical;
+    min-height: 60px;
+}
+
+/* ========== 卡片 ========== */
+.card {
+    background: #1a1a2e;
+    border: 1px solid #2a3a5e;
+    border-radius: 8px;
+    padding: 16px 20px;
+    margin-bottom: 16px;
+}
+.card-title {
+    font-size: 16px;
+    font-weight: 600;
+    color: #ddd;
+    margin-bottom: 12px;
+}
+.card .card-body {
+    font-size: 14px;
+    color: #bbb;
+}
+
+/* ========== 表格 ========== */
+.table-wrap {
+    overflow-x: auto;
+}
+table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+}
+table th, table td {
+    padding: 8px 12px;
+    border-bottom: 1px solid #2a3a5e;
+    text-align: left;
+}
+table th {
+    color: #aaa;
+    font-weight: 500;
+}
+table td {
+    color: #ddd;
+}
+
+/* ========== 状态指示器 ========== */
+.status-dot {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    margin-right: 6px;
+}
+.status-dot.green { background: #4CAF50; }
+.status-dot.red { background: #f44336; }
+.status-dot.yellow { background: #ff9800; }
+.status-dot.gray { background: #666; }
+
+/* ========== 响应式（基础） ========== */
+@media (max-width: 1024px) {
+    #menu-frame {
+        width: 180px;
+        min-width: 180px;
+    }
+    #notify-frame {
+        width: 240px;
+        min-width: 240px;
+    }
+}
+@media (max-width: 768px) {
+    #app {
+        flex-direction: column;
+    }
+    #menu-frame {
+        width: 100%;
+        height: 50px;
+        min-height: 50px;
+        min-width: 0;
+    }
+    #main-content {
+        flex: 1;
+        height: calc(100% - 50px - 40px);
+    }
+    #notify-frame {
+        width: 100%;
+        height: 40px;
+        min-height: 40px;
+        min-width: 0;
+    }
+    #notify-frame.collapsed {
+        height: 40px;
+        min-height: 40px;
+    }
+}
