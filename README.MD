@@ -1,6 +1,5 @@
 ## `README.md`
 
-```markdown
 # 🎮 wow~
 
 > Minecraft 服务器管理工具
@@ -187,6 +186,3 @@ MIT 许可证
 - [Mojang](https://www.minecraft.net) —— Minecraft 游戏本身
 
 ---
-
-**祝您使用愉快！🎮**
-```
