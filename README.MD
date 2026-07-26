@@ -45,6 +45,8 @@ chmod +x start.sh
 ./start.sh
 ```
 
+> 💡 **更新**: 运行 `./update.sh` (Linux/macOS) 或 `update.bat` (Windows) 自动升级到最新版
+
 ### 3. 初始化环境
 
 ```bash
