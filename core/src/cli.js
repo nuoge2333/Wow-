@@ -29,7 +29,7 @@ const { startWeb, stopWeb, webStatus } = require('./web_service');
 program
     .name('wow')
     .description('Minecraft 服务器管理工具 - 默认优先，可以修改')
-    .version('3.0.0');
+    .version('3.1.0');
 
 // ==================== init ====================
 
@@ -79,7 +79,7 @@ program
                     name: 'default',
                     author: 'wow Team',
                     version: '1.0.0',
-                    compatible: '3.0.0',
+                    compatible: '3.1.0',
                     description: '默认主题'
                 }, null, 2));
             }
@@ -195,10 +195,10 @@ modCmd
     .command('list')
     .description('列出已安装模组')
     .option('--loader <loader>', '过滤加载器')
-    .option('--version <version>', '过滤版本')
+    .option('-v, --mc-version <version>', '过滤版本')
     .action((options) => {
         const modManager = new ModManager();
-        const mods = modManager.listMods(options.loader, options.version);
+        const mods = modManager.listMods(options.loader, options.mcVersion);
         if (mods.length === 0) {
             console.log('未安装模组');
             return;
@@ -221,11 +221,11 @@ modCmd
     .command('sync')
     .description('从 pool 同步模组到当前方案')
     .option('--loader <loader>', '加载器')
-    .option('--version <version>', '版本')
+    .option('-v, --mc-version <version>', '版本')
     .action((options) => {
         const modManager = new ModManager();
         const loader = options.loader || 'forge';
-        const version = options.version || '1.20.1';
+        const version = options.mcVersion || '1.20.1';
         modManager.syncFromPool(loader, version);
     });
 
@@ -236,7 +236,7 @@ const schemeCmd = program.command('scheme').description('方案管理');
 schemeCmd
     .command('create <name>')
     .description('创建新方案')
-    .option('--version <version>', 'Minecraft 版本 (默认: 1.20.1)')
+    .option('-v, --mc-version <version>', 'Minecraft 版本 (默认: 1.20.1)')
     .option('--loader <loader>', '模组加载器 (forge/fabric/neoforge/quilt)')
     .option('--type <type>', '核心类型 (vanilla/forge/mohist/catserver/paper)')
     .option('--build <number>', '构建号（仅 Mohist 需要）')
@@ -244,7 +244,7 @@ schemeCmd
         const schemeManager = new SchemeManager();
         try {
             await schemeManager.create(name, {
-                version: options.version || '1.20.1',
+                version: options.mcVersion || '1.20.1',
                 loader: options.loader || 'forge',
                 type: options.type || 'vanilla',
                 build: options.build
@@ -443,13 +443,13 @@ packCmd
 packCmd
     .command('generate <name>')
     .description('生成客户端整合包')
-    .option('--version <version>', 'Minecraft 版本')
+    .option('-v, --mc-version <version>', 'Minecraft 版本')
     .option('--loader <loader>', '模组加载器 (forge/fabric)')
     .option('--output <path>', '输出目录')
     .action(async (name, options) => {
         const pack = new PackGenerator();
         try {
-            await pack.generate(name, options);
+            await pack.generate(name, { ...options, version: options.mcVersion });
         } catch (e) {
             console.error(`❌ 生成失败: ${e.message}`);
         }
@@ -662,6 +662,183 @@ mailCmd
             console.error(`❌ 发送失败: ${result.error}`);
         }
         updateMailRateLimit();
+    });
+
+// ==================== menu (V3.1 新增) ====================
+
+program
+    .command('m [num]')
+    .description('交互式菜单模式（不带参数进入菜单，带数字直接跳转）')
+    .action(async (num) => {
+        const { showMainMenu, dispatchMenu } = require('./interactive');
+
+        const options = {
+            serverManager: new ServerManager(),
+            installer: new Installer(),
+            modManager: new ModManager(),
+            schemeManager: new SchemeManager(),
+            themeManager: new ThemeManager(),
+            packGenerator: new PackGenerator(),
+            logHandler: new LogHandler(),
+            config,
+            utils
+        };
+
+        if (num) {
+            // 直接跳转：wow m 1
+            await dispatchMenu(num, options);
+        } else {
+            // 进入交互式菜单
+            await showMainMenu(options);
+        }
+    });
+
+// ==================== config mods (V3.1 新增) ====================
+
+const configModsCmd = configCmd.command('mods').description('模组配置管理 (config/ 目录)');
+
+configModsCmd
+    .command('list')
+    .description('列出 config/ 下所有配置文件')
+    .option('--format <ext>', '过滤格式 (json/toml/yaml/cfg/properties)')
+    .action((options) => {
+        const configEditor = require('./config_editor');
+        const serverDir = utils.getServerDir();
+        const files = configEditor.getConfigFiles(serverDir, options.format);
+
+        if (files.length === 0) {
+            console.log('config 目录下没有配置文件');
+            return;
+        }
+
+        console.log(`配置文件 (${files.length}):`);
+        for (const f of files) {
+            const sizeStr = utils.formatFileSize(f.size);
+            console.log(`  ${sizeStr.padStart(8)} | ${f.ext.padEnd(6)} | ${f.relPath}`);
+        }
+    });
+
+configModsCmd
+    .command('view <file>')
+    .description('查看指定配置文件内容')
+    .action((file) => {
+        const configEditor = require('./config_editor');
+        const serverDir = utils.getServerDir();
+        const configDir = path.join(serverDir, 'config');
+
+        // 支持相对路径或文件名查找
+        let filePath = path.join(configDir, file);
+        if (!fs.existsSync(filePath)) {
+            // 模糊匹配
+            const files = configEditor.getConfigFiles(serverDir);
+            const match = files.find(f => f.relPath === file || f.name === file || f.relPath.includes(file));
+            if (match) {
+                filePath = match.fullPath;
+            } else {
+                console.error(`❌ 文件不存在: ${file}`);
+                return;
+            }
+        }
+
+        const result = configEditor.readConfig(filePath);
+        if (!result.success) {
+            console.error(`❌ 读取失败: ${result.error}`);
+            return;
+        }
+
+        const relPath = path.relative(configDir, filePath);
+        console.log(`\n${'═'.repeat(60)}`);
+        console.log(`文件: ${relPath} (${result.ext})`);
+        if (result.warning) console.log(`⚠ ${result.warning}`);
+        console.log('═'.repeat(60));
+        if (typeof result.data === 'object') {
+            console.log(JSON.stringify(result.data, null, 2));
+        } else {
+            console.log(result.data);
+        }
+    });
+
+configModsCmd
+    .command('get <file> <key>')
+    .description('读取配置文件中的嵌套键值（点号分隔，如 general.enable）')
+    .action((file, key) => {
+        const configEditor = require('./config_editor');
+        const serverDir = utils.getServerDir();
+        const configDir = path.join(serverDir, 'config');
+        let filePath = path.join(configDir, file);
+        if (!fs.existsSync(filePath)) {
+            const files = configEditor.getConfigFiles(serverDir);
+            const match = files.find(f => f.relPath === file || f.name === file || f.relPath.includes(file));
+            if (match) filePath = match.fullPath;
+            else {
+                console.error(`❌ 文件不存在: ${file}`);
+                return;
+            }
+        }
+
+        const result = configEditor.getConfigValue(filePath, key);
+        if (result.success) {
+            console.log(`${key} = ${JSON.stringify(result.value)}`);
+        } else {
+            console.error(`❌ ${result.error}`);
+        }
+    });
+
+configModsCmd
+    .command('set <file> <key> <value>')
+    .description('设置配置文件中的嵌套键值（自动备份）')
+    .action((file, key, value) => {
+        const configEditor = require('./config_editor');
+        const serverDir = utils.getServerDir();
+        const configDir = path.join(serverDir, 'config');
+        let filePath = path.join(configDir, file);
+        if (!fs.existsSync(filePath)) {
+            const files = configEditor.getConfigFiles(serverDir);
+            const match = files.find(f => f.relPath === file || f.name === file || f.relPath.includes(file));
+            if (match) filePath = match.fullPath;
+            else {
+                console.error(`❌ 文件不存在: ${file}`);
+                return;
+            }
+        }
+
+        const result = configEditor.setConfigValue(filePath, key, value);
+        if (result.success) {
+            console.log(`✅ ${key} = ${value}`);
+            if (result.backupPath) console.log(`   备份: ${result.backupPath}`);
+        } else {
+            console.error(`❌ ${result.error}`);
+        }
+    });
+
+// ==================== config server 增强 (V3.1) ====================
+
+configCmd
+    .command('server-list')
+    .description('分类列出所有 server.properties 属性')
+    .action(() => {
+        const ServerProperties = require('./config').ServerProperties;
+        const props = new ServerProperties(utils.getServerDir());
+        props.listAll();
+    });
+
+configCmd
+    .command('server-quick')
+    .description('server.properties 快速设置向导')
+    .action(async () => {
+        const ServerProperties = require('./config').ServerProperties;
+        const props = new ServerProperties(utils.getServerDir());
+        await props.quickSet();
+    });
+
+configCmd
+    .command('server-reset <key>')
+    .description('重置 server.properties 属性为默认值')
+    .action((key) => {
+        const ServerProperties = require('./config').ServerProperties;
+        const props = new ServerProperties(utils.getServerDir());
+        const result = props.reset(key);
+        console.log(`✅ ${result.key} 已重置为 ${result.value}`);
     });
 
 // ==================== 解析执行 ====================

@@ -78,6 +78,7 @@ wow web start
 
 | 类别 | 命令 |
 |------|------|
+| 交互式菜单 | `m [1-14]` |
 | 服务器管理 | `server start/stop/kill/restart/status` |
 | 方案管理 (模板模式) | `scheme create/list/switch/delete/info/status/edit/pull/prune/register` |
 | 模组管理 | `mod remove/list/toggle/sync` |
@@ -87,6 +88,8 @@ wow web start
 | Web 面板 | `web start/stop/status` |
 | 日志与 AI | `logs tail/analyze/report` |
 | 配置管理 | `config wow/server/white` |
+| 模组配置 (V3.1) | `config mods list/view/get/set` |
+| server.properties (V3.1) | `config server-list/server-quick/server-reset` |
 | 邮件 | `mail test/send-code/crash` |
 | 工具 | `down/install/pool stats/prune` |
 

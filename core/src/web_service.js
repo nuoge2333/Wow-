@@ -24,6 +24,10 @@ let ioServer = null;
 let isRunning = false;
 let logTailProcess = null;
 
+// PID 文件路径（跨进程状态持久化）
+const WEB_PID_FILE = path.join(__dirname, '../.web.pid');
+const WEB_PORT_FILE = path.join(__dirname, '../.web.port');
+
 // ==================== 认证相关 ====================
 
 // 内存中的验证码存储: { email: { code, expires } }
@@ -404,6 +408,12 @@ function startWeb(options = {}) {
         console.log(`Web 服务已启动: http://${host}:${port}`);
         console.log(`  主题: ${theme}`);
         console.log(`  静态目录: ${webDir}`);
+
+        // 写��� PID 文件和端口文件（跨进程状态）
+        try {
+            fs.writeFileSync(WEB_PID_FILE, String(process.pid), 'utf8');
+            fs.writeFileSync(WEB_PORT_FILE, String(port), 'utf8');
+        } catch (e) {}
     });
 
     // 保存服务器实例以便停止
@@ -425,8 +435,30 @@ function startWeb(options = {}) {
 
 /**
  * 停止 Web 服务
+ * 支持跨进程：优先通过 PID 文件杀进程，兼容同进程内存模式
  */
 function stopWeb() {
+    // 方式 1：通过 PID 文件停止（跨进程兼容）
+    if (fs.existsSync(WEB_PID_FILE)) {
+        try {
+            const pid = parseInt(fs.readFileSync(WEB_PID_FILE, 'utf8').trim());
+            if (pid && pid > 0) {
+                try {
+                    process.kill(pid, 'SIGTERM');
+                    console.log(`Web 服务已停止 (PID: ${pid})`);
+                } catch (e) {
+                    // 进程已不存在，清理文件
+                    console.log('Web 服务进程已不存在，清理残留文件');
+                }
+            }
+        } catch (e) {}
+        // 清理文件
+        try { fs.unlinkSync(WEB_PID_FILE); } catch (e) {}
+        try { fs.unlinkSync(WEB_PORT_FILE); } catch (e) {}
+        return;
+    }
+
+    // 方式 2：同进程内存模式（fallback）
     if (!isRunning || !httpServer) {
         console.log('Web 服务未运行');
         return;
@@ -454,9 +486,32 @@ function stopWeb() {
 }
 
 /**
- * 获取 Web 服务状态
+ * 获取 Web 服务状态（支持跨进程）
  */
 function webStatus() {
+    // 先检查 PID 文件
+    if (fs.existsSync(WEB_PID_FILE)) {
+        try {
+            const pid = parseInt(fs.readFileSync(WEB_PID_FILE, 'utf8').trim());
+            if (pid && pid > 0) {
+                try {
+                    process.kill(pid, 0); // 仅检测进程是否存在
+                    const port = fs.existsSync(WEB_PORT_FILE) ?
+                        fs.readFileSync(WEB_PORT_FILE, 'utf8').trim() :
+                        config.getConfig('web.port', 8080);
+                    const host = config.getConfig('web.host', '127.0.0.1');
+                    console.log(`Web 服务运行中: http://${host}:${port} (PID: ${pid})`);
+                    return { running: true, host, port, pid };
+                } catch (e) {
+                    // 进程不存在，清理文件
+                    try { fs.unlinkSync(WEB_PID_FILE); } catch (e) {}
+                    try { fs.unlinkSync(WEB_PORT_FILE); } catch (e) {}
+                }
+            }
+        } catch (e) {}
+    }
+
+    // fallback: 同进程内存模式
     if (isRunning && httpServer) {
         const addr = httpServer.address();
         const port = addr ? addr.port : config.getConfig('web.port', 8080);
@@ -464,10 +519,10 @@ function webStatus() {
         console.log(`Web 服务运行中: http://${host}:${port}`);
         console.log(`  已连接客户端: ${wsClients.length}`);
         return { running: true, host, port, clients: wsClients.length };
-    } else {
-        console.log('Web 服务未运行');
-        return { running: false };
     }
+
+    console.log('Web 服务未运行');
+    return { running: false };
 }
 
 /**
