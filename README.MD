@@ -184,5 +184,5 @@ MIT 许可证
 - [BMCLAPI2](https://bmclapi2.bangbang93.com) —— 国内 Minecraft 下载镜像
 - [authlib-injector](https://authlib-injector.yushi.moe) —— 外置登录支持
 - [Mojang](https://www.minecraft.net) —— Minecraft 游戏本身
-
+> *Minecraft 是 Mojang AB 的注册商标。 本项目未经 Mojang 或 Microsoft 批准，也不与 Mojang 或 Microsoft 关联。*
 ---
