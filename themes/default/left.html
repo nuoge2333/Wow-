@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>菜单栏</title>
+    <link rel="stylesheet" href="/css/main.css">
+    <style>
+        /* 左侧菜单专用样式 */
+        body {
+            margin: 0;
+            padding: 0;
+            background: #1a1a2e;
+            color: #ccc;
+            font-family: 'Segoe UI', sans-serif;
+            height: 100vh;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+        .menu-header {
+            padding: 20px 16px 12px;
+            border-bottom: 1px solid #2a3a5e;
+        }
+        .menu-header h2 {
+            margin: 0;
+            font-size: 18px;
+            font-weight: 400;
+            color: #4CAF50;
+        }
+        .menu-header .sub {
+            font-size: 12px;
+            color: #666;
+            margin-top: 4px;
+        }
+        .menu-list {
+            flex: 1;
+            padding: 12px 0;
+            overflow-y: auto;
+        }
+        .menu-item {
+            display: block;
+            padding: 10px 20px;
+            color: #aaa;
+            text-decoration: none;
+            font-size: 14px;
+            cursor: pointer;
+            transition: background 0.2s, color 0.2s;
+            border-left: 3px solid transparent;
+        }
+        .menu-item:hover {
+            background: #2a3a5e;
+            color: #fff;
+        }
+        .menu-item.active {
+            background: #2a3a5e;
+            color: #fff;
+            border-left-color: #4CAF50;
+        }
+        .menu-item .icon {
+            margin-right: 10px;
+            display: inline-block;
+            width: 20px;
+            text-align: center;
+        }
+        .menu-footer {
+            padding: 12px 16px;
+            border-top: 1px solid #2a3a5e;
+            font-size: 12px;
+            color: #555;
+            text-align: center;
+        }
+        .menu-footer .logout {
+            color: #f44336;
+            cursor: pointer;
+            text-decoration: underline;
+        }
+        .menu-footer .logout:hover {
+            color: #ff7961;
+        }
+    </style>
+</head>
+<body>
+    <div class="menu-header">
+        <h2>🎮 wow</h2>
+        <div class="sub">服务器管理</div>
+    </div>
+
+    <nav class="menu-list">
+        <a class="menu-item active" data-page="dashboard">
+            <span class="icon">📊</span> 仪表盘
+        </a>
+        <a class="menu-item" data-page="scheme">
+            <span class="icon">📦</span> 方案管理
+        </a>
+        <a class="menu-item" data-page="file">
+            <span class="icon">📁</span> 文件管理
+        </a>
+        <a class="menu-item" data-page="down">
+            <span class="icon">⬇️</span> 下载中心
+        </a>
+        <a class="menu-item" data-page="tool">
+            <span class="icon">🛠️</span> 工具箱
+        </a>
+        <a class="menu-item" data-page="set">
+            <span class="icon">⚙️</span> 设置
+        </a>
+    </nav>
+
+    <div class="menu-footer">
+        <span class="logout" id="logout-btn">退出登录</span>
+    </div>
+
+    <script>
+        (function() {
+            // 菜单点击切换
+            const items = document.querySelectorAll('.menu-item');
+            const currentPage = sessionStorage.getItem('currentPage') || 'dashboard';
+
+            // 设置激活状态
+            items.forEach(item => {
+                const page = item.dataset.page;
+                if (page === currentPage) {
+                    item.classList.add('active');
+                } else {
+                    item.classList.remove('active');
+                }
+            });
+
+            // 点击切换
+            items.forEach(item => {
+                item.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    const page = this.dataset.page;
+                    // 更新激活状态
+                    items.forEach(i => i.classList.remove('active'));
+                    this.classList.add('active');
+                    // 存储当前页面
+                    sessionStorage.setItem('currentPage', page);
+                    // 通知父框架切换
+                    if (window.parent) {
+                        window.parent.postMessage({ type: 'navigate', page: page }, '*');
+                    }
+                });
+            });
+
+            // 退出登录
+            document.getElementById('logout-btn').addEventListener('click', function() {
+                if (confirm('确定要退出登录吗？')) {
+                    sessionStorage.removeItem('wow_token');
+                    // 跳转到登录页
+                    window.parent.location.href = '/login.html';
+                }
+            });
+        })();
+    </script>
+</body>
+</html>

@@ -1,0 +1,10 @@
+# 强制 LF 换行符（避免 Windows CRLF 污染 shell 脚本）
+*.sh text eol=lf
+*.bat text eol=crlf
+*.js text eol=lf
+*.json text eol=lf
+*.html text eol=lf
+*.css text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf

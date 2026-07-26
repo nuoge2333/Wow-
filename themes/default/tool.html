@@ -1,0 +1,721 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>工具 - wow</title>
+    <link rel="stylesheet" href="/css/main.css">
+    <style>
+        .tool-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+        .tool-card {
+            background: #141e2b;
+            border-radius: 8px;
+            padding: 20px;
+            border: 1px solid #1a2332;
+            transition: border-color 0.2s;
+        }
+        .tool-card:hover {
+            border-color: #2a3a5e;
+        }
+        .tool-card .title {
+            font-size: 16px;
+            font-weight: 600;
+            color: #ccd;
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .tool-card .title .badge {
+            font-size: 12px;
+            font-weight: 400;
+            color: #667788;
+            background: #0f1a2f;
+            padding: 0 8px;
+            border-radius: 4px;
+        }
+        .tool-card .desc {
+            color: #8899aa;
+            font-size: 13px;
+            margin-bottom: 14px;
+        }
+        .tool-card .status-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 12px;
+            background: #0f1a2f;
+            border-radius: 6px;
+            margin-bottom: 12px;
+            font-size: 13px;
+            color: #8899aa;
+        }
+        .tool-card .status-row .value {
+            color: #ccd;
+        }
+        .tool-card .status-row .value.green { color: #4CAF50; }
+        .tool-card .status-row .value.red { color: #f44336; }
+        .tool-card .status-row .value.yellow { color: #ff9800; }
+
+        .tool-card .btn-group {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin-top: 8px;
+        }
+        .tool-card .btn {
+            padding: 8px 20px;
+            border: none;
+            border-radius: 6px;
+            font-size: 13px;
+            cursor: pointer;
+            transition: background 0.2s;
+            color: white;
+        }
+        .btn-primary { background: #2196F3; }
+        .btn-primary:hover { background: #1976D2; }
+        .btn-success { background: #4CAF50; }
+        .btn-success:hover { background: #388E3C; }
+        .btn-warning { background: #ff9800; }
+        .btn-warning:hover { background: #f57c00; }
+        .btn-danger { background: #f44336; }
+        .btn-danger:hover { background: #d32f2f; }
+        .btn-secondary { background: #37474f; color: #ccd; }
+        .btn-secondary:hover { background: #455a64; }
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .file-upload-area {
+            border: 2px dashed #1a2332;
+            border-radius: 6px;
+            padding: 20px;
+            text-align: center;
+            color: #667788;
+            cursor: pointer;
+            transition: border-color 0.2s, background 0.2s;
+            margin-bottom: 12px;
+        }
+        .file-upload-area:hover {
+            border-color: #4CAF50;
+            background: #0f1a2f;
+        }
+        .file-upload-area.dragover {
+            border-color: #4CAF50;
+            background: #1a2332;
+        }
+        .file-upload-area input[type="file"] {
+            display: none;
+        }
+        .file-upload-area .icon {
+            font-size: 32px;
+            display: block;
+            margin-bottom: 4px;
+        }
+
+        .log-preview {
+            background: #0a0f18;
+            border-radius: 6px;
+            padding: 10px 14px;
+            height: 100px;
+            overflow-y: auto;
+            font-family: 'Consolas', monospace;
+            font-size: 12px;
+            color: #aabbcc;
+            white-space: pre-wrap;
+            word-break: break-all;
+            line-height: 1.5;
+            border: 1px solid #1a2332;
+            margin-bottom: 10px;
+        }
+
+        .mail-config-table {
+            width: 100%;
+            font-size: 13px;
+            border-collapse: collapse;
+        }
+        .mail-config-table td {
+            padding: 4px 0;
+            color: #8899aa;
+        }
+        .mail-config-table td:last-child {
+            color: #ccd;
+            text-align: right;
+        }
+        .mail-config-table .null-value {
+            color: #556677;
+            font-style: italic;
+        }
+
+        .toast {
+            position: fixed;
+            bottom: 30px;
+            right: 30px;
+            background: #16213e;
+            border-left: 4px solid #4CAF50;
+            padding: 12px 20px;
+            border-radius: 6px;
+            color: #ccd;
+            font-size: 14px;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+            z-index: 2000;
+            opacity: 0;
+            transform: translateY(20px);
+            transition: all 0.3s ease;
+            pointer-events: none;
+        }
+        .toast.show {
+            opacity: 1;
+            transform: translateY(0);
+            pointer-events: auto;
+        }
+        .toast.error { border-left-color: #f44336; }
+        .toast.success { border-left-color: #4CAF50; }
+        .toast.warning { border-left-color: #ff9800; }
+
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.7);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+        .modal-overlay.active { display: flex; }
+        .modal {
+            background: #16213e;
+            border-radius: 12px;
+            padding: 28px 32px;
+            width: 480px;
+            max-width: 94vw;
+            max-height: 80vh;
+            overflow-y: auto;
+            color: #ccd;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+        }
+        .modal h3 {
+            margin-top: 0;
+            margin-bottom: 16px;
+            color: #eee;
+            font-weight: 400;
+        }
+        .modal .form-group {
+            margin-bottom: 14px;
+        }
+        .modal .form-group label {
+            display: block;
+            font-size: 13px;
+            color: #8899aa;
+            margin-bottom: 4px;
+        }
+        .modal .form-group input,
+        .modal .form-group textarea {
+            width: 100%;
+            padding: 8px 12px;
+            background: #0f1a2f;
+            border: 1px solid #1a2332;
+            border-radius: 6px;
+            color: #ccd;
+            font-size: 14px;
+            box-sizing: border-box;
+            outline: none;
+        }
+        .modal .form-group input:focus,
+        .modal .form-group textarea:focus {
+            border-color: #4CAF50;
+        }
+        .modal .btn-row {
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+            margin-top: 20px;
+        }
+        .modal .btn-row .btn {
+            padding: 8px 24px;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .btn-modal-confirm { background: #4CAF50; color: white; }
+        .btn-modal-confirm:hover { background: #43a047; }
+        .btn-modal-cancel { background: #37474f; color: #ccd; }
+        .btn-modal-cancel:hover { background: #455a64; }
+
+        .progress-bar {
+            height: 4px;
+            background: #1a2332;
+            border-radius: 2px;
+            overflow: hidden;
+            margin-top: 8px;
+            display: none;
+        }
+        .progress-bar .fill {
+            height: 100%;
+            width: 0%;
+            background: #4CAF50;
+            border-radius: 2px;
+            transition: width 0.3s;
+        }
+
+        @media (max-width: 900px) {
+            .tool-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="tool-page">
+        <h2 style="color:#ccd;font-weight:400;margin-bottom:20px;">🛠️ 工具</h2>
+
+        <div class="tool-grid">
+            <!-- ===== AI 日志分析 ===== -->
+            <div class="tool-card">
+                <div class="title">
+                    🤖 AI 日志分析
+                    <span class="badge">需要 API Key</span>
+                </div>
+                <div class="desc">使用 AI 分析服务器日志，识别错误并给出解决建议。</div>
+                <div class="log-preview" id="log-preview">加载日志中...</div>
+                <div class="status-row">
+                    <span>AI 状态</span>
+                    <span class="value" id="ai-status">未配置</span>
+                </div>
+                <div class="btn-group">
+                    <button class="btn btn-primary" id="analyze-log-btn">🔍 分析日志</button>
+                    <button class="btn btn-secondary" id="refresh-log-btn">🔄 刷新预览</button>
+                </div>
+                <div class="progress-bar" id="ai-progress"><div class="fill" id="ai-progress-fill"></div></div>
+            </div>
+
+            <!-- ===== 压缩包处理 ===== -->
+            <div class="tool-card">
+                <div class="title">
+                    📦 压缩包处理
+                    <span class="badge">ZIP / TAR</span>
+                </div>
+                <div class="desc">上传压缩包解压，或打包指定目录为压缩包。</div>
+                <div class="file-upload-area" id="upload-area">
+                    <span class="icon">📁</span>
+                    <div>点击或拖拽上传压缩包</div>
+                    <div style="font-size:12px;color:#556677;">支持 .zip, .tar.gz, .tgz</div>
+                    <input type="file" id="file-input" accept=".zip,.tar.gz,.tgz" />
+                </div>
+                <div class="status-row">
+                    <span>当前操作</span>
+                    <span class="value" id="compress-status">就绪</span>
+                </div>
+                <div class="btn-group">
+                    <button class="btn btn-success" id="extract-btn">📂 解压到当前方案</button>
+                    <button class="btn btn-warning" id="pack-btn">📦 打包当前方案</button>
+                </div>
+                <div class="progress-bar" id="compress-progress"><div class="fill" id="compress-progress-fill"></div></div>
+            </div>
+        </div>
+
+        <!-- ===== 邮件设置 ===== -->
+        <div class="tool-card" style="grid-column: 1 / -1;">
+            <div class="title">
+                📧 邮件设置
+                <span class="badge">SMTP</span>
+            </div>
+            <div class="desc">配置 SMTP 用于发送验证码、崩溃报告和日志摘要。</div>
+            <table class="mail-config-table">
+                <tr><td>SMTP 主机</td><td id="mail-host" class="null-value">未配置</td></tr>
+                <tr><td>SMTP 端口</td><td id="mail-port" class="null-value">未配置</td></tr>
+                <tr><td>发件人邮箱</td><td id="mail-from" class="null-value">未配置</td></tr>
+                <tr><td>管理员邮箱</td><td id="mail-admin" class="null-value">未配置</td></tr>
+                <tr><td>状态</td><td id="mail-status" class="value yellow">未测试</td></tr>
+            </table>
+            <div class="btn-group">
+                <button class="btn btn-primary" id="test-mail-btn">📨 测试发送</button>
+                <button class="btn btn-secondary" id="go-mail-settings">⚙️ 去设置</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 模态框（用于显示分析结果） -->
+    <div class="modal-overlay" id="result-modal">
+        <div class="modal">
+            <h3 id="result-title">📋 分析结果</h3>
+            <div id="result-body" style="white-space:pre-wrap;font-size:14px;line-height:1.6;max-height:300px;overflow-y:auto;color:#ccd;"></div>
+            <div class="btn-row">
+                <button class="btn btn-modal-cancel" id="result-close">关闭</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast -->
+    <div class="toast" id="toast"></div>
+
+    <script>
+        (function() {
+            const token = sessionStorage.getItem('wow_token');
+            if (!token) {
+                window.location.href = '/login.html';
+                return;
+            }
+
+            // ==================== DOM ====================
+            const logPreview = document.getElementById('log-preview');
+            const aiStatus = document.getElementById('ai-status');
+            const analyzeBtn = document.getElementById('analyze-log-btn');
+            const refreshLogBtn = document.getElementById('refresh-log-btn');
+            const aiProgress = document.getElementById('ai-progress');
+            const aiProgressFill = document.getElementById('ai-progress-fill');
+
+            const uploadArea = document.getElementById('upload-area');
+            const fileInput = document.getElementById('file-input');
+            const compressStatus = document.getElementById('compress-status');
+            const extractBtn = document.getElementById('extract-btn');
+            const packBtn = document.getElementById('pack-btn');
+            const compressProgress = document.getElementById('compress-progress');
+            const compressProgressFill = document.getElementById('compress-progress-fill');
+
+            const mailHost = document.getElementById('mail-host');
+            const mailPort = document.getElementById('mail-port');
+            const mailFrom = document.getElementById('mail-from');
+            const mailAdmin = document.getElementById('mail-admin');
+            const mailStatus = document.getElementById('mail-status');
+            const testMailBtn = document.getElementById('test-mail-btn');
+            const goMailSettings = document.getElementById('go-mail-settings');
+
+            const resultModal = document.getElementById('result-modal');
+            const resultTitle = document.getElementById('result-title');
+            const resultBody = document.getElementById('result-body');
+            const resultClose = document.getElementById('result-close');
+
+            const toastEl = document.getElementById('toast');
+
+            // ==================== Toast ====================
+            let toastTimer = null;
+            function showToast(message, type = 'info', duration = 4000) {
+                toastEl.textContent = message;
+                toastEl.className = 'toast ' + type;
+                void toastEl.offsetWidth;
+                toastEl.classList.add('show');
+                if (toastTimer) clearTimeout(toastTimer);
+                toastTimer = setTimeout(() => {
+                    toastEl.classList.remove('show');
+                }, duration);
+            }
+
+            // ==================== API ====================
+            async function apiGet(path) {
+                const resp = await fetch(path, {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                if (!resp.ok) {
+                    const err = await resp.json();
+                    throw new Error(err.error || '请求失败');
+                }
+                return await resp.json();
+            }
+
+            async function apiPost(path, body) {
+                const resp = await fetch(path, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + token
+                    },
+                    body: JSON.stringify(body)
+                });
+                if (!resp.ok) {
+                    const err = await resp.json();
+                    throw new Error(err.error || '请求失败');
+                }
+                return await resp.json();
+            }
+
+            async function apiExec(command, args = []) {
+                const resp = await fetch('/api/exec', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + token
+                    },
+                    body: JSON.stringify({ command, args })
+                });
+                if (!resp.ok) {
+                    const err = await resp.json();
+                    throw new Error(err.error || '命令执行失败');
+                }
+                return await resp.json();
+            }
+
+            // ==================== AI 日志分析 ====================
+            async function loadLogPreview() {
+                try {
+                    const data = await apiGet('/api/logs?lines=20');
+                    if (data.logs && data.logs.length > 0) {
+                        logPreview.textContent = data.logs.join('\n');
+                    } else {
+                        logPreview.textContent = '日志为空或不存在';
+                    }
+                } catch (e) {
+                    logPreview.textContent = '无法加载日志: ' + e.message;
+                }
+            }
+
+            async function updateAIStatus() {
+                try {
+                    const config = await apiGet('/api/config/ai.api_key');
+                    const hasKey = config && config.value && config.value.length > 0;
+                    aiStatus.textContent = hasKey ? '✅ 已配置' : '❌ 未配置';
+                    aiStatus.className = 'value ' + (hasKey ? 'green' : 'red');
+                    return hasKey;
+                } catch (e) {
+                    aiStatus.textContent = '❌ 未知';
+                    return false;
+                }
+            }
+
+            async function analyzeLog() {
+                const hasKey = await updateAIStatus();
+                if (!hasKey) {
+                    showToast('请先在设置页面配置 AI API Key', 'warning');
+                    return;
+                }
+
+                analyzeBtn.disabled = true;
+                aiProgress.style.display = 'block';
+                aiProgressFill.style.width = '0%';
+
+                try {
+                    // 使用 API 执行 logs analyze 命令
+                    const result = await apiExec('logs analyze');
+                    // 由于命令输出是文本，我们获取报告内容
+                    // 可以通过 /api/logs/analysis 获取最近一次分析结果
+                    const analysis = await apiGet('/api/logs/analysis');
+                    if (analysis && analysis.result) {
+                        showResult('📋 AI 分析结果', analysis.result);
+                    } else {
+                        // 直接显示命令输出
+                        showResult('📋 AI 分析结果', result.output || '分析完成，但未获取到详细结果。');
+                    }
+                } catch (e) {
+                    showToast('分析失败: ' + e.message, 'error');
+                } finally {
+                    analyzeBtn.disabled = false;
+                    aiProgress.style.display = 'none';
+                    aiProgressFill.style.width = '0%';
+                }
+            }
+
+            function showResult(title, content) {
+                resultTitle.textContent = title;
+                resultBody.textContent = content || '无内容';
+                resultModal.classList.add('active');
+            }
+
+            // ==================== 压缩包处理 ====================
+            let selectedFile = null;
+
+            uploadArea.addEventListener('click', () => fileInput.click());
+            uploadArea.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                uploadArea.classList.add('dragover');
+            });
+            uploadArea.addEventListener('dragleave', () => {
+                uploadArea.classList.remove('dragover');
+            });
+            uploadArea.addEventListener('drop', (e) => {
+                e.preventDefault();
+                uploadArea.classList.remove('dragover');
+                if (e.dataTransfer.files.length > 0) {
+                    fileInput.files = e.dataTransfer.files;
+                    handleFileSelect(e.dataTransfer.files[0]);
+                }
+            });
+            fileInput.addEventListener('change', () => {
+                if (fileInput.files.length > 0) {
+                    handleFileSelect(fileInput.files[0]);
+                }
+            });
+
+            function handleFileSelect(file) {
+                const ext = file.name.split('.').pop().toLowerCase();
+                if (!['zip', 'gz', 'tgz'].includes(ext) && !file.name.endsWith('.tar.gz')) {
+                    showToast('不支持的文件格式，请上传 .zip, .tar.gz 或 .tgz', 'warning');
+                    fileInput.value = '';
+                    return;
+                }
+                selectedFile = file;
+                compressStatus.textContent = '已选择: ' + file.name;
+                compressStatus.style.color = '#4CAF50';
+            }
+
+            async function extractArchive() {
+                if (!selectedFile) {
+                    showToast('请先上传一个压缩包', 'warning');
+                    return;
+                }
+
+                extractBtn.disabled = true;
+                compressProgress.style.display = 'block';
+                compressProgressFill.style.width = '0%';
+                compressStatus.textContent = '上传中...';
+
+                try {
+                    // 上传文件到服务器
+                    const formData = new FormData();
+                    formData.append('file', selectedFile);
+                    const uploadResp = await fetch('/api/upload', {
+                        method: 'POST',
+                        headers: { 'Authorization': 'Bearer ' + token },
+                        body: formData
+                    });
+                    if (!uploadResp.ok) throw new Error('上传失败');
+                    const uploadData = await uploadResp.json();
+                    const filePath = uploadData.path;
+
+                    // 执行解压命令
+                    compressStatus.textContent = '解压中...';
+                    compressProgressFill.style.width = '50%';
+                    const result = await apiExec(`install ${filePath} -o ./`);
+                    compressProgressFill.style.width = '100%';
+                    compressStatus.textContent = '✅ 解压完成';
+                    showToast('解压完成', 'success');
+                    selectedFile = null;
+                    fileInput.value = '';
+                    uploadArea.querySelector('div:not(.icon)').textContent = '点击或拖拽上传压缩包';
+                } catch (e) {
+                    compressStatus.textContent = '❌ 失败';
+                    showToast('解压失败: ' + e.message, 'error');
+                } finally {
+                    extractBtn.disabled = false;
+                    setTimeout(() => {
+                        compressProgress.style.display = 'none';
+                        compressProgressFill.style.width = '0%';
+                    }, 2000);
+                }
+            }
+
+            async function packCurrentScheme() {
+                packBtn.disabled = true;
+                compressProgress.style.display = 'block';
+                compressProgressFill.style.width = '0%';
+                compressStatus.textContent = '打包中...';
+
+                try {
+                    // 执行 pack 命令
+                    const name = prompt('请输入打包名称（不含扩展名）:', 'scheme_backup');
+                    if (!name) {
+                        compressStatus.textContent = '已取消';
+                        packBtn.disabled = false;
+                        return;
+                    }
+                    compressProgressFill.style.width = '30%';
+                    const result = await apiExec(`pack generate ${name}`);
+                    compressProgressFill.style.width = '100%';
+                    compressStatus.textContent = '✅ 打包完成';
+                    showToast(`打包完成: ${name}.zip`, 'success');
+                } catch (e) {
+                    compressStatus.textContent = '❌ 失败';
+                    showToast('打包失败: ' + e.message, 'error');
+                } finally {
+                    packBtn.disabled = false;
+                    setTimeout(() => {
+                        compressProgress.style.display = 'none';
+                        compressProgressFill.style.width = '0%';
+                    }, 2000);
+                }
+            }
+
+            // ==================== 邮件管理 ====================
+            async function loadMailConfig() {
+                try {
+                    const config = await apiGet('/api/config/mail');
+                    if (config && config.value) {
+                        const mail = config.value;
+                        mailHost.textContent = mail.smtp?.host || '未配置';
+                        mailHost.className = mail.smtp?.host ? 'value' : 'null-value';
+                        mailPort.textContent = mail.smtp?.port || '未配置';
+                        mailPort.className = mail.smtp?.port ? 'value' : 'null-value';
+                        mailFrom.textContent = mail.smtp?.from || '未配置';
+                        mailFrom.className = mail.smtp?.from ? 'value' : 'null-value';
+                        mailAdmin.textContent = mail.admin_email || '未配置';
+                        mailAdmin.className = mail.admin_email ? 'value' : 'null-value';
+
+                        const configured = mail.smtp?.host && mail.smtp?.user && mail.smtp?.pass && mail.admin_email;
+                        mailStatus.textContent = configured ? '✅ 已配置' : '❌ 未完整配置';
+                        mailStatus.className = 'value ' + (configured ? 'green' : 'red');
+                    } else {
+                        mailHost.textContent = '未配置';
+                        mailHost.className = 'null-value';
+                        mailPort.textContent = '未配置';
+                        mailPort.className = 'null-value';
+                        mailFrom.textContent = '未配置';
+                        mailFrom.className = 'null-value';
+                        mailAdmin.textContent = '未配置';
+                        mailAdmin.className = 'null-value';
+                        mailStatus.textContent = '❌ 未配置';
+                        mailStatus.className = 'value red';
+                    }
+                } catch (e) {
+                    console.warn('加载邮件配置失败:', e);
+                }
+            }
+
+            async function testMail() {
+                testMailBtn.disabled = true;
+                try {
+                    const result = await apiExec('mail test');
+                    showToast('测试邮件已发送，请检查管理员邮箱', 'success');
+                } catch (e) {
+                    showToast('测试失败: ' + e.message, 'error');
+                } finally {
+                    testMailBtn.disabled = false;
+                }
+            }
+
+            // ==================== 事件绑定 ====================
+            analyzeBtn.addEventListener('click', analyzeLog);
+            refreshLogBtn.addEventListener('click', loadLogPreview);
+            extractBtn.addEventListener('click', extractArchive);
+            packBtn.addEventListener('click', packCurrentScheme);
+            testMailBtn.addEventListener('click', testMail);
+            goMailSettings.addEventListener('click', () => {
+                // 发送消息到父框架，跳转到设置页面
+                window.parent.postMessage({ type: 'navigate', page: 'set' }, '*');
+            });
+
+            resultClose.addEventListener('click', () => {
+                resultModal.classList.remove('active');
+            });
+            resultModal.addEventListener('click', (e) => {
+                if (e.target === resultModal) resultModal.classList.remove('active');
+            });
+
+            // ==================== 初始化 ====================
+            async function init() {
+                await loadLogPreview();
+                await updateAIStatus();
+                await loadMailConfig();
+            }
+
+            init();
+
+            // 监听来自父框架的消息
+            window.addEventListener('message', (e) => {
+                if (e.origin !== window.location.origin) return;
+                if (e.data.type === 'refresh-tools') {
+                    loadLogPreview();
+                    updateAIStatus();
+                    loadMailConfig();
+                }
+            });
+        })();
+    </script>
+</body>
+</html>

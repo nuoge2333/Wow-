@@ -1,0 +1,765 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>下载管理 - wow</title>
+    <link rel="stylesheet" href="/css/main.css">
+    <style>
+        .page-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+            gap: 12px;
+        }
+        .page-header h2 {
+            margin: 0;
+            color: #ccd;
+            font-weight: 400;
+        }
+
+        .tab-bar {
+            display: flex;
+            gap: 4px;
+            margin-bottom: 20px;
+            background: #141e2b;
+            border-radius: 8px;
+            padding: 4px;
+            overflow-x: auto;
+        }
+        .tab-btn {
+            padding: 8px 20px;
+            border: none;
+            background: transparent;
+            color: #8899aa;
+            font-size: 14px;
+            cursor: pointer;
+            border-radius: 6px;
+            transition: all 0.2s;
+            white-space: nowrap;
+        }
+        .tab-btn:hover {
+            color: #ccd;
+            background: #1a2332;
+        }
+        .tab-btn.active {
+            background: #4CAF50;
+            color: white;
+        }
+
+        .tab-content {
+            display: none;
+            animation: fadeIn 0.2s ease;
+        }
+        .tab-content.active {
+            display: block;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0.5; transform: translateY(6px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .search-bar {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 16px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+        .search-bar input {
+            flex: 1;
+            padding: 8px 14px;
+            background: #0f1a2f;
+            border: 1px solid #1a2332;
+            border-radius: 6px;
+            color: #ccd;
+            font-size: 14px;
+            outline: none;
+            min-width: 180px;
+        }
+        .search-bar input:focus {
+            border-color: #4CAF50;
+        }
+        .search-bar select {
+            padding: 8px 12px;
+            background: #0f1a2f;
+            border: 1px solid #1a2332;
+            border-radius: 6px;
+            color: #ccd;
+            font-size: 14px;
+            outline: none;
+            cursor: pointer;
+        }
+        .search-bar select:focus {
+            border-color: #4CAF50;
+        }
+        .search-bar .btn-search {
+            padding: 8px 24px;
+            background: #2196F3;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .search-bar .btn-search:hover {
+            background: #1976D2;
+        }
+        .search-bar .btn-search:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .result-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            max-height: 520px;
+            overflow-y: auto;
+        }
+        .result-item {
+            background: #141e2b;
+            border-radius: 6px;
+            padding: 12px 16px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            transition: background 0.2s;
+            border-left: 3px solid transparent;
+        }
+        .result-item:hover {
+            background: #1a2332;
+        }
+        .result-item .info {
+            flex: 1;
+        }
+        .result-item .info .name {
+            color: #ccd;
+            font-size: 14px;
+            font-weight: 500;
+        }
+        .result-item .info .meta {
+            color: #667788;
+            font-size: 12px;
+            margin-top: 2px;
+        }
+        .result-item .info .meta .tag {
+            display: inline-block;
+            background: #1a2332;
+            padding: 0 8px;
+            border-radius: 4px;
+            margin-right: 6px;
+            color: #8899aa;
+            font-size: 11px;
+        }
+        .result-item .actions {
+            display: flex;
+            gap: 6px;
+            flex-shrink: 0;
+            margin-left: 12px;
+        }
+        .result-item .actions .btn-sm {
+            padding: 4px 14px;
+            border: none;
+            border-radius: 4px;
+            font-size: 12px;
+            cursor: pointer;
+            transition: background 0.2s;
+            color: white;
+        }
+        .btn-sm.download { background: #4CAF50; }
+        .btn-sm.download:hover { background: #388E3C; }
+        .btn-sm.info { background: #2196F3; }
+        .btn-sm.info:hover { background: #1976D2; }
+        .btn-sm.deps { background: #ff9800; }
+        .btn-sm.deps:hover { background: #f57c00; }
+        .btn-sm.core { background: #9C27B0; }
+        .btn-sm.core:hover { background: #7B1FA2; }
+
+        .empty-state {
+            padding: 40px;
+            text-align: center;
+            color: #667788;
+        }
+        .empty-state .icon { font-size: 48px; margin-bottom: 12px; }
+
+        .toast {
+            position: fixed;
+            bottom: 30px;
+            right: 30px;
+            background: #16213e;
+            border-left: 4px solid #4CAF50;
+            padding: 12px 20px;
+            border-radius: 6px;
+            color: #ccd;
+            font-size: 14px;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+            z-index: 2000;
+            opacity: 0;
+            transform: translateY(20px);
+            transition: all 0.3s ease;
+            pointer-events: none;
+        }
+        .toast.show {
+            opacity: 1;
+            transform: translateY(0);
+            pointer-events: auto;
+        }
+        .toast.error { border-left-color: #f44336; }
+        .toast.success { border-left-color: #4CAF50; }
+        .toast.warning { border-left-color: #ff9800; }
+
+        .loading-spinner {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 2px solid #1a2332;
+            border-top-color: #4CAF50;
+            border-radius: 50%;
+            animation: spin 0.6s linear infinite;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .core-form {
+            background: #141e2b;
+            border-radius: 8px;
+            padding: 20px;
+        }
+        .core-form .form-row {
+            display: flex;
+            gap: 16px;
+            flex-wrap: wrap;
+            margin-bottom: 16px;
+        }
+        .core-form .form-group {
+            flex: 1;
+            min-width: 160px;
+        }
+        .core-form .form-group label {
+            display: block;
+            font-size: 13px;
+            color: #8899aa;
+            margin-bottom: 4px;
+        }
+        .core-form .form-group input,
+        .core-form .form-group select {
+            width: 100%;
+            padding: 8px 12px;
+            background: #0f1a2f;
+            border: 1px solid #1a2332;
+            border-radius: 6px;
+            color: #ccd;
+            font-size: 14px;
+            box-sizing: border-box;
+            outline: none;
+        }
+        .core-form .form-group input:focus,
+        .core-form .form-group select:focus {
+            border-color: #4CAF50;
+        }
+        .core-form .btn-download-core {
+            padding: 10px 32px;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 15px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .core-form .btn-download-core:hover {
+            background: #388E3C;
+        }
+        .core-form .btn-download-core:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .core-form .hint {
+            color: #667788;
+            font-size: 13px;
+            margin-top: 8px;
+        }
+
+        .queue-status {
+            margin-top: 16px;
+            padding: 12px 16px;
+            background: #0f1a2f;
+            border-radius: 6px;
+            color: #8899aa;
+            font-size: 13px;
+        }
+
+        @media (max-width: 700px) {
+            .search-bar { flex-direction: column; align-items: stretch; }
+            .search-bar input { min-width: auto; }
+            .result-item { flex-direction: column; align-items: stretch; gap: 8px; }
+            .result-item .actions { margin-left: 0; flex-wrap: wrap; }
+            .core-form .form-row { flex-direction: column; }
+        }
+    </style>
+</head>
+<body>
+    <div id="down-page">
+        <div class="page-header">
+            <h2>📥 下载管理</h2>
+            <span style="color:#667788;font-size:13px;">模组 · 插件 · 核心</span>
+        </div>
+
+        <!-- Tab 切换 -->
+        <div class="tab-bar">
+            <button class="tab-btn active" data-tab="mods">🔍 模组搜索</button>
+            <button class="tab-btn" data-tab="core">⬇️ 核心下载</button>
+            <button class="tab-btn" data-tab="queue">📋 下载队列</button>
+        </div>
+
+        <!-- ===== 模组搜索 Tab ===== -->
+        <div class="tab-content active" id="tab-mods">
+            <div class="search-bar">
+                <select id="mod-source">
+                    <option value="curseforge">CurseForge</option>
+                    <option value="modrinth">Modrinth</option>
+                </select>
+                <input type="text" id="mod-search-input" placeholder="搜索模组名称..." />
+                <select id="mod-loader-filter">
+                    <option value="">全部加载器</option>
+                    <option value="forge">Forge</option>
+                    <option value="fabric">Fabric</option>
+                    <option value="neoforge">NeoForge</option>
+                    <option value="quilt">Quilt</option>
+                </select>
+                <button class="btn-search" id="mod-search-btn">🔍 搜索</button>
+            </div>
+            <div id="mod-results" class="result-list">
+                <div class="empty-state">
+                    <div class="icon">🔎</div>
+                    <div>输入关键词搜索模组</div>
+                    <div style="font-size:12px;color:#556677;margin-top:4px;">支持 CurseForge 和 Modrinth</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ===== 核心下载 Tab ===== -->
+        <div class="tab-content" id="tab-core">
+            <div class="core-form">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>核心类型</label>
+                        <select id="core-type">
+                            <option value="vanilla">Vanilla (原版)</option>
+                            <option value="forge">Forge</option>
+                            <option value="fabric">Fabric</option>
+                            <option value="neoforge">NeoForge</option>
+                            <option value="paper">Paper</option>
+                            <option value="purpur">Purpur</option>
+                            <option value="spigot">Spigot</option>
+                            <option value="mohist">Mohist</option>
+                            <option value="catserver">CatServer</option>
+                            <option value="arclight">Arclight</option>
+                            <option value="leaves">Leaves</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Minecraft 版本</label>
+                        <input type="text" id="core-version" placeholder="1.20.1" value="1.20.1" />
+                    </div>
+                    <div class="form-group" id="build-group">
+                        <label>构建号 (仅 Mohist)</label>
+                        <input type="text" id="core-build" placeholder="例如: 346" />
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>下载来源</label>
+                        <select id="core-mirror">
+                            <option value="bmclapi">BMCLAPI2 (推荐)</option>
+                            <option value="mojang">Mojang 官方</option>
+                            <option value="custom">自定义</option>
+                        </select>
+                    </div>
+                    <div class="form-group" id="custom-mirror-group" style="display:none;">
+                        <label>自定义镜像 URL</label>
+                        <input type="text" id="custom-mirror-url" placeholder="https://mirror.example.com/" />
+                    </div>
+                </div>
+                <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;">
+                    <button class="btn-download-core" id="core-download-btn">⬇️ 下载核心</button>
+                    <span style="color:#667788;font-size:13px;" id="core-status">就绪</span>
+                </div>
+                <div class="hint">
+                    💡 核心将下载到当前方案目录，并自动添加到 pool 供其他方案复用。
+                    版本列表请参考各服务端官方文档。
+                </div>
+            </div>
+        </div>
+
+        <!-- ===== 下载队列 Tab ===== -->
+        <div class="tab-content" id="tab-queue">
+            <div id="queue-list" class="result-list">
+                <div class="empty-state">
+                    <div class="icon">📭</div>
+                    <div>暂无下载任务</div>
+                    <div style="font-size:12px;color:#556677;margin-top:4px;">从模组搜索或核心下载添加的任务会显示在这里</div>
+                </div>
+            </div>
+            <div class="queue-status" id="queue-status">
+                状态: 空闲
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast 消息 -->
+    <div class="toast" id="toast"></div>
+
+    <script>
+        (function() {
+            const token = sessionStorage.getItem('wow_token');
+            if (!token) {
+                window.location.href = '/login.html';
+                return;
+            }
+
+            // ==================== DOM 引用 ====================
+            const tabs = document.querySelectorAll('.tab-btn');
+            const modSource = document.getElementById('mod-source');
+            const modSearchInput = document.getElementById('mod-search-input');
+            const modLoaderFilter = document.getElementById('mod-loader-filter');
+            const modSearchBtn = document.getElementById('mod-search-btn');
+            const modResults = document.getElementById('mod-results');
+            const coreType = document.getElementById('core-type');
+            const coreVersion = document.getElementById('core-version');
+            const coreBuild = document.getElementById('core-build');
+            const coreMirror = document.getElementById('core-mirror');
+            const customMirrorGroup = document.getElementById('custom-mirror-group');
+            const customMirrorUrl = document.getElementById('custom-mirror-url');
+            const coreDownloadBtn = document.getElementById('core-download-btn');
+            const coreStatus = document.getElementById('core-status');
+            const queueList = document.getElementById('queue-list');
+            const queueStatus = document.getElementById('queue-status');
+            const toastEl = document.getElementById('toast');
+
+            // ==================== Toast ====================
+            let toastTimer = null;
+            function showToast(message, type = 'info', duration = 4000) {
+                toastEl.textContent = message;
+                toastEl.className = 'toast ' + type;
+                void toastEl.offsetWidth;
+                toastEl.classList.add('show');
+                if (toastTimer) clearTimeout(toastTimer);
+                toastTimer = setTimeout(() => {
+                    toastEl.classList.remove('show');
+                }, duration);
+            }
+
+            // ==================== API 封装 ====================
+            async function apiExec(command, args = []) {
+                const resp = await fetch('/api/exec', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + token
+                    },
+                    body: JSON.stringify({ command, args })
+                });
+                if (!resp.ok) {
+                    const err = await resp.json();
+                    throw new Error(err.error || '请求失败');
+                }
+                return await resp.json();
+            }
+
+            async function apiGet(path) {
+                const resp = await fetch(path, {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                if (!resp.ok) throw new Error('请求失败');
+                return await resp.json();
+            }
+
+            // ==================== Tab 切换 ====================
+            tabs.forEach(btn => {
+                btn.addEventListener('click', () => {
+                    tabs.forEach(b => b.classList.remove('active'));
+                    btn.classList.add('active');
+                    document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+                    const target = document.getElementById('tab-' + btn.dataset.tab);
+                    if (target) target.classList.add('active');
+                });
+            });
+
+            // ==================== 核心镜像切换 ====================
+            coreMirror.addEventListener('change', () => {
+                if (coreMirror.value === 'custom') {
+                    customMirrorGroup.style.display = 'block';
+                } else {
+                    customMirrorGroup.style.display = 'none';
+                }
+            });
+
+            // ==================== 模组搜索 ====================
+            async function searchMods() {
+                const query = modSearchInput.value.trim();
+                if (!query) {
+                    showToast('请输入搜索关键词', 'warning');
+                    return;
+                }
+                const source = modSource.value;
+                const loader = modLoaderFilter.value;
+
+                modSearchBtn.disabled = true;
+                modSearchBtn.textContent = '搜索中...';
+                modResults.innerHTML = `<div class="empty-state"><div class="loading-spinner"></div><div>搜索中...</div></div>`;
+
+                try {
+                    // 调用后端 API 搜索模组
+                    const data = await apiGet(`/api/mod/search?source=${source}&query=${encodeURIComponent(query)}&loader=${loader}`);
+                    const results = data.results || [];
+
+                    if (results.length === 0) {
+                        modResults.innerHTML = `<div class="empty-state">
+                            <div class="icon">😕</div>
+                            <div>未找到匹配的模组</div>
+                            <div style="font-size:12px;color:#556677;margin-top:4px;">尝试使用不同的关键词或来源</div>
+                        </div>`;
+                        return;
+                    }
+
+                    let html = '';
+                    for (const item of results) {
+                        const loaders = (item.loaders || []).map(l => `<span class="tag">${l}</span>`).join('');
+                        html += `<div class="result-item">
+                            <div class="info">
+                                <div class="name">${escapeHtml(item.name)}</div>
+                                <div class="meta">
+                                    ${escapeHtml(item.author || '未知作者')} · 
+                                    版本 ${escapeHtml(item.version || 'latest')} · 
+                                    下载 ${escapeHtml(item.downloads || '0')} · 
+                                    ${loaders}
+                                    ${item.summary ? '<br>' + escapeHtml(item.summary.slice(0, 100)) : ''}
+                                </div>
+                            </div>
+                            <div class="actions">
+                                <button class="btn-sm download" data-url="${escapeHtml(item.download_url || item.url)}" data-name="${escapeHtml(item.name)}">⬇️ 下载</button>
+                                <button class="btn-sm deps" data-url="${escapeHtml(item.download_url || item.url)}" data-name="${escapeHtml(item.name)}">📦 依赖</button>
+                                <button class="btn-sm info" data-project="${escapeHtml(item.project_id || item.slug)}">ℹ️ 详情</button>
+                            </div>
+                        </div>`;
+                    }
+                    modResults.innerHTML = html;
+
+                    // 绑定下载按钮
+                    document.querySelectorAll('.result-item .download').forEach(el => {
+                        el.addEventListener('click', () => {
+                            const url = el.dataset.url;
+                            const name = el.dataset.name;
+                            if (url) downloadMod(url, name);
+                        });
+                    });
+
+                    // 依赖下载按钮
+                    document.querySelectorAll('.result-item .deps').forEach(el => {
+                        el.addEventListener('click', () => {
+                            const url = el.dataset.url;
+                            const name = el.dataset.name;
+                            if (url) downloadModWithDeps(url, name);
+                        });
+                    });
+
+                    // 详情按钮
+                    document.querySelectorAll('.result-item .info').forEach(el => {
+                        el.addEventListener('click', () => {
+                            const project = el.dataset.project;
+                            showModInfo(project, source);
+                        });
+                    });
+
+                } catch (e) {
+                    modResults.innerHTML = `<div class="empty-state" style="color:#f44336;">
+                        <div class="icon">❌</div>
+                        <div>搜索失败: ${escapeHtml(e.message)}</div>
+                    </div>`;
+                } finally {
+                    modSearchBtn.disabled = false;
+                    modSearchBtn.textContent = '🔍 搜索';
+                }
+            }
+
+            function escapeHtml(text) {
+                if (!text) return '';
+                const div = document.createElement('div');
+                div.textContent = text;
+                return div.innerHTML;
+            }
+
+            // ==================== 下载模组 ====================
+            async function downloadMod(url, name) {
+                try {
+                    showToast(`⏳ 正在下载 ${name}...`, 'info', 0);
+                    const result = await apiExec(`down ${url} -o pool/mods/`);
+                    showToast(`✅ ${name} 下载完成`, 'success');
+                    // 添加到队列
+                    addToQueue(name, '模组', '完成');
+                } catch (e) {
+                    showToast(`❌ 下载失败: ${e.message}`, 'error');
+                }
+            }
+
+            async function downloadModWithDeps(url, name) {
+                try {
+                    showToast(`⏳ 正在下载 ${name} 及依赖...`, 'info', 0);
+                    const result = await apiExec(`mod install ${url} --deps`);
+                    showToast(`✅ ${name} 及依赖安装完成`, 'success');
+                    addToQueue(name + ' (含依赖)', '模组', '完成');
+                } catch (e) {
+                    showToast(`❌ 安装失败: ${e.message}`, 'error');
+                }
+            }
+
+            async function showModInfo(project, source) {
+                try {
+                    const data = await apiGet(`/api/mod/info?source=${source}&project=${project}`);
+                    if (data) {
+                        const msg = `📦 ${data.name}\n作者: ${data.author}\n版本: ${data.version}\n下载: ${data.downloads}\n描述: ${data.description || '无'}`;
+                        alert(msg);
+                    } else {
+                        showToast('无法获取模组详情', 'warning');
+                    }
+                } catch (e) {
+                    showToast('获取详情失败: ' + e.message, 'error');
+                }
+            }
+
+            // ==================== 下载核心 ====================
+            async function downloadCore() {
+                const type = coreType.value;
+                const version = coreVersion.value.trim() || '1.20.1';
+                const build = coreBuild.value.trim() || undefined;
+                let mirror = coreMirror.value;
+                if (mirror === 'custom') {
+                    mirror = customMirrorUrl.value.trim() || 'https://bmclapi2.bangbang93.com';
+                } else if (mirror === 'mojang') {
+                    mirror = 'https://launcher.mojang.com';
+                } else {
+                    mirror = 'https://bmclapi2.bangbang93.com';
+                }
+
+                if (type === 'mohist' && !build) {
+                    showToast('Mohist 需要指定构建号', 'warning');
+                    return;
+                }
+
+                coreDownloadBtn.disabled = true;
+                coreStatus.textContent = '⏳ 下载中...';
+
+                let cmd = `install ${type} ${version}`;
+                if (build) cmd += ` --build ${build}`;
+                // 镜像通过配置传递，这里不直接加到命令
+
+                try {
+                    // 设置镜像
+                    await apiExec(`set download.mirror ${mirror}`);
+                    const result = await apiExec(cmd);
+                    coreStatus.textContent = '✅ 下载完成';
+                    showToast(`核心 ${type} ${version} 下载完成`, 'success');
+                    addToQueue(`${type}-${version}`, '核心', '完成');
+                } catch (e) {
+                    coreStatus.textContent = '❌ 失败';
+                    showToast(`核心下载失败: ${e.message}`, 'error');
+                } finally {
+                    coreDownloadBtn.disabled = false;
+                }
+            }
+
+            // ==================== 下载队列管理 ====================
+            let queueItems = [];
+
+            function addToQueue(name, type, status = '等待中') {
+                queueItems.unshift({
+                    name,
+                    type,
+                    status,
+                    time: new Date().toLocaleTimeString()
+                });
+                if (queueItems.length > 50) queueItems = queueItems.slice(0, 50);
+                renderQueue();
+            }
+
+            function renderQueue() {
+                if (queueItems.length === 0) {
+                    queueList.innerHTML = `<div class="empty-state">
+                        <div class="icon">📭</div>
+                        <div>暂无下载任务</div>
+                    </div>`;
+                    queueStatus.textContent = '状态: 空闲';
+                    return;
+                }
+
+                let html = '';
+                for (const item of queueItems) {
+                    const statusColor = item.status === '完成' ? '#4CAF50' : item.status === '失败' ? '#f44336' : '#ff9800';
+                    html += `<div class="result-item" style="border-left-color:${statusColor};">
+                        <div class="info">
+                            <div class="name">${escapeHtml(item.name)}</div>
+                            <div class="meta">${escapeHtml(item.type)} · ${item.time}</div>
+                        </div>
+                        <div class="actions">
+                            <span style="color:${statusColor};font-size:13px;">${escapeHtml(item.status)}</span>
+                        </div>
+                    </div>`;
+                }
+                queueList.innerHTML = html;
+                queueStatus.textContent = `状态: ${queueItems.length} 个任务`;
+            }
+
+            // ==================== 事件绑定 ====================
+            modSearchBtn.addEventListener('click', searchMods);
+            modSearchInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') searchMods();
+            });
+
+            coreDownloadBtn.addEventListener('click', downloadCore);
+
+            // ==================== 初始化 ====================
+            // 检查是否有正在进行的下载任务
+            async function checkDownloadStatus() {
+                try {
+                    const data = await apiGet('/api/download/status');
+                    if (data && data.queue) {
+                        for (const item of data.queue) {
+                            addToQueue(item.name, item.type, item.status);
+                        }
+                    }
+                } catch (e) {
+                    // 忽略
+                }
+            }
+
+            // 初始化
+            checkDownloadStatus();
+
+            // 监听来自父框架的消息
+            window.addEventListener('message', (e) => {
+                if (e.origin !== window.location.origin) return;
+                if (e.data.type === 'search-mod') {
+                    modSearchInput.value = e.data.query || '';
+                    searchMods();
+                }
+                if (e.data.type === 'download-core') {
+                    coreType.value = e.data.type || 'vanilla';
+                    coreVersion.value = e.data.version || '1.20.1';
+                    if (e.data.build) coreBuild.value = e.data.build;
+                    // 切换到核心标签
+                    tabs.forEach(b => b.classList.remove('active'));
+                    document.querySelector('[data-tab="core"]').classList.add('active');
+                    document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+                    document.getElementById('tab-core').classList.add('active');
+                }
+            });
+        })();
+    </script>
+</body>
+</html>
