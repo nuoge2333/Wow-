@@ -30,13 +30,22 @@ detect_arch() {
 OS=$(detect_os)
 ARCH=$(detect_arch)
 
-# 询问用户确认
+# 检测是否为交互式终端（Pterodactyl/Docker 等非 TTY 环境自动跳过确认）
+INTERACTIVE=0
+if [[ -t 0 ]]; then
+    INTERACTIVE=1
+fi
+
 echo "检测到系统: $OS, 架构: $ARCH"
-echo "是否需要下载对应平台的 Node.js 便携版？ (y/n)"
-read -r answer
-if [[ ! "$answer" =~ ^[Yy]$ ]]; then
-    echo "未下载 Node.js，退出"
-    exit 1
+if [ "$INTERACTIVE" -eq 1 ]; then
+    echo "是否需要下载对应平台的 Node.js 便携版？ (y/n)"
+    read -r answer
+    if [[ ! "$answer" =~ ^[Yy]$ ]]; then
+        echo "未下载 Node.js，退出"
+        exit 1
+    fi
+else
+    echo "非交互环境，自动下载 Node.js 便携版..."
 fi
 
 NODE_DIR="node/$OS/$ARCH"
@@ -126,7 +135,14 @@ fi
 
 # 运行 CLI
 if [ $# -eq 0 ]; then
-    "$NODE_EXE" src/cli.js --help
+    if [ "$INTERACTIVE" -eq 1 ]; then
+        "$NODE_EXE" src/cli.js --help
+    else
+        # 非交互环境（面板/Docker）：默认启动 Web 面板以保持进程常驻
+        echo "未指定命令，默认启动 Web 管理面板 (web start)"
+        echo "如需其他命令，请在启动参数中指定，例如: server start"
+        "$NODE_EXE" src/cli.js web start
+    fi
 else
     "$NODE_EXE" src/cli.js "$@"
 fi
