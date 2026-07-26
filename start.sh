@@ -43,6 +43,12 @@ NODE_DIR="node/$OS/$ARCH"
 NODE_EXE="$NODE_DIR/node"
 
 if [ ! -f "$NODE_EXE" ]; then
+    # 清理可能残留的旧版本 node 目录
+    if [ -d "$NODE_DIR" ]; then
+        echo "清理旧的 Node.js 安装..."
+        rm -rf "$NODE_DIR"
+    fi
+
     echo "正在下载 Node.js 便携版..."
     NODE_VERSION="20.17.0"
     if [ "$OS" = "linux" ]; then
@@ -83,18 +89,39 @@ if [ ! -f "$NODE_EXE" ]; then
         exit 1
     fi
 
-    # 移动文件
-    mv "$EXTRACT_DIR/bin/"* "$NODE_DIR/"
+    # 保留完整目录结构（npm 需要 lib/node_modules 等）
+    mv "$EXTRACT_DIR" "$NODE_DIR/extracted"
+    # 创建 node 和 npm 的符号链接
+    ln -sf "$NODE_DIR/extracted/bin/node" "$NODE_EXE" 2>/dev/null || cp "$NODE_DIR/extracted/bin/node" "$NODE_EXE"
     chmod +x "$NODE_EXE"
-    rm -rf "$EXTRACT_DIR" "$FILENAME"
+    rm -f "$FILENAME"
 
     echo "Node.js 便携版已安装到 $NODE_DIR"
+fi
+
+# 确定 npm 路径
+if [ -f "$NODE_DIR/extracted/bin/npm" ]; then
+    NPM_CMD="$NODE_DIR/extracted/bin/npm"
+elif [ -f "$NODE_DIR/npm" ]; then
+    NPM_CMD="$NODE_DIR/npm"
+else
+    # 直接用 node 调用 npm-cli.js
+    NPM_CLI=$(find "$NODE_DIR" -name "npm-cli.js" -path "*/node_modules/npm/*" 2>/dev/null | head -1)
+    NPM_CMD="$NPM_CLI"
 fi
 
 # 安装依赖（首次运行或依赖缺失时自动安装）
 if [ ! -d "node_modules" ]; then
     echo "Installing dependencies..."
-    "$NODE_EXE" "$NODE_DIR/npm" install --no-audit --no-fund
+    if [ -n "$NPM_CMD" ]; then
+        "$NODE_EXE" "$NPM_CMD" install --no-audit --no-fund
+    else
+        echo "⚠ npm 未找到，尝试使用系统 npm..."
+        npm install --no-audit --no-fund 2>/dev/null || {
+            echo "❌ 无法安装依赖，请手动运行: cd core && npm install"
+            exit 1
+        }
+    fi
 fi
 
 # 运行 CLI

@@ -26,6 +26,8 @@ set NODE_EXE=%NODE_DIR%\node.exe
 
 if not exist "%NODE_EXE%" (
     echo Portable Node.js not found, downloading...
+    :: Clean up old installation if exists
+    if exist "%NODE_DIR%" rmdir /s /q "%NODE_DIR%" 2>nul
     call :download_node_win %ARCH%
     if errorlevel 1 (
         echo Download failed. Check your network or manually place Node.js into %NODE_DIR%
@@ -37,9 +39,17 @@ if not exist "%NODE_EXE%" (
 :: Install dependencies on first run
 if not exist "node_modules" (
     echo Installing dependencies...
-    "%NODE_DIR%\npm" install --no-audit --no-fund
+    :: Try extracted npm first, fallback to npm.cmd
+    if exist "%NODE_DIR%\extracted\npm.cmd" (
+        "%NODE_DIR%\extracted\npm.cmd" install --no-audit --no-fund
+    ) else if exist "%NODE_DIR%\extracted\node_modules\npm\bin\npm-cli.js" (
+        "%NODE_EXE%" "%NODE_DIR%\extracted\node_modules\npm\bin\npm-cli.js" install --no-audit --no-fund
+    ) else (
+        echo npm not found in portable Node.js, trying system npm...
+        call npm install --no-audit --no-fund 2>nul
+    )
     if errorlevel 1 (
-        echo Failed to install dependencies
+        echo Failed to install dependencies. Try: cd core ^&^& npm install
         popd
         pause
         exit /b 1
@@ -75,9 +85,12 @@ if errorlevel 1 (
     exit /b 1
 )
 
-:: Move files
-move "node-v%NODE_VERSION%-win-%ARCH%\*" "%NODE_DIR%\" >nul 2>&1
-rmdir "node-v%NODE_VERSION%-win-%ARCH%"
+:: Move files - keep full directory structure for npm
+move "node-v%NODE_VERSION%-win-%ARCH%" "%NODE_DIR%\extracted" >nul 2>&1
+:: Create node.exe symlink (or copy)
+if not exist "%NODE_EXE%" (
+    copy "%NODE_DIR%\extracted\node.exe" "%NODE_EXE%" >nul 2>&1
+)
 del "%ZIP_FILE%"
 
 echo Portable Node.js installed to %NODE_DIR%
