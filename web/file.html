@@ -1,0 +1,644 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>文件管理 - wow</title>
+    <link rel="stylesheet" href="/css/main.css">
+    <style>
+        .file-manager {
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+        }
+        .toolbar {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            padding: 10px 0;
+            border-bottom: 1px solid #1a2332;
+            margin-bottom: 12px;
+        }
+        .toolbar .btn {
+            padding: 6px 14px;
+            border: none;
+            border-radius: 4px;
+            font-size: 13px;
+            cursor: pointer;
+            background: #2a3a5e;
+            color: #ccd;
+            transition: background 0.2s;
+        }
+        .toolbar .btn:hover { background: #3a4a6e; }
+        .toolbar .btn.primary { background: #2196F3; color: white; }
+        .toolbar .btn.primary:hover { background: #1976D2; }
+        .toolbar .btn.success { background: #4CAF50; color: white; }
+        .toolbar .btn.success:hover { background: #388E3C; }
+        .toolbar .btn.danger { background: #f44336; color: white; }
+        .toolbar .btn.danger:hover { background: #d32f2f; }
+        .toolbar .btn.warning { background: #ff9800; color: white; }
+        .toolbar .btn.warning:hover { background: #f57c00; }
+        .toolbar .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .toolbar .separator { width: 1px; background: #1a2332; margin: 0 4px; }
+
+        .path-bar {
+            display: flex;
+            align-items: center;
+            padding: 6px 12px;
+            background: #0f1a2f;
+            border-radius: 6px;
+            margin-bottom: 12px;
+            font-size: 14px;
+            color: #8899aa;
+            gap: 4px;
+            flex-wrap: wrap;
+        }
+        .path-bar .crumb {
+            color: #ccd;
+            cursor: pointer;
+            padding: 2px 6px;
+            border-radius: 4px;
+            transition: background 0.2s;
+        }
+        .path-bar .crumb:hover { background: #1a2332; }
+        .path-bar .separator { color: #556677; }
+
+        .file-table-wrap {
+            flex: 1;
+            overflow: auto;
+            background: #141e2b;
+            border-radius: 8px;
+        }
+        .file-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 14px;
+        }
+        .file-table th {
+            text-align: left;
+            padding: 10px 14px;
+            background: #0f1a2f;
+            color: #8899aa;
+            font-weight: 500;
+            font-size: 13px;
+            border-bottom: 1px solid #1a2332;
+            position: sticky;
+            top: 0;
+            background: #0f1a2f;
+        }
+        .file-table td {
+            padding: 8px 14px;
+            border-bottom: 1px solid #1a2332;
+            color: #ccd;
+        }
+        .file-table tr:hover td { background: #1a2332; }
+        .file-table .file-icon { margin-right: 8px; }
+        .file-table .filename { cursor: pointer; }
+        .file-table .filename:hover { color: #4CAF50; }
+        .file-table .selected td { background: #1a2a4a; }
+
+        .file-table .actions {
+            display: flex;
+            gap: 4px;
+        }
+        .file-table .actions .btn-sm {
+            padding: 2px 8px;
+            border: none;
+            border-radius: 4px;
+            font-size: 12px;
+            cursor: pointer;
+            background: #1a2332;
+            color: #8899aa;
+            transition: background 0.2s;
+        }
+        .file-table .actions .btn-sm:hover { background: #2a3a5e; color: #ccd; }
+
+        .status-bar {
+            padding: 8px 0;
+            font-size: 13px;
+            color: #667788;
+            border-top: 1px solid #1a2332;
+            margin-top: 8px;
+            display: flex;
+            justify-content: space-between;
+        }
+
+        /* 隐藏文件上传输入 */
+        #file-input { display: none; }
+
+        @media (max-width: 600px) {
+            .toolbar { gap: 4px; }
+            .toolbar .btn { padding: 4px 10px; font-size: 12px; }
+            .file-table th, .file-table td { padding: 6px 10px; font-size: 13px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="file-manager">
+        <!-- 工具栏 -->
+        <div class="toolbar">
+            <button class="btn success" id="upload-btn">📤 上传</button>
+            <button class="btn primary" id="download-btn" disabled>📥 下载</button>
+            <span class="separator"></span>
+            <button class="btn" id="mkdir-btn">📁 新建文件夹</button>
+            <button class="btn" id="rename-btn" disabled>✏️ 重命名</button>
+            <button class="btn danger" id="delete-btn" disabled>🗑️ 删除</button>
+            <span class="separator"></span>
+            <button class="btn" id="copy-btn" disabled>📋 复制</button>
+            <button class="btn" id="paste-btn" disabled>📌 粘贴</button>
+            <button class="btn" id="move-btn" disabled>↕️ 移动</button>
+            <span class="separator"></span>
+            <button class="btn warning" id="zip-btn" disabled>📦 压缩</button>
+            <button class="btn warning" id="unzip-btn" disabled>📂 解压</button>
+            <span class="separator"></span>
+            <button class="btn" id="refresh-btn">🔄 刷新</button>
+        </div>
+
+        <!-- 路径栏 -->
+        <div class="path-bar" id="path-bar">
+            <span class="crumb" data-path="">🏠 根目录</span>
+        </div>
+
+        <!-- 文件列表 -->
+        <div class="file-table-wrap">
+            <table class="file-table">
+                <thead>
+                    <tr>
+                        <th style="width:30px;"><input type="checkbox" id="select-all" /></th>
+                        <th>名称</th>
+                        <th>大小</th>
+                        <th>修改时间</th>
+                        <th style="width:120px;">操作</th>
+                    </tr>
+                </thead>
+                <tbody id="file-list-body">
+                    <tr><td colspan="5" style="text-align:center;color:#667788;padding:30px;">加载中...</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- 状态栏 -->
+        <div class="status-bar">
+            <span id="file-count">共 0 个文件</span>
+            <span id="selected-info">未选择</span>
+        </div>
+    </div>
+
+    <!-- 隐藏的文件输入 -->
+    <input type="file" id="file-input" multiple webkitdirectory />
+
+    <script>
+        (function() {
+            const token = sessionStorage.getItem('wow_token');
+            if (!token) {
+                window.location.href = '/login.html';
+                return;
+            }
+
+            // ==================== DOM 引用 ====================
+            const tbody = document.getElementById('file-list-body');
+            const pathBar = document.getElementById('path-bar');
+            const selectAll = document.getElementById('select-all');
+            const fileInput = document.getElementById('file-input');
+
+            const uploadBtn = document.getElementById('upload-btn');
+            const downloadBtn = document.getElementById('download-btn');
+            const mkdirBtn = document.getElementById('mkdir-btn');
+            const renameBtn = document.getElementById('rename-btn');
+            const deleteBtn = document.getElementById('delete-btn');
+            const copyBtn = document.getElementById('copy-btn');
+            const pasteBtn = document.getElementById('paste-btn');
+            const moveBtn = document.getElementById('move-btn');
+            const zipBtn = document.getElementById('zip-btn');
+            const unzipBtn = document.getElementById('unzip-btn');
+            const refreshBtn = document.getElementById('refresh-btn');
+
+            const fileCountEl = document.getElementById('file-count');
+            const selectedInfoEl = document.getElementById('selected-info');
+
+            // ==================== 状态 ====================
+            let currentPath = ''; // 相对于服务器根目录的路径，空字符串表示根
+            let selectedFiles = []; // 选中的文件名列表
+            let clipboard = null; // { action: 'copy'|'cut', files: [] }
+            let fileList = [];
+
+            // ==================== API 封装 ====================
+            async function apiExec(command, args = []) {
+                const resp = await fetch('/api/exec', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + token
+                    },
+                    body: JSON.stringify({ command, args })
+                });
+                if (!resp.ok) {
+                    const err = await resp.json();
+                    throw new Error(err.error || '请求失败');
+                }
+                return await resp.json();
+            }
+
+            async function apiGet(path) {
+                const resp = await fetch(path, {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                if (!resp.ok) throw new Error('请求失败');
+                return await resp.json();
+            }
+
+            // ==================== 加载文件列表 ====================
+            async function loadFiles(path = currentPath) {
+                try {
+                    // 使用 CLI 命令列出文件：ls -l
+                    // 由于命令行输出需要解析，使用自定义API /api/files 更简单
+                    // 这里我们使用 /api/files?path=... 获取JSON数据
+                    const data = await apiGet(`/api/files?path=${encodeURIComponent(path)}`);
+                    fileList = data.files || [];
+                    renderFileList(fileList);
+                    updatePathBar(path);
+                    updateStatus();
+                } catch (e) {
+                    tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:#f44336;padding:30px;">
+                        加载失败: ${escapeHtml(e.message)}
+                    </td></tr>`;
+                }
+            }
+
+            function renderFileList(files) {
+                if (!files || files.length === 0) {
+                    tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:#667788;padding:30px;">目录为空</td></tr>`;
+                    return;
+                }
+                let html = '';
+                // 排序：文件夹优先，按名称排序
+                const sorted = files.slice().sort((a, b) => {
+                    if (a.isDir && !b.isDir) return -1;
+                    if (!a.isDir && b.isDir) return 1;
+                    return a.name.localeCompare(b.name);
+                });
+                for (const file of sorted) {
+                    const icon = file.isDir ? '📁' : '📄';
+                    const size = file.isDir ? '—' : formatSize(file.size);
+                    const mtime = file.mtime ? new Date(file.mtime).toLocaleString() : '—';
+                    const selected = selectedFiles.includes(file.name);
+                    html += `<tr class="${selected ? 'selected' : ''}" data-name="${escapeHtml(file.name)}">
+                        <td><input type="checkbox" class="file-check" ${selected ? 'checked' : ''} /></td>
+                        <td>
+                            <span class="file-icon">${icon}</span>
+                            <span class="filename" data-name="${escapeHtml(file.name)}" data-isdir="${file.isDir}">${escapeHtml(file.name)}</span>
+                        </td>
+                        <td>${size}</td>
+                        <td>${mtime}</td>
+                        <td>
+                            <div class="actions">
+                                ${file.isDir ? `<button class="btn-sm" data-action="open" data-name="${escapeHtml(file.name)}">打开</button>` : ''}
+                                <button class="btn-sm" data-action="download" data-name="${escapeHtml(file.name)}">下载</button>
+                            </div>
+                        </td>
+                    </tr>`;
+                }
+                tbody.innerHTML = html;
+
+                // 绑定事件
+                document.querySelectorAll('.filename').forEach(el => {
+                    el.addEventListener('click', (e) => {
+                        const name = el.dataset.name;
+                        const isDir = el.dataset.isdir === 'true';
+                        if (isDir) {
+                            // 进入目录
+                            currentPath = currentPath ? `${currentPath}/${name}` : name;
+                            selectedFiles = [];
+                            loadFiles(currentPath);
+                        } else {
+                            // 点击文件：选中
+                            toggleFileSelection(name);
+                        }
+                    });
+                });
+
+                document.querySelectorAll('[data-action="open"]').forEach(el => {
+                    el.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        const name = el.dataset.name;
+                        currentPath = currentPath ? `${currentPath}/${name}` : name;
+                        selectedFiles = [];
+                        loadFiles(currentPath);
+                    });
+                });
+
+                document.querySelectorAll('[data-action="download"]').forEach(el => {
+                    el.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        const name = el.dataset.name;
+                        downloadFile(name);
+                    });
+                });
+
+                // 复选框事件
+                document.querySelectorAll('.file-check').forEach(cb => {
+                    cb.addEventListener('change', (e) => {
+                        const tr = e.target.closest('tr');
+                        const name = tr.dataset.name;
+                        if (e.target.checked) {
+                            if (!selectedFiles.includes(name)) selectedFiles.push(name);
+                        } else {
+                            selectedFiles = selectedFiles.filter(f => f !== name);
+                        }
+                        tr.classList.toggle('selected', e.target.checked);
+                        updateButtons();
+                        updateStatus();
+                    });
+                });
+
+                // 全选
+                selectAll.addEventListener('change', (e) => {
+                    const checked = e.target.checked;
+                    document.querySelectorAll('.file-check').forEach(cb => cb.checked = checked);
+                    const names = fileList.map(f => f.name);
+                    selectedFiles = checked ? names : [];
+                    document.querySelectorAll('tr').forEach(tr => {
+                        const name = tr.dataset.name;
+                        if (name) tr.classList.toggle('selected', checked);
+                    });
+                    updateButtons();
+                    updateStatus();
+                });
+            }
+
+            function updatePathBar(path) {
+                const parts = path ? path.split('/') : [];
+                let html = '<span class="crumb" data-path="">🏠 根目录</span>';
+                let accum = '';
+                for (const p of parts) {
+                    accum = accum ? `${accum}/${p}` : p;
+                    html += `<span class="separator">/</span><span class="crumb" data-path="${escapeHtml(accum)}">${escapeHtml(p)}</span>`;
+                }
+                pathBar.innerHTML = html;
+                // 绑定面包屑点击
+                document.querySelectorAll('.crumb').forEach(el => {
+                    el.addEventListener('click', () => {
+                        const path = el.dataset.path;
+                        currentPath = path;
+                        selectedFiles = [];
+                        loadFiles(currentPath);
+                    });
+                });
+            }
+
+            function updateStatus() {
+                fileCountEl.textContent = `共 ${fileList.length} 个文件/文件夹`;
+                const selCount = selectedFiles.length;
+                selectedInfoEl.textContent = selCount > 0 ? `已选择 ${selCount} 个` : '未选择';
+            }
+
+            function updateButtons() {
+                const hasSelection = selectedFiles.length > 0;
+                downloadBtn.disabled = !hasSelection;
+                renameBtn.disabled = !hasSelection || selectedFiles.length !== 1;
+                deleteBtn.disabled = !hasSelection;
+                copyBtn.disabled = !hasSelection;
+                moveBtn.disabled = !hasSelection;
+                zipBtn.disabled = !hasSelection;
+                unzipBtn.disabled = !hasSelection || selectedFiles.length !== 1 || !isZipFile();
+                // 粘贴按钮：只有当剪贴板有内容时才启用
+                pasteBtn.disabled = !clipboard || clipboard.files.length === 0;
+            }
+
+            function isZipFile() {
+                if (selectedFiles.length !== 1) return false;
+                const name = selectedFiles[0];
+                return name.endsWith('.zip') || name.endsWith('.tar.gz') || name.endsWith('.tgz') || name.endsWith('.rar');
+            }
+
+            function toggleFileSelection(name) {
+                const idx = selectedFiles.indexOf(name);
+                if (idx >= 0) {
+                    selectedFiles.splice(idx, 1);
+                } else {
+                    selectedFiles.push(name);
+                }
+                // 更新复选框
+                const tr = document.querySelector(`tr[data-name="${name}"]`);
+                if (tr) {
+                    const cb = tr.querySelector('.file-check');
+                    if (cb) cb.checked = selectedFiles.includes(name);
+                    tr.classList.toggle('selected', selectedFiles.includes(name));
+                }
+                updateButtons();
+                updateStatus();
+            }
+
+            function formatSize(bytes) {
+                if (bytes === 0) return '0 B';
+                const k = 1024;
+                const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+                const i = Math.floor(Math.log(bytes) / Math.log(k));
+                return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+            }
+
+            function escapeHtml(text) {
+                const div = document.createElement('div');
+                div.textContent = text;
+                return div.innerHTML;
+            }
+
+            // ==================== 文件操作 ====================
+            async function downloadFile(name) {
+                // 使用 /api/download?path=... 下载文件
+                const path = currentPath ? `${currentPath}/${name}` : name;
+                window.open(`/api/download?path=${encodeURIComponent(path)}&token=${encodeURIComponent(token)}`, '_blank');
+            }
+
+            async function uploadFiles(files) {
+                // 上传文件：使用 FormData
+                const formData = new FormData();
+                for (const file of files) {
+                    // 保留相对路径
+                    const relativePath = file.webkitRelativePath || file.name;
+                    formData.append('files', file, relativePath);
+                }
+                formData.append('path', currentPath || '');
+                try {
+                    const resp = await fetch('/api/upload', {
+                        method: 'POST',
+                        headers: { 'Authorization': 'Bearer ' + token },
+                        body: formData
+                    });
+                    if (!resp.ok) {
+                        const err = await resp.json();
+                        throw new Error(err.error || '上传失败');
+                    }
+                    const data = await resp.json();
+                    alert(`上传成功 ${data.uploaded || 0} 个文件`);
+                    loadFiles(currentPath);
+                } catch (e) {
+                    alert('上传失败: ' + e.message);
+                }
+            }
+
+            async function mkdir() {
+                const name = prompt('请输入新文件夹名称:');
+                if (!name) return;
+                try {
+                    await apiExec(`mkdir ${currentPath ? currentPath + '/' + name : name}`);
+                    loadFiles(currentPath);
+                } catch (e) {
+                    alert('创建失败: ' + e.message);
+                }
+            }
+
+            async function renameFile() {
+                if (selectedFiles.length !== 1) return;
+                const oldName = selectedFiles[0];
+                const newName = prompt('请输入新名称:', oldName);
+                if (!newName || newName === oldName) return;
+                const oldPath = currentPath ? `${currentPath}/${oldName}` : oldName;
+                const newPath = currentPath ? `${currentPath}/${newName}` : newName;
+                try {
+                    await apiExec(`mv ${oldPath} ${newPath}`);
+                    selectedFiles = [];
+                    loadFiles(currentPath);
+                } catch (e) {
+                    alert('重命名失败: ' + e.message);
+                }
+            }
+
+            async function deleteFiles() {
+                if (selectedFiles.length === 0) return;
+                const confirmMsg = `确定删除 ${selectedFiles.length} 个文件/文件夹吗？`;
+                if (!confirm(confirmMsg)) return;
+                for (const name of selectedFiles) {
+                    const path = currentPath ? `${currentPath}/${name}` : name;
+                    try {
+                        await apiExec(`rm -rf ${path}`);
+                    } catch (e) {
+                        alert(`删除 ${name} 失败: ${e.message}`);
+                    }
+                }
+                selectedFiles = [];
+                loadFiles(currentPath);
+            }
+
+            function copyFiles() {
+                if (selectedFiles.length === 0) return;
+                clipboard = { action: 'copy', files: selectedFiles.map(f => currentPath ? `${currentPath}/${f}` : f) };
+                pasteBtn.disabled = false;
+                alert(`已复制 ${selectedFiles.length} 个文件/文件夹到剪贴板`);
+            }
+
+            function moveFiles() {
+                if (selectedFiles.length === 0) return;
+                clipboard = { action: 'cut', files: selectedFiles.map(f => currentPath ? `${currentPath}/${f}` : f) };
+                pasteBtn.disabled = false;
+                alert(`已剪切 ${selectedFiles.length} 个文件/文件夹到剪贴板`);
+            }
+
+            async function pasteFiles() {
+                if (!clipboard || clipboard.files.length === 0) return;
+                const dest = currentPath ? currentPath : '.';
+                let successCount = 0;
+                for (const src of clipboard.files) {
+                    try {
+                        if (clipboard.action === 'copy') {
+                            await apiExec(`cp -r ${src} ${dest}/`);
+                        } else if (clipboard.action === 'cut') {
+                            await apiExec(`mv ${src} ${dest}/`);
+                        }
+                        successCount++;
+                    } catch (e) {
+                        alert(`操作 ${src} 失败: ${e.message}`);
+                    }
+                }
+                alert(`${clipboard.action === 'copy' ? '复制' : '移动'} 完成 ${successCount} 个`);
+                clipboard = null;
+                pasteBtn.disabled = true;
+                selectedFiles = [];
+                loadFiles(currentPath);
+            }
+
+            async function zipFiles() {
+                if (selectedFiles.length === 0) return;
+                const zipName = prompt('输入压缩包文件名 (不含扩展名):', 'archive');
+                if (!zipName) return;
+                const fullZipName = zipName + '.zip';
+                const targetPath = currentPath ? `${currentPath}/${fullZipName}` : fullZipName;
+                // 构建文件列表
+                const files = selectedFiles.map(f => currentPath ? `${currentPath}/${f}` : f);
+                try {
+                    // 使用 zip 命令
+                    await apiExec(`zip ${targetPath} ${files.join(' ')}`);
+                    alert(`压缩成功: ${fullZipName}`);
+                    selectedFiles = [];
+                    loadFiles(currentPath);
+                } catch (e) {
+                    alert('压缩失败: ' + e.message);
+                }
+            }
+
+            async function unzipFiles() {
+                if (selectedFiles.length !== 1) return;
+                const name = selectedFiles[0];
+                if (!name.endsWith('.zip') && !name.endsWith('.tar.gz') && !name.endsWith('.tgz')) {
+                    alert('仅支持 .zip 或 .tar.gz 文件');
+                    return;
+                }
+                const filePath = currentPath ? `${currentPath}/${name}` : name;
+                const destDir = currentPath ? currentPath : '.';
+                try {
+                    if (name.endsWith('.zip')) {
+                        await apiExec(`unzip ${filePath} -d ${destDir}`);
+                    } else if (name.endsWith('.tar.gz') || name.endsWith('.tgz')) {
+                        await apiExec(`tar -xzf ${filePath} -C ${destDir}`);
+                    }
+                    alert('解压成功');
+                    selectedFiles = [];
+                    loadFiles(currentPath);
+                } catch (e) {
+                    alert('解压失败: ' + e.message);
+                }
+            }
+
+            // ==================== 事件绑定 ====================
+            uploadBtn.addEventListener('click', () => fileInput.click());
+            fileInput.addEventListener('change', (e) => {
+                const files = e.target.files;
+                if (files.length > 0) {
+                    uploadFiles(files);
+                }
+                fileInput.value = '';
+            });
+
+            downloadBtn.addEventListener('click', () => {
+                if (selectedFiles.length === 1) {
+                    downloadFile(selectedFiles[0]);
+                } else {
+                    alert('请选择一个文件下载');
+                }
+            });
+
+            mkdirBtn.addEventListener('click', mkdir);
+            renameBtn.addEventListener('click', renameFile);
+            deleteBtn.addEventListener('click', deleteFiles);
+            copyBtn.addEventListener('click', copyFiles);
+            moveBtn.addEventListener('click', moveFiles);
+            pasteBtn.addEventListener('click', pasteFiles);
+            zipBtn.addEventListener('click', zipFiles);
+            unzipBtn.addEventListener('click', unzipFiles);
+            refreshBtn.addEventListener('click', () => loadFiles(currentPath));
+
+            // 键盘快捷键
+            document.addEventListener('keydown', (e) => {
+                if (e.ctrlKey && e.key === 'c') { e.preventDefault(); copyFiles(); }
+                if (e.ctrlKey && e.key === 'v') { e.preventDefault(); pasteFiles(); }
+                if (e.ctrlKey && e.key === 'x') { e.preventDefault(); moveFiles(); }
+                if (e.key === 'Delete') { deleteFiles(); }
+                if (e.key === 'F5') { e.preventDefault(); loadFiles(currentPath); }
+            });
+
+            // ==================== 初始化 ====================
+            loadFiles('');
+        })();
+    </script>
+</body>
+</html>

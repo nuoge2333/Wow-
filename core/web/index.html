@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>wow Minecraft 服务器管理</title>
+    <!-- 全局样式 -->
+    <link rel="stylesheet" href="/css/main.css" />
+</head>
+<body>
+    <!-- 整个页面使用 flex 布局 -->
+    <div id="app">
+        <!-- 左侧菜单栏 iframe -->
+        <iframe id="menu-frame" src="/left.html" scrolling="no"></iframe>
+
+        <!-- 中间主内容区域 -->
+        <div id="main-content">
+            <iframe id="content-frame" src="/dashboard.html"></iframe>
+        </div>
+
+        <!-- 右侧通知栏 iframe -->
+        <iframe id="notify-frame" src="/right.html" scrolling="no"></iframe>
+    </div>
+
+    <!-- 全局 JavaScript -->
+    <script src="/js/main.js"></script>
+    <script>
+        (function() {
+            // 等待 DOM 加载完成
+            document.addEventListener('DOMContentLoaded', function() {
+                // 登录状态检查（由后端提供 /api/auth/verify）
+                const token = sessionStorage.getItem('wow_token');
+                if (!token) {
+                    // 未登录，跳转到登录页
+                    window.location.href = '/login.html';
+                    return;
+                }
+
+                // 验证 token 是否有效
+                fetch('/api/auth/verify', {
+                    headers: {
+                        'Authorization': 'Bearer ' + token
+                    }
+                })
+                .then(res => res.json())
+                .then(data => {
+                    if (!data.valid) {
+                        // token 无效，清除并跳转登录
+                        sessionStorage.removeItem('wow_token');
+                        window.location.href = '/login.html';
+                    }
+                })
+                .catch(() => {
+                    // 网络错误，尝试跳转登录
+                    window.location.href = '/login.html';
+                });
+
+                // 监听来自 left.html 的菜单切换消息
+                window.addEventListener('message', function(event) {
+                    // 只接受来自同源的消息
+                    if (event.origin !== window.location.origin) return;
+                    if (event.data.type === 'navigate') {
+                        const page = event.data.page;
+                        const contentFrame = document.getElementById('content-frame');
+                        // 所有页面都在根目录下，直接拼接
+                        contentFrame.src = '/' + page + '.html';
+                    }
+                });
+
+                // 监听来自 right.html 的通知栏关闭/展开消息（可选）
+                window.addEventListener('message', function(event) {
+                    if (event.origin !== window.location.origin) return;
+                    if (event.data.type === 'toggle-notify') {
+                        const notifyFrame = document.getElementById('notify-frame');
+                        if (event.data.collapsed) {
+                            notifyFrame.classList.add('collapsed');
+                        } else {
+                            notifyFrame.classList.remove('collapsed');
+                        }
+                    }
+                });
+
+                // 当主内容 iframe 加载完成时，通知它当前页面的信息（可选）
+                const contentFrame = document.getElementById('content-frame');
+                contentFrame.addEventListener('load', function() {
+                    // 可以在这里统一处理，暂不实现
+                });
+            });
+        })();
+    </script>
+</body>
+</html>

@@ -1,0 +1,688 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>方案管理 - wow</title>
+    <link rel="stylesheet" href="/css/main.css">
+    <style>
+        .page-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+            gap: 12px;
+        }
+        .page-header h2 {
+            margin: 0;
+            color: #ccd;
+            font-weight: 400;
+        }
+
+        .btn-create {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 8px 20px;
+            border-radius: 6px;
+            font-size: 14px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .btn-create:hover { background: #43a047; }
+
+        .btn-pool {
+            background: #2a3a5e;
+            color: #ccd;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-size: 13px;
+            cursor: pointer;
+            transition: background 0.2s;
+            margin-left: 8px;
+        }
+        .btn-pool:hover { background: #3a4a6e; }
+
+        .scheme-table-wrap {
+            background: #141e2b;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        .scheme-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 14px;
+        }
+        .scheme-table th {
+            text-align: left;
+            padding: 12px 16px;
+            background: #0f1a2f;
+            color: #8899aa;
+            font-weight: 500;
+            font-size: 13px;
+            border-bottom: 1px solid #1a2332;
+        }
+        .scheme-table td {
+            padding: 10px 16px;
+            border-bottom: 1px solid #1a2332;
+            color: #ccd;
+        }
+        .scheme-table tr:hover td {
+            background: #1a2332;
+        }
+        .scheme-table .state-badge {
+            display: inline-block;
+            padding: 2px 10px;
+            border-radius: 12px;
+            font-size: 12px;
+        }
+        .state-minimal { background: #1b5e20; color: #81c784; }
+        .state-partial { background: #e65100; color: #ffb74d; }
+        .state-full { background: #0d47a1; color: #64b5f6; }
+        .state-unknown { background: #37474f; color: #78909c; }
+        .active-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            background: #4CAF50;
+            color: white;
+        }
+        .inactive-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            background: #37474f;
+            color: #78909c;
+        }
+
+        .action-group {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
+        .action-group .btn-sm {
+            padding: 4px 12px;
+            border: none;
+            border-radius: 4px;
+            font-size: 12px;
+            cursor: pointer;
+            transition: background 0.2s;
+            color: white;
+        }
+        .btn-sm.primary { background: #2196F3; }
+        .btn-sm.primary:hover { background: #1976D2; }
+        .btn-sm.success { background: #4CAF50; }
+        .btn-sm.success:hover { background: #388E3C; }
+        .btn-sm.danger { background: #f44336; }
+        .btn-sm.danger:hover { background: #d32f2f; }
+        .btn-sm.warning { background: #ff9800; }
+        .btn-sm.warning:hover { background: #f57c00; }
+        .btn-sm.info { background: #607d8b; }
+        .btn-sm.info:hover { background: #455a64; }
+
+        /* 模态框 */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.7);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+        .modal-overlay.active { display: flex; }
+        .modal {
+            background: #16213e;
+            border-radius: 12px;
+            padding: 28px 32px;
+            width: 520px;
+            max-width: 94vw;
+            max-height: 90vh;
+            overflow-y: auto;
+            color: #ccd;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+        }
+        .modal h3 {
+            margin-top: 0;
+            margin-bottom: 20px;
+            color: #eee;
+            font-weight: 400;
+        }
+        .modal .form-group {
+            margin-bottom: 16px;
+        }
+        .modal .form-group label {
+            display: block;
+            font-size: 13px;
+            color: #8899aa;
+            margin-bottom: 4px;
+        }
+        .modal .form-group input,
+        .modal .form-group select {
+            width: 100%;
+            padding: 8px 12px;
+            background: #0f1a2f;
+            border: 1px solid #1a2332;
+            border-radius: 6px;
+            color: #ccd;
+            font-size: 14px;
+            box-sizing: border-box;
+            outline: none;
+        }
+        .modal .form-group input:focus,
+        .modal .form-group select:focus {
+            border-color: #4CAF50;
+        }
+        .modal .form-row {
+            display: flex;
+            gap: 12px;
+        }
+        .modal .form-row .form-group {
+            flex: 1;
+        }
+        .modal .btn-row {
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+            margin-top: 20px;
+        }
+        .modal .btn-row .btn {
+            padding: 8px 24px;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .btn-modal-confirm { background: #4CAF50; color: white; }
+        .btn-modal-confirm:hover { background: #43a047; }
+        .btn-modal-cancel { background: #37474f; color: #ccd; }
+        .btn-modal-cancel:hover { background: #455a64; }
+
+        .detail-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 4px 20px;
+            font-size: 14px;
+        }
+        .detail-grid .label { color: #8899aa; }
+        .detail-grid .value { color: #ccd; }
+
+        .empty-state {
+            padding: 40px;
+            text-align: center;
+            color: #667788;
+        }
+        .empty-state .icon { font-size: 48px; margin-bottom: 12px; }
+
+        .toast {
+            position: fixed;
+            bottom: 30px;
+            right: 30px;
+            background: #16213e;
+            border-left: 4px solid #4CAF50;
+            padding: 12px 20px;
+            border-radius: 6px;
+            color: #ccd;
+            font-size: 14px;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+            z-index: 2000;
+            opacity: 0;
+            transform: translateY(20px);
+            transition: all 0.3s ease;
+            pointer-events: none;
+        }
+        .toast.show {
+            opacity: 1;
+            transform: translateY(0);
+            pointer-events: auto;
+        }
+        .toast.error { border-left-color: #f44336; }
+        .toast.success { border-left-color: #4CAF50; }
+
+        @media (max-width: 700px) {
+            .scheme-table-wrap { overflow-x: auto; }
+            .page-header { flex-direction: column; align-items: stretch; }
+            .detail-grid { grid-template-columns: 1fr; }
+            .modal { padding: 20px; }
+            .modal .form-row { flex-direction: column; }
+        }
+    </style>
+</head>
+<body>
+    <div id="scheme-page">
+        <div class="page-header">
+            <h2>📦 方案管理</h2>
+            <div>
+                <button class="btn-pool" id="pool-stats-btn">📊 Pool 统计</button>
+                <button class="btn-create" id="create-btn">+ 创建方案</button>
+            </div>
+        </div>
+
+        <!-- 方案列表 -->
+        <div class="scheme-table-wrap">
+            <table class="scheme-table">
+                <thead>
+                    <tr>
+                        <th>方案名称</th>
+                        <th>版本</th>
+                        <th>加载器</th>
+                        <th>状态</th>
+                        <th>当前</th>
+                        <th style="text-align:right;">操作</th>
+                    </tr>
+                </thead>
+                <tbody id="scheme-list-body">
+                    <tr><td colspan="6" class="empty-state">加载中...</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- 创建方案模态框 -->
+        <div class="modal-overlay" id="create-modal">
+            <div class="modal">
+                <h3>📦 创建新方案</h3>
+                <div class="form-group">
+                    <label>方案名称</label>
+                    <input type="text" id="new-name" placeholder="例如: survival_1" />
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Minecraft 版本</label>
+                        <input type="text" id="new-version" placeholder="1.20.1" value="1.20.1" />
+                    </div>
+                    <div class="form-group">
+                        <label>模组加载器</label>
+                        <select id="new-loader">
+                            <option value="forge">Forge</option>
+                            <option value="fabric">Fabric</option>
+                            <option value="neoforge">NeoForge</option>
+                            <option value="quilt">Quilt</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>核心类型</label>
+                        <select id="new-type">
+                            <option value="vanilla">Vanilla (原版)</option>
+                            <option value="forge">Forge</option>
+                            <option value="fabric">Fabric</option>
+                            <option value="neoforge">NeoForge</option>
+                            <option value="paper">Paper</option>
+                            <option value="purpur">Purpur</option>
+                            <option value="spigot">Spigot</option>
+                            <option value="mohist">Mohist</option>
+                            <option value="catserver">CatServer</option>
+                            <option value="arclight">Arclight</option>
+                            <option value="leaves">Leaves</option>
+                            <option value="other">其他 (自定义)</option>
+                        </select>
+                    </div>
+                    <div class="form-group" id="other-type-group" style="display:none;">
+                        <label>自定义核心名称</label>
+                        <input type="text" id="new-other-type" placeholder="例如: MyFork" />
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>构建号 (仅 Mohist 需要)</label>
+                    <input type="text" id="new-build" placeholder="例如: 346" />
+                </div>
+                <div class="btn-row">
+                    <button class="btn btn-modal-cancel" id="modal-cancel">取消</button>
+                    <button class="btn btn-modal-confirm" id="modal-confirm">创建</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 详情模态框 -->
+        <div class="modal-overlay" id="detail-modal">
+            <div class="modal" style="width:600px;">
+                <h3 id="detail-title">📋 方案详情</h3>
+                <div id="detail-content" class="detail-grid">
+                    <span class="label">名称:</span><span class="value">--</span>
+                    <span class="label">版本:</span><span class="value">--</span>
+                    <span class="label">加载器:</span><span class="value">--</span>
+                    <span class="label">核心类型:</span><span class="value">--</span>
+                    <span class="label">状态:</span><span class="value">--</span>
+                    <span class="label">创建时间:</span><span class="value">--</span>
+                    <span class="label">核心文件:</span><span class="value">--</span>
+                    <span class="label">模组数:</span><span class="value">--</span>
+                    <span class="label">插件数:</span><span class="value">--</span>
+                    <span class="label">共享资源:</span><span class="value">--</span>
+                    <span class="label">独有资源:</span><span class="value">--</span>
+                </div>
+                <div class="btn-row">
+                    <button class="btn btn-modal-cancel" id="detail-close">关闭</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Toast 消息 -->
+        <div class="toast" id="toast"></div>
+    </div>
+
+    <script>
+        (function() {
+            const token = sessionStorage.getItem('wow_token');
+            if (!token) {
+                window.location.href = '/login.html';
+                return;
+            }
+
+            // ==================== DOM 引用 ====================
+            const tbody = document.getElementById('scheme-list-body');
+            const createBtn = document.getElementById('create-btn');
+            const createModal = document.getElementById('create-modal');
+            const modalCancel = document.getElementById('modal-cancel');
+            const modalConfirm = document.getElementById('modal-confirm');
+            const detailModal = document.getElementById('detail-modal');
+            const detailClose = document.getElementById('detail-close');
+            const detailTitle = document.getElementById('detail-title');
+            const detailContent = document.getElementById('detail-content');
+            const poolStatsBtn = document.getElementById('pool-stats-btn');
+            const toastEl = document.getElementById('toast');
+
+            // 表单字段
+            const newName = document.getElementById('new-name');
+            const newVersion = document.getElementById('new-version');
+            const newLoader = document.getElementById('new-loader');
+            const newType = document.getElementById('new-type');
+            const newOtherType = document.getElementById('new-other-type');
+            const newBuild = document.getElementById('new-build');
+            const otherTypeGroup = document.getElementById('other-type-group');
+
+            // ==================== API 封装 ====================
+            async function apiExec(command, args = []) {
+                const resp = await fetch('/api/exec', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + token
+                    },
+                    body: JSON.stringify({ command, args })
+                });
+                if (!resp.ok) {
+                    const err = await resp.json();
+                    throw new Error(err.error || '请求失败');
+                }
+                return await resp.json();
+            }
+
+            async function apiGet(path) {
+                const resp = await fetch(path, {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                if (!resp.ok) throw new Error('请求失败');
+                return await resp.json();
+            }
+
+            // ==================== Toast 消息 ====================
+            let toastTimer = null;
+            function showToast(message, type = 'info', duration = 3000) {
+                toastEl.textContent = message;
+                toastEl.className = 'toast ' + type;
+                // 强制重绘
+                void toastEl.offsetWidth;
+                toastEl.classList.add('show');
+                if (toastTimer) clearTimeout(toastTimer);
+                toastTimer = setTimeout(() => {
+                    toastEl.classList.remove('show');
+                }, duration);
+            }
+
+            // ==================== 加载方案列表 ====================
+            async function loadSchemes() {
+                try {
+                    const data = await apiGet('/api/schemes');
+                    const schemes = data.schemes || [];
+                    const current = data.current || null;
+
+                    if (schemes.length === 0) {
+                        tbody.innerHTML = `<tr><td colspan="6" class="empty-state">
+                            <div class="icon">📭</div>
+                            <div>暂无方案，点击「创建方案」开始</div>
+                        </td></tr>`;
+                        return;
+                    }
+
+                    const stateMap = {
+                        minimal: '🟢 最小实例',
+                        partial: '🟡 部分共享',
+                        full: '🔵 完整实例',
+                        unknown: '⚪ 未知'
+                    };
+                    const stateClass = {
+                        minimal: 'state-minimal',
+                        partial: 'state-partial',
+                        full: 'state-full',
+                        unknown: 'state-unknown'
+                    };
+
+                    let html = '';
+                    for (const s of schemes) {
+                        const isActive = s.active || (s.name === current);
+                        const stateText = stateMap[s.state] || stateMap.unknown;
+                        const stateCls = stateClass[s.state] || stateClass.unknown;
+                        html += `<tr>
+                            <td><strong>${escapeHtml(s.name)}</strong></td>
+                            <td>${escapeHtml(s.version || '--')}</td>
+                            <td>${escapeHtml(s.loader || '--')}</td>
+                            <td><span class="state-badge ${stateCls}">${stateText}</span></td>
+                            <td>${isActive ? '<span class="active-badge">当前</span>' : '<span class="inactive-badge">-</span>'}</td>
+                            <td style="text-align:right;">
+                                <div class="action-group">
+                                    ${!isActive ? `<button class="btn-sm success" data-action="switch" data-name="${escapeHtml(s.name)}">切换</button>` : ''}
+                                    <button class="btn-sm info" data-action="info" data-name="${escapeHtml(s.name)}">详情</button>
+                                    ${!isActive ? `<button class="btn-sm danger" data-action="delete" data-name="${escapeHtml(s.name)}">删除</button>` : ''}
+                                    <button class="btn-sm warning" data-action="pull" data-name="${escapeHtml(s.name)}">拉取</button>
+                                    <button class="btn-sm primary" data-action="prune" data-name="${escapeHtml(s.name)}">瘦身</button>
+                                </div>
+                            </td>
+                        </tr>`;
+                    }
+                    tbody.innerHTML = html;
+
+                    // 绑定按钮事件
+                    document.querySelectorAll('[data-action]').forEach(el => {
+                        el.addEventListener('click', async (e) => {
+                            const action = el.dataset.action;
+                            const name = el.dataset.name;
+                            await handleSchemeAction(action, name);
+                        });
+                    });
+
+                } catch (e) {
+                    tbody.innerHTML = `<tr><td colspan="6" class="empty-state" style="color:#f44336;">
+                        加载失败: ${escapeHtml(e.message)}
+                    </td></tr>`;
+                }
+            }
+
+            function escapeHtml(text) {
+                const div = document.createElement('div');
+                div.textContent = text;
+                return div.innerHTML;
+            }
+
+            // ==================== 处理方案操作 ====================
+            async function handleSchemeAction(action, name) {
+                const actionMap = {
+                    switch: { cmd: `scheme switch ${name}`, msg: `切换到 ${name}` },
+                    delete: { cmd: `scheme delete ${name}`, msg: `删除 ${name}` },
+                    pull: { cmd: `scheme pull ${name}`, msg: `拉取补齐 ${name}` },
+                    prune: { cmd: `scheme prune ${name}`, msg: `瘦身 ${name}` },
+                    info: null // 特殊处理
+                };
+
+                if (action === 'info') {
+                    await showSchemeInfo(name);
+                    return;
+                }
+
+                const entry = actionMap[action];
+                if (!entry) return;
+
+                // 删除需要确认
+                if (action === 'delete') {
+                    if (!confirm(`确定要删除方案 "${name}" 吗？此操作不可恢复！`)) return;
+                }
+
+                try {
+                    showToast(`⏳ ${entry.msg}...`, 'info', 0);
+                    const result = await apiExec(entry.cmd);
+                    showToast(`✅ ${entry.msg} 成功`, 'success');
+                    await loadSchemes();
+                } catch (e) {
+                    showToast(`❌ ${entry.msg} 失败: ${e.message}`, 'error');
+                }
+            }
+
+            // ==================== 显示方案详情 ====================
+            async function showSchemeInfo(name) {
+                try {
+                    // 先执行 scheme info 命令获取输出
+                    const result = await apiExec(`scheme info ${name}`);
+                    // 解析输出（简化：显示在模态框中）
+                    detailTitle.textContent = `📋 方案详情: ${name}`;
+                    // 使用 scheme status 获取结构化数据
+                    const status = await apiGet(`/api/scheme/${name}/status`);
+                    if (status) {
+                        const fields = [
+                            ['名称', status.name || name],
+                            ['版本', status.version || '--'],
+                            ['加载器', status.loader || '--'],
+                            ['核心类型', status.type || '--'],
+                            ['状态', status.state || '--'],
+                            ['创建时间', status.created_at || '--'],
+                            ['核心文件', status.core?.file || '--'],
+                            ['模组数', status.mods?.count || 0],
+                            ['插件数', status.plugins?.count || 0],
+                            ['共享资源', (status.mods?.shared || 0) + (status.plugins?.shared || 0)],
+                            ['独有资源', (status.mods?.unique || 0) + (status.plugins?.unique || 0)]
+                        ];
+                        detailContent.innerHTML = fields.map(([label, value]) =>
+                            `<span class="label">${label}:</span><span class="value">${escapeHtml(String(value))}</span>`
+                        ).join('');
+                    } else {
+                        detailContent.innerHTML = `<div style="grid-column:1/3;text-align:center;color:#667788;">无法获取详细信息</div>`;
+                    }
+                    detailModal.classList.add('active');
+                } catch (e) {
+                    showToast(`获取详情失败: ${e.message}`, 'error');
+                }
+            }
+
+            // ==================== 创建方案 ====================
+            async function createScheme() {
+                const name = newName.value.trim();
+                if (!name) {
+                    showToast('请输入方案名称', 'error');
+                    return;
+                }
+                const version = newVersion.value.trim() || '1.20.1';
+                const loader = newLoader.value;
+                let type = newType.value;
+                const build = newBuild.value.trim() || undefined;
+                let otherType = newOtherType.value.trim();
+
+                if (type === 'other' && !otherType) {
+                    showToast('请填写自定义核心名称', 'error');
+                    return;
+                }
+
+                let cmd = `scheme create ${name} --version ${version} --loader ${loader} --type ${type}`;
+                if (type === 'other' && otherType) {
+                    cmd += ` --other-type ${otherType}`;
+                }
+                if (build) {
+                    cmd += ` --build ${build}`;
+                }
+
+                try {
+                    showToast('⏳ 正在创建方案...', 'info', 0);
+                    await apiExec(cmd);
+                    showToast(`✅ 方案 "${name}" 创建成功`, 'success');
+                    createModal.classList.remove('active');
+                    // 重置表单
+                    newName.value = '';
+                    newBuild.value = '';
+                    newOtherType.value = '';
+                    await loadSchemes();
+                } catch (e) {
+                    showToast(`❌ 创建失败: ${e.message}`, 'error');
+                }
+            }
+
+            // ==================== Pool 统计 ====================
+            async function showPoolStats() {
+                try {
+                    const data = await apiGet('/api/pool/stats');
+                    const msg = `📊 Pool 统计\n总资源: ${data.total || 0}\n被引用: ${data.refs || 0}\n未引用: ${(data.total || 0) - (data.refs || 0)}`;
+                    alert(msg);
+                } catch (e) {
+                    showToast('获取统计失败: ' + e.message, 'error');
+                }
+            }
+
+            // ==================== 事件绑定 ====================
+            createBtn.addEventListener('click', () => {
+                createModal.classList.add('active');
+            });
+
+            modalCancel.addEventListener('click', () => {
+                createModal.classList.remove('active');
+            });
+
+            modalConfirm.addEventListener('click', createScheme);
+
+            // 按回车键提交创建
+            document.querySelectorAll('#create-modal input').forEach(el => {
+                el.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter') createScheme();
+                });
+            });
+
+            // 关闭详情
+            detailClose.addEventListener('click', () => {
+                detailModal.classList.remove('active');
+            });
+            detailModal.addEventListener('click', (e) => {
+                if (e.target === detailModal) detailModal.classList.remove('active');
+            });
+
+            // 核心类型切换显示自定义字段
+            newType.addEventListener('change', () => {
+                if (newType.value === 'other') {
+                    otherTypeGroup.style.display = 'block';
+                } else {
+                    otherTypeGroup.style.display = 'none';
+                }
+            });
+
+            // Pool 统计
+            poolStatsBtn.addEventListener('click', showPoolStats);
+
+            // 点击模态框外部关闭
+            createModal.addEventListener('click', (e) => {
+                if (e.target === createModal) createModal.classList.remove('active');
+            });
+
+            // ==================== 初始化 ====================
+            loadSchemes();
+
+            // 监听来自父框架的消息（可选）
+            window.addEventListener('message', (e) => {
+                if (e.origin !== window.location.origin) return;
+                if (e.data.type === 'refresh-schemes') {
+                    loadSchemes();
+                }
+            });
+        })();
+    </script>
+</body>
+</html>

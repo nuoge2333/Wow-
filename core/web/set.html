@@ -1,0 +1,773 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>设置 - wow</title>
+    <link rel="stylesheet" href="/css/main.css">
+    <style>
+        .settings-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+        .settings-section {
+            background: #141e2b;
+            border-radius: 8px;
+            padding: 20px;
+            border: 1px solid #1a2332;
+        }
+        .settings-section.full {
+            grid-column: 1 / -1;
+        }
+        .settings-section .title {
+            font-size: 16px;
+            font-weight: 600;
+            color: #ccd;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .settings-section .title .badge {
+            font-size: 12px;
+            font-weight: 400;
+            color: #667788;
+            background: #0f1a2f;
+            padding: 0 10px;
+            border-radius: 4px;
+        }
+
+        .config-group {
+            margin-bottom: 14px;
+        }
+        .config-group label {
+            display: block;
+            font-size: 13px;
+            color: #8899aa;
+            margin-bottom: 4px;
+        }
+        .config-group .key-hint {
+            font-size: 12px;
+            color: #556677;
+            font-family: monospace;
+        }
+        .config-group input,
+        .config-group select,
+        .config-group textarea {
+            width: 100%;
+            padding: 8px 12px;
+            background: #0f1a2f;
+            border: 1px solid #1a2332;
+            border-radius: 6px;
+            color: #ccd;
+            font-size: 14px;
+            box-sizing: border-box;
+            outline: none;
+            font-family: inherit;
+        }
+        .config-group input:focus,
+        .config-group select:focus,
+        .config-group textarea:focus {
+            border-color: #4CAF50;
+        }
+        .config-group textarea {
+            min-height: 60px;
+            resize: vertical;
+            font-family: 'Consolas', monospace;
+            font-size: 13px;
+        }
+
+        .btn-row {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin-top: 12px;
+        }
+        .btn {
+            padding: 8px 20px;
+            border: none;
+            border-radius: 6px;
+            font-size: 13px;
+            cursor: pointer;
+            transition: background 0.2s;
+            color: white;
+        }
+        .btn-primary { background: #2196F3; }
+        .btn-primary:hover { background: #1976D2; }
+        .btn-success { background: #4CAF50; }
+        .btn-success:hover { background: #388E3C; }
+        .btn-danger { background: #f44336; }
+        .btn-danger:hover { background: #d32f2f; }
+        .btn-warning { background: #ff9800; }
+        .btn-warning:hover { background: #f57c00; }
+        .btn-secondary { background: #37474f; color: #ccd; }
+        .btn-secondary:hover { background: #455a64; }
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .plugin-item, .theme-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 12px;
+            background: #0f1a2f;
+            border-radius: 6px;
+            margin-bottom: 6px;
+        }
+        .plugin-item .info, .theme-item .info {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+        .plugin-item .info .name, .theme-item .info .name {
+            color: #ccd;
+            font-weight: 500;
+        }
+        .plugin-item .info .meta, .theme-item .info .meta {
+            color: #667788;
+            font-size: 12px;
+        }
+        .plugin-item .actions, .theme-item .actions {
+            display: flex;
+            gap: 6px;
+        }
+        .plugin-item .actions .btn-sm, .theme-item .actions .btn-sm {
+            padding: 3px 12px;
+            border: none;
+            border-radius: 4px;
+            font-size: 12px;
+            cursor: pointer;
+            color: white;
+            transition: background 0.2s;
+        }
+        .btn-sm.active { background: #4CAF50; }
+        .btn-sm.active:hover { background: #388E3C; }
+        .btn-sm.inactive { background: #37474f; color: #ccd; }
+        .btn-sm.inactive:hover { background: #455a64; }
+        .btn-sm.danger { background: #f44336; }
+        .btn-sm.danger:hover { background: #d32f2f; }
+        .btn-sm.info { background: #2196F3; }
+        .btn-sm.info:hover { background: #1976D2; }
+
+        .empty-state {
+            padding: 20px;
+            text-align: center;
+            color: #667788;
+            font-size: 14px;
+        }
+
+        .toast {
+            position: fixed;
+            bottom: 30px;
+            right: 30px;
+            background: #16213e;
+            border-left: 4px solid #4CAF50;
+            padding: 12px 20px;
+            border-radius: 6px;
+            color: #ccd;
+            font-size: 14px;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+            z-index: 2000;
+            opacity: 0;
+            transform: translateY(20px);
+            transition: all 0.3s ease;
+            pointer-events: none;
+        }
+        .toast.show {
+            opacity: 1;
+            transform: translateY(0);
+            pointer-events: auto;
+        }
+        .toast.error { border-left-color: #f44336; }
+        .toast.success { border-left-color: #4CAF50; }
+        .toast.warning { border-left-color: #ff9800; }
+
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.7);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+        .modal-overlay.active { display: flex; }
+        .modal {
+            background: #16213e;
+            border-radius: 12px;
+            padding: 28px 32px;
+            width: 480px;
+            max-width: 94vw;
+            max-height: 80vh;
+            overflow-y: auto;
+            color: #ccd;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+        }
+        .modal h3 {
+            margin-top: 0;
+            margin-bottom: 16px;
+            color: #eee;
+            font-weight: 400;
+        }
+        .modal .form-group {
+            margin-bottom: 14px;
+        }
+        .modal .form-group label {
+            display: block;
+            font-size: 13px;
+            color: #8899aa;
+            margin-bottom: 4px;
+        }
+        .modal .form-group input,
+        .modal .form-group textarea {
+            width: 100%;
+            padding: 8px 12px;
+            background: #0f1a2f;
+            border: 1px solid #1a2332;
+            border-radius: 6px;
+            color: #ccd;
+            font-size: 14px;
+            box-sizing: border-box;
+            outline: none;
+        }
+        .modal .form-group input:focus,
+        .modal .form-group textarea:focus {
+            border-color: #4CAF50;
+        }
+        .modal .btn-row {
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+            margin-top: 20px;
+        }
+        .modal .btn-row .btn {
+            padding: 8px 24px;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .btn-modal-confirm { background: #4CAF50; color: white; }
+        .btn-modal-confirm:hover { background: #43a047; }
+        .btn-modal-cancel { background: #37474f; color: #ccd; }
+        .btn-modal-cancel:hover { background: #455a64; }
+
+        .tab-bar {
+            display: flex;
+            gap: 4px;
+            margin-bottom: 16px;
+            background: #0f1a2f;
+            border-radius: 6px;
+            padding: 4px;
+            overflow-x: auto;
+        }
+        .tab-bar .tab-btn {
+            padding: 6px 16px;
+            border: none;
+            background: transparent;
+            color: #8899aa;
+            font-size: 13px;
+            cursor: pointer;
+            border-radius: 4px;
+            transition: all 0.2s;
+            white-space: nowrap;
+        }
+        .tab-bar .tab-btn:hover {
+            color: #ccd;
+            background: #1a2332;
+        }
+        .tab-bar .tab-btn.active {
+            background: #4CAF50;
+            color: white;
+        }
+        .tab-content {
+            display: none;
+            animation: fadeIn 0.2s ease;
+        }
+        .tab-content.active { display: block; }
+        @keyframes fadeIn {
+            from { opacity: 0.5; transform: translateY(4px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .filter-input {
+            width: 100%;
+            padding: 6px 12px;
+            background: #0f1a2f;
+            border: 1px solid #1a2332;
+            border-radius: 4px;
+            color: #ccd;
+            font-size: 13px;
+            outline: none;
+            margin-bottom: 12px;
+        }
+        .filter-input:focus {
+            border-color: #4CAF50;
+        }
+
+        @media (max-width: 900px) {
+            .settings-grid {
+                grid-template-columns: 1fr;
+            }
+            .settings-section.full {
+                grid-column: 1;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="set-page">
+        <h2 style="color:#ccd;font-weight:400;margin-bottom:20px;">⚙️ 设置</h2>
+
+        <div class="settings-grid">
+
+            <!-- ===== 左侧：wow.yaml 配置 ===== -->
+            <div class="settings-section full">
+                <div class="title">
+                    📝 启动器配置 (wow.yaml)
+                    <span class="badge">JSON 格式</span>
+                </div>
+                <div class="config-group">
+                    <label>配置内容</label>
+                    <textarea id="config-editor" spellcheck="false" style="min-height:200px;font-family:monospace;font-size:12px;"></textarea>
+                </div>
+                <div class="btn-row">
+                    <button class="btn btn-success" id="save-config-btn">💾 保存配置</button>
+                    <button class="btn btn-secondary" id="reload-config-btn">🔄 重新加载</button>
+                </div>
+                <div style="margin-top:8px;color:#667788;font-size:12px;">
+                    修改后需要重启服务才能生效，部分配置项保存后立即生效。
+                </div>
+            </div>
+
+            <!-- ===== wow 插件管理 ===== -->
+            <div class="settings-section">
+                <div class="title">
+                    🔌 wow 插件
+                    <span class="badge">扩展命令</span>
+                </div>
+                <div class="btn-row" style="margin-bottom:12px;">
+                    <button class="btn btn-primary" id="plugin-install-btn">📦 安装插件</button>
+                    <button class="btn btn-secondary" id="plugin-refresh-btn">🔄 刷新列表</button>
+                </div>
+                <input class="filter-input" id="plugin-filter" placeholder="筛选插件..." />
+                <div id="plugin-list">
+                    <div class="empty-state">加载中...</div>
+                </div>
+            </div>
+
+            <!-- ===== 主题包管理 ===== -->
+            <div class="settings-section">
+                <div class="title">
+                    🎨 主题包
+                    <span class="badge">界面样式</span>
+                </div>
+                <div class="btn-row" style="margin-bottom:12px;">
+                    <button class="btn btn-primary" id="theme-install-btn">📦 安装主题</button>
+                    <button class="btn btn-secondary" id="theme-refresh-btn">🔄 刷新列表</button>
+                </div>
+                <input class="filter-input" id="theme-filter" placeholder="筛选主题..." />
+                <div id="theme-list">
+                    <div class="empty-state">加载中...</div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- ===== 模态框：安装插件 ===== -->
+    <div class="modal-overlay" id="plugin-install-modal">
+        <div class="modal">
+            <h3>📦 安装插件</h3>
+            <div class="form-group">
+                <label>插件包路径或 URL</label>
+                <input type="text" id="plugin-install-source" placeholder="/path/to/plugin.zip 或 https://example.com/plugin.zip" />
+                <div style="color:#667788;font-size:12px;margin-top:4px;">支持 .zip 格式，需包含 plugin.json 和 index.js</div>
+            </div>
+            <div class="btn-row">
+                <button class="btn btn-modal-cancel" id="plugin-install-cancel">取消</button>
+                <button class="btn btn-modal-confirm" id="plugin-install-confirm">安装</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===== 模态框：安装主题 ===== -->
+    <div class="modal-overlay" id="theme-install-modal">
+        <div class="modal">
+            <h3>📦 安装主题包</h3>
+            <div class="form-group">
+                <label>主题包路径或 URL</label>
+                <input type="text" id="theme-install-source" placeholder="/path/to/theme.zip 或 https://example.com/theme.zip" />
+                <div style="color:#667788;font-size:12px;margin-top:4px;">支持 .zip 格式，需包含 theme.json</div>
+            </div>
+            <div class="btn-row">
+                <button class="btn btn-modal-cancel" id="theme-install-cancel">取消</button>
+                <button class="btn btn-modal-confirm" id="theme-install-confirm">安装</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast -->
+    <div class="toast" id="toast"></div>
+
+    <script>
+        (function() {
+            const token = sessionStorage.getItem('wow_token');
+            if (!token) {
+                window.location.href = '/login.html';
+                return;
+            }
+
+            // ==================== DOM ====================
+            const configEditor = document.getElementById('config-editor');
+            const saveConfigBtn = document.getElementById('save-config-btn');
+            const reloadConfigBtn = document.getElementById('reload-config-btn');
+
+            const pluginList = document.getElementById('plugin-list');
+            const pluginFilter = document.getElementById('plugin-filter');
+            const pluginInstallBtn = document.getElementById('plugin-install-btn');
+            const pluginRefreshBtn = document.getElementById('plugin-refresh-btn');
+            const pluginInstallModal = document.getElementById('plugin-install-modal');
+            const pluginInstallSource = document.getElementById('plugin-install-source');
+            const pluginInstallConfirm = document.getElementById('plugin-install-confirm');
+            const pluginInstallCancel = document.getElementById('plugin-install-cancel');
+
+            const themeList = document.getElementById('theme-list');
+            const themeFilter = document.getElementById('theme-filter');
+            const themeInstallBtn = document.getElementById('theme-install-btn');
+            const themeRefreshBtn = document.getElementById('theme-refresh-btn');
+            const themeInstallModal = document.getElementById('theme-install-modal');
+            const themeInstallSource = document.getElementById('theme-install-source');
+            const themeInstallConfirm = document.getElementById('theme-install-confirm');
+            const themeInstallCancel = document.getElementById('theme-install-cancel');
+
+            const toastEl = document.getElementById('toast');
+
+            // ==================== Toast ====================
+            let toastTimer = null;
+            function showToast(message, type = 'info', duration = 4000) {
+                toastEl.textContent = message;
+                toastEl.className = 'toast ' + type;
+                void toastEl.offsetWidth;
+                toastEl.classList.add('show');
+                if (toastTimer) clearTimeout(toastTimer);
+                toastTimer = setTimeout(() => {
+                    toastEl.classList.remove('show');
+                }, duration);
+            }
+
+            // ==================== API ====================
+            async function apiGet(path) {
+                const resp = await fetch(path, {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                if (!resp.ok) {
+                    const err = await resp.json();
+                    throw new Error(err.error || '请求失败');
+                }
+                return await resp.json();
+            }
+
+            async function apiPost(path, body) {
+                const resp = await fetch(path, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + token
+                    },
+                    body: JSON.stringify(body)
+                });
+                if (!resp.ok) {
+                    const err = await resp.json();
+                    throw new Error(err.error || '请求失败');
+                }
+                return await resp.json();
+            }
+
+            async function apiExec(command, args = []) {
+                const resp = await fetch('/api/exec', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + token
+                    },
+                    body: JSON.stringify({ command, args })
+                });
+                if (!resp.ok) {
+                    const err = await resp.json();
+                    throw new Error(err.error || '命令执行失败');
+                }
+                return await resp.json();
+            }
+
+            // ==================== 配置编辑器 ====================
+            async function loadConfig() {
+                try {
+                    const data = await apiGet('/api/config');
+                    configEditor.value = JSON.stringify(data, null, 2);
+                } catch (e) {
+                    configEditor.value = '加载失败: ' + e.message;
+                }
+            }
+
+            async function saveConfig() {
+                let config;
+                try {
+                    config = JSON.parse(configEditor.value);
+                } catch (e) {
+                    showToast('JSON 格式错误: ' + e.message, 'error');
+                    return;
+                }
+                try {
+                    await apiPost('/api/config', config);
+                    showToast('配置已保存', 'success');
+                } catch (e) {
+                    showToast('保存失败: ' + e.message, 'error');
+                }
+            }
+
+            // ==================== 插件管理 ====================
+            async function loadPlugins(filter = '') {
+                try {
+                    const data = await apiGet('/api/plugins');
+                    let plugins = data.plugins || [];
+                    if (filter) {
+                        const lower = filter.toLowerCase();
+                        plugins = plugins.filter(p =>
+                            p.name.toLowerCase().includes(lower) ||
+                            p.author.toLowerCase().includes(lower)
+                        );
+                    }
+                    if (plugins.length === 0) {
+                        pluginList.innerHTML = `<div class="empty-state">暂无插件</div>`;
+                        return;
+                    }
+                    let html = '';
+                    for (const p of plugins) {
+                        const status = p.active ? '已加载' : '未加载';
+                        html += `<div class="plugin-item">
+                            <div class="info">
+                                <span class="name">${escapeHtml(p.name)}</span>
+                                <span class="meta">作者: ${escapeHtml(p.author)} v${escapeHtml(p.version)}</span>
+                                <span class="meta" style="color:${p.active ? '#4CAF50' : '#667788'};">${status}</span>
+                            </div>
+                            <div class="actions">
+                                <button class="btn-sm ${p.active ? 'inactive' : 'active'}" data-action="toggle" data-name="${escapeHtml(p.name)}">${p.active ? '禁用' : '启用'}</button>
+                                <button class="btn-sm danger" data-action="delete" data-name="${escapeHtml(p.name)}">删除</button>
+                            </div>
+                        </div>`;
+                    }
+                    pluginList.innerHTML = html;
+                    // 绑定事件
+                    pluginList.querySelectorAll('[data-action]').forEach(el => {
+                        el.addEventListener('click', async () => {
+                            const action = el.dataset.action;
+                            const name = el.dataset.name;
+                            await handlePluginAction(action, name);
+                        });
+                    });
+                } catch (e) {
+                    pluginList.innerHTML = `<div class="empty-state" style="color:#f44336;">加载失败: ${escapeHtml(e.message)}</div>`;
+                }
+            }
+
+            async function handlePluginAction(action, name) {
+                try {
+                    if (action === 'delete') {
+                        if (!confirm(`确定要删除插件 "${name}" 吗？`)) return;
+                        await apiExec(`plugin remove ${name}`);
+                        showToast(`插件 ${name} 已删除`, 'success');
+                        loadPlugins(pluginFilter.value);
+                    } else if (action === 'toggle') {
+                        // 实际上 plugin toggle 未实现，用 install 替代？这里做占位
+                        showToast(`暂不支持切换插件状态，请使用 wow plugin 命令`, 'warning');
+                    }
+                } catch (e) {
+                    showToast('操作失败: ' + e.message, 'error');
+                }
+            }
+
+            async function installPlugin() {
+                const source = pluginInstallSource.value.trim();
+                if (!source) {
+                    showToast('请输入插件包路径或 URL', 'warning');
+                    return;
+                }
+                pluginInstallConfirm.disabled = true;
+                try {
+                    await apiExec(`plugin install ${source}`);
+                    showToast('插件安装成功', 'success');
+                    pluginInstallModal.classList.remove('active');
+                    pluginInstallSource.value = '';
+                    loadPlugins(pluginFilter.value);
+                } catch (e) {
+                    showToast('安装失败: ' + e.message, 'error');
+                } finally {
+                    pluginInstallConfirm.disabled = false;
+                }
+            }
+
+            // ==================== 主题管理 ====================
+            async function loadThemes(filter = '') {
+                try {
+                    const data = await apiGet('/api/themes');
+                    let themes = data.themes || [];
+                    const current = data.current || 'default';
+                    if (filter) {
+                        const lower = filter.toLowerCase();
+                        themes = themes.filter(t =>
+                            t.name.toLowerCase().includes(lower) ||
+                            t.author.toLowerCase().includes(lower)
+                        );
+                    }
+                    if (themes.length === 0) {
+                        themeList.innerHTML = `<div class="empty-state">暂无主题</div>`;
+                        return;
+                    }
+                    let html = '';
+                    for (const t of themes) {
+                        const isActive = t.name === current;
+                        html += `<div class="theme-item">
+                            <div class="info">
+                                <span class="name">${escapeHtml(t.name)} ${isActive ? '⭐' : ''}</span>
+                                <span class="meta">作者: ${escapeHtml(t.author)} v${escapeHtml(t.version)}</span>
+                                <span class="meta">${escapeHtml(t.description)}</span>
+                            </div>
+                            <div class="actions">
+                                ${!isActive ? `<button class="btn-sm active" data-action="switch" data-name="${escapeHtml(t.name)}">切换</button>` : ''}
+                                ${t.name !== 'default' ? `<button class="btn-sm danger" data-action="delete" data-name="${escapeHtml(t.name)}">删除</button>` : ''}
+                            </div>
+                        </div>`;
+                    }
+                    themeList.innerHTML = html;
+                    themeList.querySelectorAll('[data-action]').forEach(el => {
+                        el.addEventListener('click', async () => {
+                            const action = el.dataset.action;
+                            const name = el.dataset.name;
+                            await handleThemeAction(action, name);
+                        });
+                    });
+                } catch (e) {
+                    themeList.innerHTML = `<div class="empty-state" style="color:#f44336;">加载失败: ${escapeHtml(e.message)}</div>`;
+                }
+            }
+
+            async function handleThemeAction(action, name) {
+                try {
+                    if (action === 'delete') {
+                        if (!confirm(`确定要删除主题 "${name}" 吗？`)) return;
+                        await apiExec(`theme delete ${name}`);
+                        showToast(`主题 ${name} 已删除`, 'success');
+                        loadThemes(themeFilter.value);
+                    } else if (action === 'switch') {
+                        await apiExec(`theme switch ${name}`);
+                        showToast(`已切换到主题: ${name}，请刷新页面查看效果`, 'success');
+                        loadThemes(themeFilter.value);
+                    }
+                } catch (e) {
+                    showToast('操作失败: ' + e.message, 'error');
+                }
+            }
+
+            async function installTheme() {
+                const source = themeInstallSource.value.trim();
+                if (!source) {
+                    showToast('请输入主题包路径或 URL', 'warning');
+                    return;
+                }
+                themeInstallConfirm.disabled = true;
+                try {
+                    await apiExec(`theme install ${source}`);
+                    showToast('主题安装成功', 'success');
+                    themeInstallModal.classList.remove('active');
+                    themeInstallSource.value = '';
+                    loadThemes(themeFilter.value);
+                } catch (e) {
+                    showToast('安装失败: ' + e.message, 'error');
+                } finally {
+                    themeInstallConfirm.disabled = false;
+                }
+            }
+
+            function escapeHtml(text) {
+                if (!text) return '';
+                const div = document.createElement('div');
+                div.textContent = text;
+                return div.innerHTML;
+            }
+
+            // ==================== 事件绑定 ====================
+            saveConfigBtn.addEventListener('click', saveConfig);
+            reloadConfigBtn.addEventListener('click', loadConfig);
+
+            // 插件
+            pluginInstallBtn.addEventListener('click', () => {
+                pluginInstallModal.classList.add('active');
+                pluginInstallSource.focus();
+            });
+            pluginInstallCancel.addEventListener('click', () => {
+                pluginInstallModal.classList.remove('active');
+                pluginInstallSource.value = '';
+            });
+            pluginInstallConfirm.addEventListener('click', installPlugin);
+            pluginInstallModal.addEventListener('click', (e) => {
+                if (e.target === pluginInstallModal) {
+                    pluginInstallModal.classList.remove('active');
+                    pluginInstallSource.value = '';
+                }
+            });
+            pluginInstallSource.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') installPlugin();
+            });
+            pluginRefreshBtn.addEventListener('click', () => loadPlugins(pluginFilter.value));
+            pluginFilter.addEventListener('input', () => loadPlugins(pluginFilter.value));
+
+            // 主题
+            themeInstallBtn.addEventListener('click', () => {
+                themeInstallModal.classList.add('active');
+                themeInstallSource.focus();
+            });
+            themeInstallCancel.addEventListener('click', () => {
+                themeInstallModal.classList.remove('active');
+                themeInstallSource.value = '';
+            });
+            themeInstallConfirm.addEventListener('click', installTheme);
+            themeInstallModal.addEventListener('click', (e) => {
+                if (e.target === themeInstallModal) {
+                    themeInstallModal.classList.remove('active');
+                    themeInstallSource.value = '';
+                }
+            });
+            themeInstallSource.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') installTheme();
+            });
+            themeRefreshBtn.addEventListener('click', () => loadThemes(themeFilter.value));
+            themeFilter.addEventListener('input', () => loadThemes(themeFilter.value));
+
+            // ==================== 初始化 ====================
+            async function init() {
+                await loadConfig();
+                await loadPlugins();
+                await loadThemes();
+            }
+
+            init();
+
+            // 监听来自父框架的消息
+            window.addEventListener('message', (e) => {
+                if (e.origin !== window.location.origin) return;
+                if (e.data.type === 'refresh-settings') {
+                    loadConfig();
+                    loadPlugins();
+                    loadThemes();
+                }
+            });
+        })();
+    </script>
+</body>
+</html>
