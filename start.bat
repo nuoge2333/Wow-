@@ -58,6 +58,19 @@ if not exist "node_modules" (
 
 "%NODE_EXE%" src\cli.js %*
 
+if errorlevel 1 (
+    popd
+    pause
+    exit /b 1
+)
+
+:: If no args given, keep window open so user can read output
+if "%~1"=="" (
+    echo.
+    echo Press any key to continue...
+    pause >nul
+)
+
 popd
 exit /b 0
 

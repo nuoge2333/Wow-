@@ -24,6 +24,10 @@
 ### 🔧 修复（面板/Docker 兼容性）
 - **`start.sh` 非交互环境自动下载 Node.js**：移除 `read` 交互确认，检测到非 TTY（Pterodactyl/Docker）时自动下载便携 Node.js
 - **`start.sh` 无参数默认启动 Web 面板**：面板启动命令只写 `./start.sh` 时，不再打印 `--help` 后退出，而是默认 `web start` 保持进程常驻
+- **交互式菜单（`wow m`）支持混合输入**：
+  - 纯数字导航（1-14）直接分发到对应功能，改用数值比较修复了原先字符串比较把 `2`~`9` 误判为非法的 bug
+  - 同时保留长命令兜底：输入 `server start` / `web start` / `mod list` 等非数字内容时，直接作为 CLI 命令执行
+- **`start.bat` 增加 `pause`**：命令执行后/异常退出时暂停，避免 Windows cmd 窗口一闪而过看不到输出
 - 版本号同步至 3.1.4
 
 ---

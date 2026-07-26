@@ -6,6 +6,8 @@
  */
 
 const readline = require('readline');
+const { spawn } = require('child_process');
+const path = require('path');
 
 /**
  * 创建 readline 接口
@@ -126,7 +128,7 @@ async function showMainMenu(options = {}, directChoice = null) {
         console.log(`   0. 退出程序`);
         console.log('─'.repeat(60));
 
-        const choice = (await ask(rl, '请选择操作 (0-14): ')).trim();
+        const choice = (await ask(rl, '请选择操作 (0-14，或直接输入命令如 server start): ')).trim();
 
         if (choice === '0') {
             const confirm = await ask(rl, '确定要退出吗? (y/N): ');
@@ -137,8 +139,18 @@ async function showMainMenu(options = {}, directChoice = null) {
             continue;
         }
 
-        if (choice >= '1' && choice <= '14') {
-            await dispatchMenu(choice, options);
+        // 纯数字导航：1-14 直接分发到对应菜单（用数值比较，避免字符串比较把 2~9 误判为非法）
+        const num = parseInt(choice, 10);
+        if (!isNaN(num) && num >= 1 && num <= 14) {
+            await dispatchMenu(String(num), options);
+            await ask(rl, '\n按回车键返回主菜单...');
+        } else if (choice) {
+            // 长命令兜底：把输入内容当作 CLI 命令执行，例如 "server start" / "web start" / "mod list"
+            const parts = choice.split(/\s+/).filter(Boolean);
+            const cliPath = path.join(__dirname, 'cli.js');
+            console.log(`\n▶ 执行命令: wow ${parts.join(' ')}`);
+            const child = spawn(process.execPath, [cliPath, ...parts], { stdio: 'inherit' });
+            await new Promise(resolve => child.on('exit', resolve));
             await ask(rl, '\n按回车键返回主菜单...');
         } else {
             console.log('无效的选择，请重试');
