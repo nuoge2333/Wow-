@@ -30,7 +30,7 @@
 
 ```bash
 # 解压到任意目录
-unzip wow-3.0.0.zip
+unzip wow-3.1.0.zip
 cd wow
 ```
 
