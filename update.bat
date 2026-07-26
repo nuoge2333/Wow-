@@ -1,8 +1,7 @@
 @echo off
 setlocal enabledelayedexpansion
-:: wow~ 更新脚本 (Windows)
-:: 从 GitHub Releases 下载最新版本并覆盖更新
-:: 保留 server\ pool\ jre\ schemes\ node_modules\ 等运行时目录
+:: wow~ updater (Windows)
+:: Download latest from GitHub Releases and overwrite
 
 set SCRIPT_DIR=%~dp0
 cd /d "%SCRIPT_DIR%"
@@ -11,25 +10,24 @@ set TEMP_DIR=%TEMP%\wow_update_%RANDOM%
 set TEMP_ZIP=%TEMP_DIR%\update.zip
 
 echo ========================================
-echo   wow~ 自动更新工具
+echo   wow~ Updater
 echo ========================================
 echo.
 
-:: 创建临时目录
+:: Create temp dir
 mkdir "%TEMP_DIR%" 2>nul
 
-:: 获取最新 Release 信息
-echo 正在检查最新版本...
+:: Get latest release info
+echo Checking latest version...
 powershell -Command "& { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; try { $r = Invoke-RestMethod -Uri 'https://api.github.com/repos/nuoge2333/Wow-/releases/latest'; Write-Output $r.tag_name; Write-Output $r.assets[0].browser_download_url } catch { Write-Output 'ERROR' } }" > "%TEMP_DIR%\release.txt" 2>nul
 
 if not exist "%TEMP_DIR%\release.txt" (
-    echo 无法访问 GitHub API，请检查网络
+    echo Cannot access GitHub API. Check your network.
     goto :cleanup
 )
 
-:: 读取版本号和下载链接
+:: Read tag and download url
 set /p LATEST_TAG=<"%TEMP_DIR%\release.txt"
-:: 第二行是下载链接 - 用 more +1 跳过第一行
 for /f "usebackq skip=1 delims=" %%a in ("%TEMP_DIR%\release.txt") do (
     set DOWNLOAD_URL=%%a
     goto :got_url
@@ -37,34 +35,34 @@ for /f "usebackq skip=1 delims=" %%a in ("%TEMP_DIR%\release.txt") do (
 :got_url
 
 if "%LATEST_TAG%"=="ERROR" (
-    echo 无法获取版本信息
+    echo Failed to get version info.
     goto :cleanup
 )
 
-echo 最新版本: %LATEST_TAG%
-echo 下载地址: %DOWNLOAD_URL%
+echo Latest: %LATEST_TAG%
+echo URL: %DOWNLOAD_URL%
 echo.
 
-:: 下载
-echo 正在下载更新包...
+:: Download
+echo Downloading update package...
 powershell -Command "& { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri '%DOWNLOAD_URL%' -OutFile '%TEMP_ZIP%' }"
 if errorlevel 1 (
-    echo 下载失败
+    echo Download failed.
     goto :cleanup
 )
-echo 下载完成
+echo Download complete.
 echo.
 
-:: 解压
-echo 正在安装更新...
+:: Extract
+echo Installing update...
 mkdir "%TEMP_DIR%\extract" 2>nul
 powershell -Command "& { Add-Type -AssemblyName System.IO.Compression.FileSystem; [System.IO.Compression.ZipFile]::ExtractToDirectory('%TEMP_ZIP%', '%TEMP_DIR%\extract'); }"
 if errorlevel 1 (
-    echo 解压失败
+    echo Extraction failed.
     goto :cleanup
 )
 
-:: 从解压根目录递归找到包含 start.bat 的目录（跳过 core/ 子目录）
+:: Find project root: locate start.bat, skip core/ subdir
 set PROJECT_DIR=
 for /r "%TEMP_DIR%\extract" %%f in (start.bat) do (
     set FULL=%%~dpf
@@ -77,12 +75,12 @@ for /r "%TEMP_DIR%\extract" %%f in (start.bat) do (
 :found_project
 
 if "%PROJECT_DIR%"=="" (
-    echo 更新包格式错误，未找到 start.bat
+    echo Update package format error: start.bat not found.
     goto :cleanup
 )
 
-:: 覆盖更新（跳过运行时目录）
-echo 正在覆盖文件...
+:: Overwrite (skip runtime dirs)
+echo Overwriting files...
 for %%i in ("%PROJECT_DIR%*") do (
     set NAME=%%~nxi
     if /i not "!NAME!"=="server" if /i not "!NAME!"=="node_modules" if /i not "!NAME!"==".git" (
@@ -96,10 +94,10 @@ for %%i in ("%PROJECT_DIR%*") do (
 
 echo.
 echo ========================================
-echo   更新完成! %LATEST_TAG%
+echo   Update complete! %LATEST_TAG%
 echo ========================================
 echo.
-echo 运行 start.bat 启动 wow~
+echo Run start.bat to launch wow~
 
 :cleanup
 rmdir /s /q "%TEMP_DIR%" 2>nul
