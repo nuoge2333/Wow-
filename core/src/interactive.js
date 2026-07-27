@@ -1,13 +1,11 @@
 /**
  * 交互式菜单模块 (V3.1)
- * - wow m           → 进入交互式主菜单
+ * - wow m           → 进入交互式主菜单（纯数字导航）
  * - wow m <1-14>    → 直接跳转到指定功能
- * 整合 V2 的菜单式引导界面，同时保留命令行直调
+ * 菜单仅支持数字选择；命令行用法（如 server start）请查阅 README.MD
  */
 
 const readline = require('readline');
-const { spawn } = require('child_process');
-const path = require('path');
 
 /**
  * 创建 readline 接口
@@ -104,12 +102,12 @@ async function showMainMenu(options = {}, directChoice = null) {
 
         console.log('─'.repeat(60));
 
-        // 主菜单
+        // 主菜单（纯数字导航；长命令不在此处执行，请直接查阅文档使用命令行）
         const menuItems = [
-            ['1', '下载/安装服务器'],
-            ['2', '启动服务器'],
-            ['3', '管理模组/插件'],
-            ['4', '修改服务器配置 (server.properties)'],
+            ['1', '启动服务器'],
+            ['2', '下载/安装实例'],
+            ['3', '变更配置 (server.properties)'],
+            ['4', '管理模组/插件'],
             ['5', '错误日志分析'],
             ['6', '认证设置 (外置登录)'],
             ['7', '下载管理器设置'],
@@ -128,7 +126,7 @@ async function showMainMenu(options = {}, directChoice = null) {
         console.log(`   0. 退出程序`);
         console.log('─'.repeat(60));
 
-        const choice = (await ask(rl, '请选择操作 (0-14，或直接输入命令如 server start): ')).trim();
+        const choice = (await ask(rl, '请选择操作 (输入数字 0-14，命令用法见 README.MD): ')).trim();
 
         if (choice === '0') {
             const confirm = await ask(rl, '确定要退出吗? (y/N): ');
@@ -139,21 +137,13 @@ async function showMainMenu(options = {}, directChoice = null) {
             continue;
         }
 
-        // 纯数字导航：1-14 直接分发到对应菜单（用数值比较，避免字符串比较把 2~9 误判为非法）
+        // 纯数字导航：1-14 直接分发到对应菜单（数值比较，避免字符串比较误判）
         const num = parseInt(choice, 10);
         if (!isNaN(num) && num >= 1 && num <= 14) {
             await dispatchMenu(String(num), options);
             await ask(rl, '\n按回车键返回主菜单...');
-        } else if (choice) {
-            // 长命令兜底：把输入内容当作 CLI 命令执行，例如 "server start" / "web start" / "mod list"
-            const parts = choice.split(/\s+/).filter(Boolean);
-            const cliPath = path.join(__dirname, 'cli.js');
-            console.log(`\n▶ 执行命令: wow ${parts.join(' ')}`);
-            const child = spawn(process.execPath, [cliPath, ...parts], { stdio: 'inherit' });
-            await new Promise(resolve => child.on('exit', resolve));
-            await ask(rl, '\n按回车键返回主菜单...');
         } else {
-            console.log('无效的选择，请重试');
+            console.log('无效的选择。本菜单仅支持数字选择；如需使用命令（如 server start / web start），请直接查阅 README.MD 中的命令说明。');
             await ask(rl, '按回车键继续...');
         }
     }
@@ -183,28 +173,6 @@ async function dispatchMenu(choice, options) {
     try {
         switch (choice) {
             case '1': {
-                // 下载/安装服务器
-                printHeader('下载/安装服务器');
-                if (!installer) {
-                    console.log('安装器模块未加载');
-                    break;
-                }
-                console.log('\n支持的服务器类型:');
-                const types = ['vanilla', 'forge', 'fabric', 'paper', 'purpur', 'spigot', 'bukkit', 'mohist', 'leaves'];
-                types.forEach((t, i) => console.log(`  ${i + 1}. ${t}`));
-                console.log('  0. 返回');
-                const tChoice = await ask(rl, '\n选择类型 (1-9): ');
-                const tIdx = parseInt(tChoice) - 1;
-                if (tIdx >= 0 && tIdx < types.length) {
-                    const version = await ask(rl, 'Minecraft 版本 (如 1.20.1): ');
-                    if (version) {
-                        await installer.install(types[tIdx], version);
-                    }
-                }
-                break;
-            }
-
-            case '2': {
                 // 启动服务器
                 printHeader('启动服务器');
                 if (!serverManager) {
@@ -224,7 +192,29 @@ async function dispatchMenu(choice, options) {
                 break;
             }
 
-            case '3': {
+            case '2': {
+                // 下载/安装实例
+                printHeader('下载/安装实例');
+                if (!installer) {
+                    console.log('安装器模块未加载');
+                    break;
+                }
+                console.log('\n支持的服务器类型:');
+                const types = ['vanilla', 'forge', 'fabric', 'paper', 'purpur', 'spigot', 'bukkit', 'mohist', 'leaves'];
+                types.forEach((t, i) => console.log(`  ${i + 1}. ${t}`));
+                console.log('  0. 返回');
+                const tChoice = await ask(rl, '\n选择类型 (1-9): ');
+                const tIdx = parseInt(tChoice) - 1;
+                if (tIdx >= 0 && tIdx < types.length) {
+                    const version = await ask(rl, 'Minecraft 版本 (如 1.20.1): ');
+                    if (version) {
+                        await installer.install(types[tIdx], version);
+                    }
+                }
+                break;
+            }
+
+            case '4': {
                 // 管理模组/插件
                 printHeader('管理模组/插件');
                 if (!modManager) {
@@ -357,7 +347,7 @@ async function dispatchMenu(choice, options) {
                 break;
             }
 
-            case '4': {
+            case '3': {
                 // 修改服务器配置 (server.properties)
                 printHeader('修改服务器配置 (server.properties)');
                 const ServerProperties = require('./config').ServerProperties;

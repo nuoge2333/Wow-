@@ -60,16 +60,16 @@ if not exist "node_modules" (
 
 if errorlevel 1 (
     popd
-    pause
+    echo.
+    echo An error occurred (exit code %errorlevel%). Press any key to close...
+    pause >nul
     exit /b 1
 )
 
-:: If no args given, keep window open so user can read output
-if "%~1"=="" (
-    echo.
-    echo Press any key to continue...
-    pause >nul
-)
+:: Always keep the window open so the user can read the output (prevents flash-close)
+echo.
+echo Press any key to exit...
+pause >nul
 
 popd
 exit /b 0
