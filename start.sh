@@ -30,12 +30,44 @@ detect_arch() {
 OS=$(detect_os)
 ARCH=$(detect_arch)
 
+# 检测是否为安卓（Termux 或原生安卓 shell）
+is_android() {
+    if [ "$(uname -o 2>/dev/null)" = "Android" ]; then echo yes; return; fi
+    [ -f /system/build.prop ] && echo yes || echo no
+}
+
+# Termux/安卓 处理：安卓必须通过 Termux 运行（标准 Linux ARM 版 Node 依赖 glibc，安卓 bionic 跑不了）
+TERMUX_MODE=0
+if [ "$(is_android)" = "yes" ]; then
+    if [ -n "$PREFIX" ] && [ -d "$PREFIX" ]; then
+        # Termux 环境：使用 pkg 提供的 Node.js，不下载 glibc 便携版
+        TERMUX_MODE=1
+        echo "检测到 Termux 环境，将使用 pkg 提供的 Node.js"
+        if ! command -v node >/dev/null 2>&1; then
+            echo "未检测到 node，正在通过 pkg 安装 Node.js..."
+            pkg update -y && pkg install -y nodejs
+            if ! command -v node >/dev/null 2>&1; then
+                echo "❌ Node.js 安装失败，请手动运行: pkg install nodejs"
+                exit 1
+            fi
+        fi
+        NODE_EXE="$(command -v node)"
+        NPM_CMD="$(command -v npm)"
+    else
+        echo "❌ 错误：在安卓上运行 wow~ 必须通过 Termux。"
+        echo "   请从 F-Droid 或 https://termux.dev 安装 Termux，"
+        echo "   然后在 Termux 内执行本脚本（不要使用系统自带终端 / ADB shell）。"
+        exit 1
+    fi
+fi
+
 # 检测是否为交互式终端（Pterodactyl/Docker 等非 TTY 环境自动跳过确认）
 INTERACTIVE=0
 if [[ -t 0 ]]; then
     INTERACTIVE=1
 fi
 
+if [ "$TERMUX_MODE" -eq 0 ]; then
 echo "检测到系统: $OS, 架构: $ARCH"
 if [ "$INTERACTIVE" -eq 1 ]; then
     echo "是否需要下载对应平台的 Node.js 便携版？ (y/n)"
@@ -107,8 +139,10 @@ if [ ! -f "$NODE_EXE" ]; then
 
     echo "Node.js 便携版已安装到 $NODE_DIR"
 fi
+fi
 
-# 确定 npm 路径
+# 确定 npm 路径（Termux 已在前面设置好 NPM_CMD）
+if [ "$TERMUX_MODE" -eq 0 ]; then
 if [ -f "$NODE_DIR/extracted/bin/npm" ]; then
     NPM_CMD="$NODE_DIR/extracted/bin/npm"
 elif [ -f "$NODE_DIR/npm" ]; then
@@ -118,11 +152,14 @@ else
     NPM_CLI=$(find "$NODE_DIR" -name "npm-cli.js" -path "*/node_modules/npm/*" 2>/dev/null | head -1)
     NPM_CMD="$NPM_CLI"
 fi
+fi
 
 # 安装依赖（首次运行或依赖缺失时自动安装）
 if [ ! -d "node_modules" ]; then
     echo "Installing dependencies..."
-    if [ -n "$NPM_CMD" ]; then
+    if [ "$TERMUX_MODE" -eq 1 ]; then
+        npm install --no-audit --no-fund
+    elif [ -n "$NPM_CMD" ]; then
         "$NODE_EXE" "$NPM_CMD" install --no-audit --no-fund
     else
         echo "⚠ npm 未找到，尝试使用系统 npm..."

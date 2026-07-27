@@ -29,6 +29,10 @@
   - 仅接受数字选择（1-14）；非数字输入提示用户查阅 README.MD 的命令说明，**不再在菜单内执行长命令**
   - 仍用数值比较，避免字符串比较把 `2`~`9` 误判非法
 - **`start.bat` 无条件 `pause` 防闪退**：无论命令是否带参数、是否报错，执行结束后都暂停等待按键，避免 cmd 窗口输出一段后直接关闭看不到结果
+- **`start.sh` 强制安卓通过 Termux 运行**：
+  - 检测到 Termux（`$PREFIX` 存在）时，改用 `pkg install nodejs` 提供 Node.js，不再下载 glibc 便携版（安卓 bionic 跑不了）
+  - 检测到安卓但不是 Termux（如系统终端 / ADB shell）时直接报错退出，提示安装 Termux
+  - 标准 Linux / macOS 仍走原有便携 Node 下载逻辑
 - 版本号同步至 3.1.4
 
 ---

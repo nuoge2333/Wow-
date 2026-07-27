@@ -140,8 +140,9 @@ wow/
 | 组件 | 要求 |
 |------|------|
 | 操作系统 | Windows 10+, Linux (glibc 2.28+), macOS 10.15+ |
+| 安卓 | **必须通过 Termux 运行**（标准 Linux ARM 版 Node.js 依赖 glibc，安卓 bionic 无法直接使用） |
 | Java | 8、17、21 (按需自动下载) |
-| Node.js | 自动下载便携版，无需手动安装 |
+| Node.js | 自动下载便携版，无需手动安装；Termux 下通过 `pkg install nodejs` 提供 |
 | 浏览器 | Chrome 90+, Firefox 88+, Edge 90+, Safari 15+ |
 > 注：Windows 7无法保证能够稳定运行，建议升级到Windows10+
 ---
