@@ -125,7 +125,7 @@ wow/
 - [完整命令参考](docs/COMMANDS.md)
 - [方案管理详解 (模板模式)](docs/SCHEMES.md)
 - [主题包开发指南](docs/THEMES.md)
-- [插件开发指南](docs/PLUGINS.md)
+- [插件开发指南](docs/WOW-PLUGINS.md)
 - [Web 面板使用说明](docs/WEB_PANEL.md)
 - [配置参考](docs/CONFIG.md)
 - [Web API 参考](docs/API.md)

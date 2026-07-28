@@ -361,8 +361,8 @@ class ServerManager {
                 }
             }
             // Windows 或其他：无法跨进程发送命令
-            console.warn('⚠️ 跨进程无法发送命令到服务器 stdin，请使用 kill 强制终止');
-            console.warn('   提示: 在同一终端会话中启动服务器可支持 stop 命令');
+            console.warn('⚠️ 跨进程模式：无法向服务器 stdin 发送 stop 命令');
+            console.warn('   将自动发送 SIGTERM 信号，由 Minecraft 优雅保存并退出（在同一终端会话中启动服务器可直接执行 stop 命令）');
             return false;
         }
 
