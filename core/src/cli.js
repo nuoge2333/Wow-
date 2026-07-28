@@ -29,7 +29,7 @@ const { startWeb, stopWeb, webStatus } = require('./web_service');
 program
     .name('wow')
     .description('Minecraft 服务器管理工具 - 默认优先，可以修改')
-    .version('3.1.4');
+    .version('3.1.5');
 
 // ==================== init ====================
 

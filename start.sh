@@ -93,12 +93,12 @@ if [ ! -f "$NODE_EXE" ]; then
     echo "正在下载 Node.js 便携版..."
     NODE_VERSION="20.17.0"
     if [ "$OS" = "linux" ]; then
-        NODE_URL="https://nodejs.org/dist/v$NODE_VERSION/node-v$NODE_VERSION-linux-$ARCH.tar.xz"
+        NODE_URL="https://mirrors.tuna.tsinghua.edu.cn/nodejs-release/v$NODE_VERSION/node-v$NODE_VERSION-linux-$ARCH.tar.xz"
         FILENAME="node.tar.xz"
         EXTRACT_CMD="tar -xJf $FILENAME"
         EXTRACT_DIR="node-v$NODE_VERSION-linux-$ARCH"
     elif [ "$OS" = "darwin" ]; then
-        NODE_URL="https://nodejs.org/dist/v$NODE_VERSION/node-v$NODE_VERSION-darwin-$ARCH.tar.gz"
+        NODE_URL="https://mirrors.tuna.tsinghua.edu.cn/nodejs-release/v$NODE_VERSION/node-v$NODE_VERSION-darwin-$ARCH.tar.gz"
         FILENAME="node.tar.gz"
         EXTRACT_CMD="tar -xzf $FILENAME"
         EXTRACT_DIR="node-v$NODE_VERSION-darwin-$ARCH"
@@ -158,12 +158,12 @@ fi
 if [ ! -d "node_modules" ]; then
     echo "Installing dependencies..."
     if [ "$TERMUX_MODE" -eq 1 ]; then
-        npm install --no-audit --no-fund
+        npm install --no-audit --no-fund --registry https://mirrors.tuna.tsinghua.edu.cn/npm/
     elif [ -n "$NPM_CMD" ]; then
-        "$NODE_EXE" "$NPM_CMD" install --no-audit --no-fund
+        "$NODE_EXE" "$NPM_CMD" install --no-audit --no-fund --registry https://mirrors.tuna.tsinghua.edu.cn/npm/
     else
         echo "⚠ npm 未找到，尝试使用系统 npm..."
-        npm install --no-audit --no-fund 2>/dev/null || {
+        npm install --no-audit --no-fund --registry https://mirrors.tuna.tsinghua.edu.cn/npm/ 2>/dev/null || {
             echo "❌ 无法安装依赖，请手动运行: cd core && npm install"
             exit 1
         }
