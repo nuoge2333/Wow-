@@ -28,6 +28,11 @@
 - 文档不再明示支持安卓（不把安卓 / Termux 列为支持平台）
 - 版本号同步至 3.1.5
 
+### 📝 文档修复
+- **修复 README 文档死链**：插件文档链接 `docs/PLUGINS.md` → `docs/WOW-PLUGINS.md`（实际文件名）
+- **补全缺失文档**：新增 `docs/WEB_PANEL.md`（Web 面板使用说明）与 `docs/API.md`（Web API 参考），此前 README 引用但文件缺失
+- **`server stop` 跨进程提示文案更准确**：不再误导"请使用 kill 强制终止"，改为说明将自动发送 SIGTERM 由 Minecraft 优雅关闭
+
 ---
 
 ## [3.1.4] — 2026-07-26
