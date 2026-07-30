@@ -8,7 +8,8 @@
 
 | 版本 | 状态 | 发布时间 |
 |------|------|------|
-| **3.1.5** | 当前版本 |2026-07-28|
+| **3.2.0** | 当前版本 |2026-07-30|
+| **3.1.5** | 上一版本 |2026-07-28|
 | **3.1.4** | 上一版本 |2026-07-26|
 | **3.1.3** | 上一版本 |2026-07-26|
 | **3.1.2** | 上一版本 |2026-07-26|
@@ -20,12 +21,27 @@
 
 ---
 
+## [3.2.0] — 2026-07-30
+
+### 🎉 安卓环境回归
+- **正式支持 Android（Termux）**：文档重新声明安卓平台支持，安卓上必须通过 Termux 运行
+- **自动环境装配**：`start.sh` 在 Termux 中检测到无 Node.js 时，自动执行 `pkg update -y && pkg install -y nodejs`
+- **系统要求文档更新**：README 添加 Android（Termux）行，注明 Node.js 由 `pkg` 提供
+- 版本号同步至 3.2.0
+
+### 📝 文档修复（3.1.5 延续）
+- 修复 README 文档死链（`docs/PLUGINS.md` → `docs/WOW-PLUGINS.md`）
+- 补全缺失文档：`docs/WEB_PANEL.md`、`docs/API.md`
+- `server stop` 跨进程提示文案更准确
+
+---
+
 ## [3.1.5] — 2026-07-28
 
 ### 🔧 优化
 - **Node.js 下载改用清华镜像**：`start.sh` 从 `https://mirrors.tuna.tsinghua.edu.cn/nodejs-release/` 获取便携 Node.js（原为 nodejs.org）
 - **npm 依赖安装改用清华镜像**：依赖安装使用 `https://mirrors.tuna.tsinghua.edu.cn/npm/` 作为 registry
-- 文档不再明示支持安卓（不把安卓 / Termux 列为支持平台）
+- 文档暂不列安卓为支持平台（底层 Termux 适配逻辑保留，3.2.0 正式回归）
 - 版本号同步至 3.1.5
 
 ### 📝 文档修复
