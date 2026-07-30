@@ -29,12 +29,12 @@
 ### 1. 下载与解压
 
 ```bash
-# 解压到任意目录
-unzip wow-3.1.0.zip
+# 解压你下载的 wow~ 压缩包（文件名以实际下载的为准）
+unzip wow*.zip
 cd wow
 ```
 
-### 2. 运行启动脚本
+### 2. 运行启动脚本（只做环境准备，不会"开服"）
 
 ```bash
 # Windows
@@ -45,12 +45,29 @@ chmod +x start.sh
 ./start.sh
 ```
 
+> ⚠️ **关于这个脚本**：它只负责**装好 Node.js 和依赖**（首次运行会自动下载）。
+> 直接运行 `./start.sh`（不带任何参数）在交互终端里会**打印一屏帮助然后退出**——这是正常现象，**不是程序崩溃**，也不是已经启动了服务器。要真正开服，请继续往下看。
+
 > 💡 **更新**: 运行 `./update.sh` (Linux/macOS) 或 `update.bat` (Windows) 自动升级到最新版
+
+### 2.5 让 `wow` 命令可用（最关键的一步，别跳过）
+
+`start.sh` / `start.bat` **不会**把 `wow` 注册成系统命令。下面所有 `wow ...` 命令，用任一种方式运行：
+
+| 方式 | 怎么用 | 说明 |
+|------|--------|------|
+| ① **透传参数（推荐新手）** | `./start.sh init` / `start.bat init` | `start.sh` 会把参数直接转交给工具，零配置、全平台通用 |
+| ② **注册成全局命令** | 先 `cd core && npm link`，以后直接 `wow init` | Termux / 系统自带 Node 最方便；便携 Node（脚本自动下载的）可能不在 PATH，用 ① 更稳 |
+| ③ **临时调用** | 在 `core` 目录下 `npx wow init` | 不想污染全局时用 |
+
+> 🆘 **如果你敲 `wow init` 报 `command not found`（找不到命令）**，说明没做上面任一步——直接用 `./start.sh init`（方式①）即可，不用纠结 `npm link`。
 
 ### 3. 初始化环境
 
 ```bash
-wow init
+# 任选上面一种方式调用，例如用方式①：
+./start.sh init
+# 若已 npm link，也可直接：wow init
 ```
 
 ### 4. 安装服务器
@@ -80,7 +97,7 @@ wow web start
 
 | 类别 | 命令 |
 |------|------|
-| 交互式菜单 | `m [1-14]` |
+| 交互式菜单 | `wow m [1-14]`（输入数字选择功能；注意是 `wow m`，不是单独的 `m`） |
 | 服务器管理 | `server start/stop/kill/restart/status` |
 | 方案管理 (模板模式) | `scheme create/list/switch/delete/info/status/edit/pull/prune/register` |
 | 模组管理 | `mod remove/list/toggle/sync` |
@@ -130,7 +147,11 @@ wow/
 - [配置参考](docs/CONFIG.md)
 - [Web API 参考](docs/API.md)
 - [术语解释](docs/TERMS.md)
-- [故障排除](docs/TROUBLE_*.md)
+- [故障排除（Debian/Ubuntu）](docs/TROUBLE_DEBIAN.md)
+- [故障排除（Windows）](docs/TROUBLE_WINDOWS.md)
+- [故障排除（Arch/Manjaro）](docs/TROUBLE_ARCH.md)
+- [故障排除（macOS）](docs/TROUBLE_MACOS.md)
+- [故障排除（Android / Termux）](docs/TROUBLE_ANDROID.md)
 - [更新日志](docs/CHANGELOG.md)
 
 ---

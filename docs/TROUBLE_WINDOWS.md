@@ -23,6 +23,28 @@
 
 ## 启动问题
 
+### Q: 提示 'wow' 不是内部或外部命令（或 wow: command not found）
+
+**原因：** `wow` 不是系统命令，`start.bat` 不会自动注册它。
+
+**解决：** 直接用 `start.bat` 透传参数，不要单独敲 `wow`：
+```batch
+start.bat init
+start.bat server start --memory 4G
+start.bat web start
+```
+如果确实想注册成全局命令：先 `cd core` 再 `npm link`（需要管理员权限，且 Node 已在 PATH 中），之后才能直接 `wow`。**新手建议直接用 `start.bat` 方式。**
+
+---
+
+### Q: 运行 `start.bat`（不带任何参数）后窗口一闪而过 / 立刻退出
+
+**原因：** 这是**正常现象，不是崩溃**。在交互终端里，`start.bat` 不带参数会打印帮助后退出（脚本末尾的 `pause` 会等你按键）。真正开服要用带参数的命令，例如 `start.bat server start`。
+
+**解决：** 永远带着子命令运行，例如 `start.bat init`、`start.bat server start`、`start.bat web start`。
+
+---
+
 ### Q: 双击 `start.bat` 闪退
 
 **原因：** 路径包含空格或中文字符。

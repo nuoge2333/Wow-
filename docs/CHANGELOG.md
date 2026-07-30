@@ -34,6 +34,12 @@
 - 补全缺失文档：`docs/WEB_PANEL.md`、`docs/API.md`
 - `server stop` 跨进程提示文案更准确
 
+### 📖 文档易用性（本轮）
+- 新增「怎么运行 wow 命令」统一说明：README 2.5、QUICKSTART 2.5、COMMANDS 前言——澄清 **`wow` 不会自动注册**，必须用 `./start.sh` 透传 / `cd core && npm link` / `npx wow` 三种方式之一调用
+- 各平台故障文档补充高频误区：`wow: command not found` 与 `start.sh` 无参运行「秒退」其实是正常现象
+- 新增 `docs/TROUBLE_ANDROID.md`：Termux 的 OpenSSL 符号缺失（`OSSL_PROVIDER_add_conf_parameter`）、`wow` 命令找不到、息屏杀进程等排查，并说明 Docker 沙箱「进程退出 = 资源释放」的挂机注意事项
+- QUICKSTART 与 README 的所有可运行示例改为 `./start.sh <子命令>` 形式（Windows 用 `start.bat`），降低新手门槛
+
 ---
 
 ## [3.1.5] — 2026-07-28

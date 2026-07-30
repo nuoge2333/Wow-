@@ -2,6 +2,13 @@
 
 > wow~ 所有命令按类别分组，共计 51 个命令
 
+> 💡 **怎么运行这些命令？** 本文档为了简洁，所有命令都写作 `wow xxx`。但 `wow` **不是系统自带命令**，默认不能直接敲。请用下面任一种方式运行（推荐新手用第①种）：
+> - ① **透传（最省事）**：`cd` 到 wow 目录后，把 `wow` 换成 `./start.sh`，例如 `./start.sh server start --memory 4G`（Windows 用 `start.bat`）。
+> - ② **注册后直接敲**：先 `cd core && npm link`，之后就能直接 `wow server start`。
+> - ③ **临时调用**：在 `core` 目录里用 `npx wow server start`。
+>
+> 如果直接敲 `wow` 出现 `command not found`（找不到命令），说明没做上面任一步——改用 `./start.sh xxx` 即可，不用纠结 `npm link`。更详细的图解见 [QUICKSTART.md](QUICKSTART.md)。
+
 ---
 
 ## 全局选项

@@ -7,8 +7,8 @@
 ## 1. 下载与解压
 
 ```bash
-# 解压到任意目录
-unzip wow-3.0.0.zip
+# 解压你下载的 wow~ 压缩包（文件名以实际下载的为准）
+unzip wow*.zip
 cd wow
 ```
 
@@ -31,10 +31,29 @@ chmod +x start.sh
 
 ---
 
+## 2.5 ⚠️ 重要：怎么运行 `wow` 命令（必读，否则后面全卡住）
+
+`start.sh` / `start.bat` **只是安装器**，它**不会**把 `wow` 注册成系统命令。你后面会看到大量 `wow xxx` 命令，它们**不能直接敲**，要用下面任一种方式运行：
+
+| 方式 | 怎么敲 | 适合谁 |
+|------|--------|--------|
+| ① 透传参数（最省事，推荐新手） | `./start.sh init`、`start.bat init` | 所有人，尤其 Windows / Termux / 新手 |
+| ② 注册成全局命令 | 先 `cd core && npm link`，之后直接 `wow init` | 愿意折腾一次的 Linux/macOS/Termux 用户 |
+| ③ 临时调用 | 在 `core` 目录里 `npx wow init` | 不想装全局命令时 |
+
+> 🆘 如果你直接敲 `wow init` 出现 `command not found`（找不到命令），**别慌**，直接用 `./start.sh init`（方式①）就行，不用管 `npm link`。
+
+📌 **全文约定**：从 step 3 起，下面所有示例里的 `wow xxx` 都默认你已按上面选好一种方式；**新手请一律用 `./start.sh xxx` 代替 `wow xxx`**（Windows 用 `start.bat xxx`）。表格里的 `wow install ...` 同理替换。
+
+---
+
 ## 3. 初始化环境
 
+> 用方式①运行（新手推荐）：
+
 ```bash
-wow init
+./start.sh init
+# 若已按方式② npm link，也可直接：wow init
 ```
 
 该命令会：
@@ -46,6 +65,8 @@ wow init
 ---
 
 ## 4. 安装服务器核心
+
+> 📌 本节的安装命令示例写作 `wow install ...`，实际运行时请替换成 `./start.sh install ...`（或你选的调用方式）。
 
 ### 服务端核心分类
 
@@ -132,13 +153,13 @@ wow install https://example.com/plugin.jar -o ./server/plugins/
 
 ```bash
 # 创建方案
-wow scheme create my_survival --version 1.20.1 --loader forge --type forge
+./start.sh scheme create my_survival --version 1.20.1 --loader forge --type forge
 
 # 列出所有方案
-wow scheme list
+./start.sh scheme list
 
 # 切换到方案
-wow scheme switch my_survival
+./start.sh scheme switch my_survival
 ```
 
 ---
@@ -147,16 +168,16 @@ wow scheme switch my_survival
 
 ```bash
 # 启动（默认分配 2G 内存）
-wow server start
+./start.sh server start
 
 # 指定内存分配
-wow server start --memory 4G
+./start.sh server start --memory 4G
 
 # 停止
-wow server stop
+./start.sh server stop
 
 # 查看状态
-wow server status
+./start.sh server status
 ```
 
 ---
@@ -165,10 +186,10 @@ wow server status
 
 ```bash
 # 启动 Web 服务（默认端口 8080）
-wow web start
+./start.sh web start
 
 # 指定端口
-wow web start --port 8080 --host 0.0.0.0
+./start.sh web start --port 8080 --host 0.0.0.0
 ```
 
 然后在浏览器中访问 `http://localhost:8080`，使用邮箱验证码登录。
@@ -186,19 +207,19 @@ Web 面板提供以下功能：
 
 ```bash
 # 列出已安装模组
-wow mod list
+./start.sh mod list
 
 # 安装模组（URL）
-wow mod install https://example.com/JEI.jar
+./start.sh mod install https://example.com/JEI.jar
 
 # 安装模组（本地文件）
-wow mod install ./JEI.jar
+./start.sh mod install ./JEI.jar
 
 # 启用/禁用模组
-wow mod toggle JEI
+./start.sh mod toggle JEI
 
 # 卸载模组
-wow mod remove JEI
+./start.sh mod remove JEI
 ```
 
 ---
@@ -209,44 +230,44 @@ wow mod remove JEI
 
 ```bash
 # 1. 初始化
-wow init
+./start.sh init
 
 # 2. 安装 Paper
-wow install paper 1.20.1
+./start.sh install paper 1.20.1
 
 # 3. 创建方案
-wow scheme create survival --version 1.20.1 --loader paper --type paper
+./start.sh scheme create survival --version 1.20.1 --loader paper --type paper
 
 # 4. 切换方案
-wow scheme switch survival
+./start.sh scheme switch survival
 
 # 5. 启动服务器
-wow server start --memory 4G
+./start.sh server start --memory 4G
 
 # 6. 打开 Web 面板
-wow web start
+./start.sh web start
 ```
 
 ### 快速搭建一个模组服务器
 
 ```bash
 # 1. 初始化
-wow init
+./start.sh init
 
 # 2. 安装 Forge
-wow install forge 1.20.1
+./start.sh install forge 1.20.1
 
 # 3. 创建方案
-wow scheme create modded --version 1.20.1 --loader forge --type forge
+./start.sh scheme create modded --version 1.20.1 --loader forge --type forge
 
 # 4. 切换方案
-wow scheme switch modded
+./start.sh scheme switch modded
 
 # 5. 安装模组（通过 Web 面板或 CLI）
-wow mod install https://example.com/JEI.jar
+./start.sh mod install https://example.com/JEI.jar
 
 # 6. 启动服务器
-wow server start --memory 6G
+./start.sh server start --memory 6G
 ```
 
 ---
@@ -256,5 +277,5 @@ wow server start --memory 6G
 - 📖 [完整命令参考](COMMANDS.md)
 - 📦 [方案管理详解](SCHEMES.md)
 - 🎨 [主题包开发指南](THEMES.md)
-- 🔌 [插件开发指南](PLUGINS.md)
+- 🔌 [插件开发指南](WOW-PLUGINS.md)
 - 🛠️ [故障排除](TROUBLE_*.md)
