@@ -29,6 +29,9 @@
 - **系统要求文档更新**：README 添加 Android（Termux）行，注明 Node.js 由 `pkg` 提供
 - 版本号同步至 3.2.0
 
+### 🐛 修复
+- **安卓 Java 安装修正**：`core/src/jre_manager.js` 增加 Termux/安卓检测，安卓上不再下载跑不动的 glibc 版 Temurin JRE，改为通过 `pkg install openjdk-17`（1.21+ 自动用 `openjdk-21`）安装 Bionic 兼容的 OpenJDK，并自动回退检测 `java` 路径
+
 ### 📝 文档修复（3.1.5 延续）
 - 修复 README 文档死链（`docs/PLUGINS.md` → `docs/WOW-PLUGINS.md`）
 - 补全缺失文档：`docs/WEB_PANEL.md`、`docs/API.md`

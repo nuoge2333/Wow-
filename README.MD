@@ -162,7 +162,7 @@ wow/
 |------|------|
 | 操作系统 | Windows 10+, Linux (glibc 2.28+), macOS 10.15+, Android (Termux) |
 |------|------|
-| Java | 8、17、21 (按需自动下载) |
+| Java | 8、17、21（桌面端按需自动下载 Temurin JRE；安卓/Termux 由 `pkg` 提供 openjdk-17/21） |
 | Node.js | 自动下载便携版，无需手动安装（Android 上由 Termux 的 pkg 提供） |
 | 浏览器 | Chrome 90+, Firefox 88+, Edge 90+, Safari 15+ |
 > 注：Windows 7无法保证能够稳定运行，建议升级到Windows10+；安卓必须通过 Termux 运行（从 F-Droid 或 https://termux.dev 安装），Wow~ 会自动调用 pkg 安装 Node.js。

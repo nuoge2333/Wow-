@@ -8,7 +8,7 @@
 const fs = require('fs-extra');
 const path = require('path');
 const axios = require('axios');
-const { spawn } = require('child_process');
+const { spawn, execSync } = require('child_process');
 const ProgressBar = require('progress');
 const utils = require('./utils');
 
@@ -51,6 +51,27 @@ class JreManager {
         };
         this.downloadedVersions = [];
         this._scanDownloaded();
+    }
+
+    /**
+     * 检测是否为安卓（Termux）环境
+     * Termux 使用 Android 的 Bionic libc，无法运行常规 glibc 版 JRE，
+     * 因此 Java 必须通过 pkg 安装（openjdk-17 / openjdk-21）。
+     */
+    isAndroid() {
+        // Termux 会设置 PREFIX 指向其 usr 目录
+        if (process.env.PREFIX && fs.existsSync(process.env.PREFIX)) {
+            return true;
+        }
+        // 原生安卓 / Termux 都存在 build.prop
+        if (fs.existsSync('/system/build.prop')) {
+            return true;
+        }
+        try {
+            const u = execSync('uname -o 2>/dev/null', { stdio: 'pipe' }).toString();
+            if (u.includes('Android')) return true;
+        } catch (e) { /* ignore */ }
+        return false;
     }
 
     /**
@@ -288,6 +309,34 @@ class JreManager {
     }
 
     /**
+     * 安卓/Termux 环境：通过 pkg 安装 OpenJDK（Bionic 兼容版）
+     * Termux 的 openjdk-17 / openjdk-21 才是能在安卓上运行的 Java，
+     * 常规的 glibc Temurin JRE 在 Termux 里跑不起来。
+     */
+    async ensureTermuxJava(featureVersion) {
+        // 安卓上 Java 8 无 pkg 包，旧版 MC 统一用 openjdk-17；1.21+ 用 openjdk-21
+        const pkgName = featureVersion === '21' ? 'openjdk-21' : 'openjdk-17';
+        console.log(`检测到 Termux/安卓环境，正在通过 pkg 安装 ${pkgName}...`);
+        try {
+            execSync(`pkg update -y && pkg install -y ${pkgName}`, { stdio: 'inherit' });
+        } catch (e) {
+            if (pkgName !== 'openjdk-17') {
+                console.log(`${pkgName} 安装失败，回退到 openjdk-17...`);
+                execSync('pkg update -y && pkg install -y openjdk-17', { stdio: 'inherit' });
+            } else {
+                throw new Error(`pkg 安装 ${pkgName} 失败，请手动运行: pkg install openjdk-17`);
+            }
+        }
+
+        const javaPath = utils.detectJava();
+        if (!javaPath) {
+            throw new Error('OpenJDK 已安装但未能在 PATH 中检测到 java，请手动运行: pkg install openjdk-17');
+        }
+        console.log(`已通过 pkg 安装 Java: ${javaPath}`);
+        return javaPath;
+    }
+
+    /**
      * 确保系统 Java 或自动下载的 JRE 可用
      */
     async ensureJavaForMinecraft(minecraftVersion) {
@@ -295,8 +344,13 @@ class JreManager {
         let javaPath = this.getJavaExecutable(requiredVersion);
 
         if (!javaPath) {
-            // 自动下载
-            javaPath = await this.ensureJre(requiredVersion);
+            if (this.isAndroid()) {
+                // 安卓/Termux：不能用 glibc 版 JRE，改用 pkg 安装 OpenJDK
+                javaPath = await this.ensureTermuxJava(requiredVersion);
+            } else {
+                // 自动下载
+                javaPath = await this.ensureJre(requiredVersion);
+            }
         }
 
         return javaPath;

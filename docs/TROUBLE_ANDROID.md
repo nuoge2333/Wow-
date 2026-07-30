@@ -81,6 +81,24 @@ node -v   # 确认有输出
 
 ---
 
+## Java 问题
+
+### Q: 启动服务器提示 "Java not found" / 安卓上怎么装 Java？
+
+**原因：** Minecraft 需要 Java，但安卓（Termux）**不能**用桌面那种 glibc 版 JRE——Termux 是 Android 的 Bionic libc，常规 JRE 跑不起来。
+
+**解决：** wow~ 现在会在需要时**自动**执行下面这条（无需手动）：
+
+```bash
+pkg update -y && pkg install -y openjdk-17   # 1.21+ 版本会自动改用 openjdk-21
+```
+
+如果自动安装因网络失败，手动跑上面这条即可。装好后 `java -version` 有输出，再 `./start.sh server start`。
+
+> 注意：Termux 没有 Java 8 的 pkg 包，旧版 MC（1.16 及以下）在手机上并不现实，建议用云服务器。
+
+---
+
 ## 服务器与挂机问题
 
 ### Q: 手机息屏 / 切后台后服务器被杀死
@@ -123,6 +141,7 @@ node -v   # 确认有输出
 | 项目 | 桌面版（Win/Linux/macOS） | Termux（Android） |
 |------|---------------------------|-------------------|
 | Node.js 来源 | 脚本自动下载便携版 | 由 `pkg` 提供 |
+| Java 来源 | 自动下载 Temurin JRE（glibc） | 由 `pkg` 提供 openjdk-17 / openjdk-21 |
 | 适合长期挂机 | 是 | 不推荐（手机后台限制） |
 | 性能上限 | 取决于电脑 | 取决于手机 CPU / 内存 |
 | 外网访问 | 直接端口转发 | 需内网穿透或云服务器 |
