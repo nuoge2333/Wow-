@@ -40,9 +40,11 @@ is_android() {
 TERMUX_MODE=0
 if [ "$(is_android)" = "yes" ]; then
     if [ -n "$PREFIX" ] && [ -d "$PREFIX" ]; then
-        # Termux 环境：使用 pkg 提供的 Node.js，不下载 glibc 便携版
+        # Termux 环境：使用 pkg 提供的 Node.js 和 OpenJDK，不下载 glibc 便携版
         TERMUX_MODE=1
-        echo "检测到 Termux 环境，将使用 pkg 提供的 Node.js"
+        echo "检测到 Termux 环境，将使用 pkg 提供的 Node.js 和 OpenJDK"
+
+        # 安装 Node.js
         if ! command -v node >/dev/null 2>&1; then
             echo "未检测到 node，正在通过 pkg 安装 Node.js..."
             pkg update -y && pkg install -y nodejs
@@ -51,6 +53,17 @@ if [ "$(is_android)" = "yes" ]; then
                 exit 1
             fi
         fi
+
+        # 安装 OpenJDK 17
+        if ! command -v java >/dev/null 2>&1; then
+            echo "未检测到 java，正在通过 pkg 安装 OpenJDK 17..."
+            pkg install -y openjdk-17
+            if ! command -v java >/dev/null 2>&1; then
+                echo "❌ OpenJDK 17 安装失败，请手动运行: pkg install openjdk-17"
+                exit 1
+            fi
+        fi
+
         NODE_EXE="$(command -v node)"
         NPM_CMD="$(command -v npm)"
     else
