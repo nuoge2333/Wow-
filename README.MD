@@ -131,6 +131,7 @@ wow/
 - [Web API 参考](docs/API.md)
 - [术语解释](docs/TERMS.md)
 - [故障排除](docs/TROUBLE_*.md)
+- [安卓 (Termux) 故障排除](docs/TROUBLE_ANDROID(Termux).md)
 - [更新日志](docs/CHANGELOG.md)
 
 ---
@@ -139,11 +140,12 @@ wow/
 
 | 组件 | 要求 |
 |------|------|
-| 操作系统 | Windows 10+, Linux (glibc 2.28+), macOS 10.15+ |
-| Java | 8、17、21 (按需自动下载) |
-| Node.js | 自动下载便携版，无需手动安装 |
+| 操作系统 | Windows 10+, Linux (glibc 2.28+), macOS 10.15+, **Android（需 Termux）** |
+| Java | 8、17、21（桌面端按需自动下载）；Android 端由 Termux 的 `pkg install openjdk-17` 提供 |
+| Node.js | 自动下载便携版（桌面端），或由 Termux 的 `pkg` 提供（安卓端）；均无需手动安装 |
 | 浏览器 | Chrome 90+, Firefox 88+, Edge 90+, Safari 15+ |
-> 注：Windows 7无法保证能够稳定运行，建议升级到Windows10+
+> 注：Windows 7 无法保证能够稳定运行，建议升级到 Windows 10+。
+> 注：安卓必须在 **Termux** 终端内运行（不要用系统自带终端或 ADB shell），且设备架构需为 arm64 或 x64。
 ---
 
 ## 🤝 参与贡献
