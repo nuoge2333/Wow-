@@ -23,13 +23,14 @@ const PackGenerator = require('./pack_generator');
 const LogHandler = require('./log_handler');
 const Mailer = require('./mailer');
 const { startWeb, stopWeb, webStatus } = require('./web_service');
+const Terracotta = require('./terracotta');
 
 // ==================== 配置与初始化 ====================
 
 program
     .name('wow')
     .description('Minecraft 服务器管理工具 - 默认优先，可以修改')
-    .version('3.2.2', '-V');
+    .version('3.3.0', '-V');
 
 // ==================== init ====================
 
@@ -422,6 +423,58 @@ webCmd
     .description('查看 Web 服务状态')
     .action(() => {
         webStatus();
+    });
+
+// ==================== lan (V3.3.0 陶瓦内网穿透 / 联机) ====================
+
+const lanCmd = program.command('lan').description('联机 / 内网穿透（陶瓦 Terracotta）');
+
+lanCmd
+    .command('host')
+    .description('我要当房主：开房让好友联机（自动下载并启动陶瓦）')
+    .option('-r, --room <code>', '指定固定房间号（留空则自动生成）')
+    .action(async (options) => {
+        try {
+            const { roomCode } = await Terracotta.hostRoom({ roomCode: options.room });
+            console.log(`\n🎮 好友在 PCL / HMCL / BakaXL / FCL 中选择「加入陶瓦房间」并输入房间号 ${roomCode} 即可联机。`);
+        } catch (e) {
+            console.error(`❌ 开房失败: ${e.message}`);
+        }
+    });
+
+lanCmd
+    .command('stop')
+    .description('关闭联机房间（停止陶瓦）')
+    .action(async () => {
+        try {
+            await Terracotta.stopHost();
+        } catch (e) {
+            console.error(`❌ 关房失败: ${e.message}`);
+        }
+    });
+
+lanCmd
+    .command('status')
+    .description('查看联机房间状态 / 房间号')
+    .action(async () => {
+        try {
+            const s = await Terracotta.getStatus();
+            if (!s.running) {
+                console.log('当前未开房（陶瓦未运行）。使用 `wow lan host` 开房。');
+                return;
+            }
+            console.log('🏠 联机房间状态:');
+            console.log(`  运行状态:  🟢 运行中`);
+            console.log(`  本地 API:  127.0.0.1:${s.port}`);
+            console.log(`  房间号:    ${s.roomCode || '(生成中)'}`);
+            console.log(`  状态机:    ${s.state || '未知'}`);
+            if (s.roomCode) {
+                console.log(`\n  把房间号发给好友，对方在 PCL / HMCL / BakaXL / FCL 中选择「加入陶瓦房间」并输入该房间号即可联机。`);
+            }
+            console.log(`  ${Terracotta.getCopyright()}`);
+        } catch (e) {
+            console.error(`❌ 查询失败: ${e.message}`);
+        }
     });
 
 // ==================== pack ====================

@@ -348,6 +348,15 @@ class ServerManager {
         console.log(`服务器已启动，PID: ${this.process.pid}`);
         console.log(`日志文件: ${this.logFile}`);
 
+        // V3.3.0 联机 / 内网穿透（陶瓦 Terracotta）：若开启 auto_room，服务器启动后自动开房
+        if (config.getConfig('lan.auto_room', false)) {
+            const Terracotta = require('./terracotta');
+            // 非阻塞：稍等 MC 服务端绑定端口，再由陶瓦扫描并开房
+            setTimeout(() => {
+                Terracotta.autoHost().catch(e => console.warn(`[lan] 自动开房失败: ${e.message}`));
+            }, 4000);
+        }
+
         this.process.on('exit', (code) => {
             if (this._sigintHandler) {
                 process.removeListener('SIGINT', this._sigintHandler);
@@ -418,6 +427,9 @@ class ServerManager {
      * - 超时后降级为 SIGKILL
      */
     async stop(timeout = 30000) {
+        // V3.3.0 关闭联机房间（陶瓦），与服务器停止同步
+        _stopLanIfRunning();
+
         if (!this.isRunning()) {
             console.log('服务器未运行');
             return;
@@ -477,6 +489,9 @@ class ServerManager {
      * 强制终止服务器
      */
     kill() {
+        // V3.3.0 关闭联机房间（陶瓦）
+        _stopLanIfRunning();
+
         const pid = this._readPid();
         if (!pid) {
             console.log('未找到 PID 文件，服务器可能未运行');
@@ -563,6 +578,20 @@ class ServerManager {
             jarFile,
             logFile: this.logFile
         };
+    }
+}
+
+/**
+ * V3.3.0 模块级辅助：若陶瓦联机房间正在运行，则关闭它（服务器停止/强杀时同步清理）
+ */
+function _stopLanIfRunning() {
+    try {
+        const Terracotta = require('./terracotta');
+        if (Terracotta.isRunning()) {
+            Terracotta.stopHost().catch(e => console.warn(`[lan] 关房失败: ${e.message}`));
+        }
+    } catch (e) {
+        // 忽略
     }
 }
 

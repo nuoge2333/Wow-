@@ -68,7 +68,7 @@ async function showMainMenu(options = {}, directChoice = null) {
 
     while (true) {
         clearScreen();
-        printHeader('wow~ Minecraft 服务器管理器 V3.1');
+        printHeader('wow~ Minecraft 服务器管理器 V3.3');
 
         // 状态信息
         try {
@@ -117,7 +117,8 @@ async function showMainMenu(options = {}, directChoice = null) {
             ['11', '系统设置'],
             ['12', '服务器状态监控'],
             ['13', '备份/恢复 (方案管理)'],
-            ['14', 'Web 主题更改']
+            ['14', 'Web 主题更改'],
+            ['15', '联机 / 我要当房主 (陶瓦)']
         ];
 
         for (const [num, desc] of menuItems) {
@@ -126,7 +127,7 @@ async function showMainMenu(options = {}, directChoice = null) {
         console.log(`   0. 退出程序`);
         console.log('─'.repeat(60));
 
-        const choice = (await ask(rl, '请选择操作 (输入数字 0-14，命令用法见 README.MD): ')).trim();
+        const choice = (await ask(rl, '请选择操作 (输入数字 0-15，命令用法见 README.MD): ')).trim();
 
         if (choice === '0') {
             const confirm = await ask(rl, '确定要退出吗? (y/N): ');
@@ -137,9 +138,9 @@ async function showMainMenu(options = {}, directChoice = null) {
             continue;
         }
 
-        // 纯数字导航：1-14 直接分发到对应菜单（数值比较，避免字符串比较误判）
+        // 纯数字导航：1-15 直接分发到对应菜单（数值比较，避免字符串比较误判）
         const num = parseInt(choice, 10);
-        if (!isNaN(num) && num >= 1 && num <= 14) {
+        if (!isNaN(num) && num >= 1 && num <= 15) {
             await dispatchMenu(String(num), options);
             await ask(rl, '\n按回车键返回主菜单...');
         } else {
@@ -723,6 +724,44 @@ async function dispatchMenu(choice, options) {
                         }
                         break;
                     }
+                }
+                break;
+            }
+
+            case '15': {
+                // 联机 / 我要当房主（陶瓦 Terracotta）
+                printHeader('联机 / 我要当房主 (陶瓦)');
+                const Terracotta = require('./terracotta');
+                console.log('\n   powered by Terracotta | 陶瓦联机 (AGPLv3)');
+                console.log('   基于 EasyTier 的内网穿透，好友无需公网 IP 即可加入你的 Minecraft 服务端。');
+                console.log('   加入端由 PCL / HMCL / BakaXL / FCL 等启动器内置支持。\n');
+                console.log('  1. 我要当房主（开房）');
+                console.log('  2. 查看房间号 / 状态');
+                console.log('  3. 关房（停止陶瓦）');
+                console.log('  0. 返回');
+                const sub = await ask(rl, '\n请选择 (0-3): ');
+                try {
+                    if (sub === '1') {
+                        console.log('提示：开房前请先启动 Minecraft 服务端（菜单 1），陶瓦会自动扫描本机服务端端口。');
+                        await Terracotta.hostRoom({});
+                    } else if (sub === '2') {
+                        const s = await Terracotta.getStatus();
+                        if (!s.running) {
+                            console.log('当前未开房（陶瓦未运行）。选择 1 开房。');
+                        } else {
+                            console.log(`运行状态:  🟢 运行中`);
+                            console.log(`本地 API:  127.0.0.1:${s.port}`);
+                            console.log(`房间号:    ${s.roomCode || '(生成中)'}`);
+                            console.log(`状态机:    ${s.state || '未知'}`);
+                            if (s.roomCode) {
+                                console.log(`\n把房间号发给好友，对方在 PCL / HMCL / BakaXL / FCL 中选择「加入陶瓦房间」并输入该房间号即可联机。`);
+                            }
+                        }
+                    } else if (sub === '3') {
+                        await Terracotta.stopHost();
+                    }
+                } catch (e) {
+                    console.error(`❌ 操作失败: ${e.message}`);
                 }
                 break;
             }

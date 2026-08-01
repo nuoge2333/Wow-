@@ -127,6 +127,7 @@ wow/
 - [主题包开发指南](docs/THEMES.md)
 - [插件开发指南](docs/WOW-PLUGINS.md)
 - [Web 面板使用说明](docs/WEB_PANEL.md)
+- [联机 / 内网穿透（陶瓦）](docs/LAN_TERRACOTTA.md)
 - [配置参考](docs/CONFIG.md)
 - [Web API 参考](docs/API.md)
 - [术语解释](docs/TERMS.md)
@@ -200,6 +201,7 @@ MIT 许可证
 
 - [BMCLAPI2](https://bmclapi2.bangbang93.com) —— 国内 Minecraft 下载镜像
 - [authlib-injector](https://authlib-injector.yushi.moe) —— 外置登录支持
+- [Terracotta｜陶瓦联机](https://github.com/burningtnt/Terracotta) —— 联机 / 内网穿透支持（基于 EasyTier，AGPLv3）；wow~ 通过其本地 HTTP API 驱动，未修改其二进制
 - [Mojang](https://www.minecraft.net) —— Minecraft 游戏本身
 > *Minecraft 是 Mojang AB 的注册商标。 本项目未经 Mojang 或 Microsoft 批准，也不与 Mojang 或 Microsoft 关联。*
 ---

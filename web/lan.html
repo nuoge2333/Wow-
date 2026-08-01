@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>联机(陶瓦) - wow</title>
+    <link rel="stylesheet" href="/css/main.css">
+    <style>
+        .lan-wrap { padding: 20px 24px; max-width: 920px; }
+        .lan-copyright {
+            background: #14202e; border: 1px solid #2a3a5e; border-left: 4px solid #4CAF50;
+            border-radius: 8px; padding: 12px 16px; color: #9fb3c8; font-size: 13px; margin-bottom: 18px;
+        }
+        .lan-copyright a { color: #6fb3ff; }
+        .lan-status {
+            display: flex; align-items: center; gap: 10px; margin-bottom: 16px;
+            font-size: 15px;
+        }
+        .lan-room {
+            font-size: 28px; font-weight: 700; letter-spacing: 2px; color: #4CAF50;
+            padding: 8px 14px; background: #14202e; border-radius: 8px; display: inline-block;
+            word-break: break-all;
+        }
+        .lan-field { margin: 14px 0; }
+        .lan-field label { display: block; font-size: 13px; color: #8899aa; margin-bottom: 6px; }
+        .lan-field input {
+            width: 260px; padding: 8px 10px; background: #0f1822; border: 1px solid #2a3a5e;
+            border-radius: 6px; color: #eee; font-size: 14px;
+        }
+        .lan-hint { font-size: 13px; color: #667788; margin-top: 8px; line-height: 1.6; }
+        .lan-actions { margin: 18px 0; display: flex; gap: 12px; flex-wrap: wrap; }
+        .lan-meta { font-size: 13px; color: #8899aa; margin-top: 6px; }
+        .lan-meta b { color: #cdd9e5; }
+    </style>
+</head>
+<body>
+    <div class="lan-wrap">
+        <h2 style="color:#4CAF50; margin-top:0;">🌐 联机 / 内网穿透（陶瓦 Terracotta）</h2>
+
+        <div class="lan-copyright">
+            <b>版权声明：</b>本功能由
+            <a href="https://github.com/burningtnt/Terracotta" target="_blank" rel="noopener">Terracotta｜陶瓦联机</a>
+            提供支持（基于 EasyTier，AGPLv3）。wow~ 通过陶瓦提供的本地 HTTP API 与之交互，未修改其二进制。
+            感谢 burningtnt 的开源贡献。
+        </div>
+
+        <div class="lan-status">
+            <span class="status-dot" id="statusDot" style="display:inline-block;width:12px;height:12px;border-radius:50%;background:#667788;"></span>
+            <span id="statusText">未开房</span>
+        </div>
+
+        <div class="card">
+            <div class="card-body">
+                <div class="card-title">房间号（发给好友加入）</div>
+                <div id="roomBox">
+                    <span class="lan-room" id="roomCode">—</span>
+                </div>
+                <div class="lan-meta" id="roomMeta"></div>
+                <div class="lan-hint">
+                    好友无需公网 IP。让对方在 <b>PCL / HMCL / BakaXL / FCL</b> 启动器中选择「加入陶瓦房间」，
+                    输入上面的房间号即可加入你的 Minecraft 服务端。
+                </div>
+            </div>
+        </div>
+
+        <div class="lan-field">
+            <label>固定房间号（可选，留空 = 自动生成；开房前填写，再次开房生效）</label>
+            <input id="roomInput" type="text" placeholder="留空自动生成" maxlength="40" />
+        </div>
+
+        <div class="lan-actions">
+            <button class="btn btn-primary" id="btnHost">🏠 我要当房主（开房）</button>
+            <button class="btn btn-secondary" id="btnRefresh">🔄 刷新状态</button>
+            <button class="btn btn-danger" id="btnStop">🛑 关房</button>
+        </div>
+
+        <div class="lan-hint" id="msg"></div>
+
+        <div class="lan-hint">
+            <b>使用前提：</b>开房前请先启动 Minecraft 服务端（「仪表盘 → 启动服务器」或 <code>wow server start</code>）。
+            陶瓦会自动扫描本机服务端端口并建立内网穿透。首次开房会联网从 Gitee 镜像下载陶瓦二进制（约 8–14 MB），
+            之后复用本地缓存。可在 <code>core/wow.yaml</code> 的 <code>lan</code> 段配置 <code>auto_room</code>（服务器启动自动开房）、
+            <code>mirror</code>、<code>version</code> 等。
+        </div>
+    </div>
+
+    <script>
+        (function () {
+            const $ = (id) => document.getElementById(id);
+
+            function api(endpoint, method, body) {
+                return window.wow.apiRequest(endpoint, method || 'GET', body || null);
+            }
+
+            function setStatus(running, text) {
+                $('statusDot').style.background = running ? '#4CAF50' : '#667788';
+                $('statusText').textContent = text;
+            }
+
+            function showMsg(text, isError) {
+                $('msg').textContent = text;
+                $('msg').style.color = isError ? '#ff7961' : '#9fb3c8';
+            }
+
+            async function refresh() {
+                try {
+                    const s = await api('/lan/status');
+                    if (s.running) {
+                        setStatus(true, '🟢 房间运行中');
+                        $('roomCode').textContent = s.roomCode || '(生成中)';
+                        $('roomMeta').innerHTML = '本地 API: <b>127.0.0.1:' + (s.port || '?') +
+                            '</b> ｜ 状态机: <b>' + (s.state || '未知') + '</b>';
+                    } else {
+                        setStatus(false, '未开房');
+                        $('roomCode').textContent = '—';
+                        $('roomMeta').textContent = '';
+                    }
+                } catch (e) {
+                    setStatus(false, '未开房');
+                    showMsg('状态查询失败: ' + e.message, true);
+                }
+            }
+
+            $('btnHost').addEventListener('click', async function () {
+                const code = $('roomInput').value.trim();
+                this.disabled = true;
+                showMsg('正在开房（首次需联网下载陶瓦二进制，请稍候）…');
+                try {
+                    const r = await api('/lan/host', 'POST', { roomCode: code });
+                    if (r.success) {
+                        $('roomCode').textContent = r.roomCode;
+                        setStatus(true, '🟢 房间运行中');
+                        showMsg('开房成功！把房间号发给好友即可联机。');
+                        refresh();
+                    } else {
+                        showMsg('开房失败: ' + (r.error || '未知错误'), true);
+                    }
+                } catch (e) {
+                    showMsg('开房失败: ' + e.message, true);
+                } finally {
+                    this.disabled = false;
+                }
+            });
+
+            $('btnRefresh').addEventListener('click', function () {
+                refresh();
+            });
+
+            $('btnStop').addEventListener('click', async function () {
+                this.disabled = true;
+                try {
+                    const r = await api('/lan/stop', 'POST', {});
+                    if (r.success) {
+                        setStatus(false, '已关房');
+                        $('roomCode').textContent = '—';
+                        $('roomMeta').textContent = '';
+                        showMsg('已关闭联机房间。');
+                    } else {
+                        showMsg('关房失败: ' + (r.error || '未知错误'), true);
+                    }
+                } catch (e) {
+                    showMsg('关房失败: ' + e.message, true);
+                } finally {
+                    this.disabled = false;
+                }
+            });
+
+            refresh();
+        })();
+    </script>
+</body>
+</html>

@@ -15,6 +15,7 @@ const jwt = require('jsonwebtoken');
 const config = require('./config');
 const utils = require('./utils');
 const ServerManager = require('./server');
+const Terracotta = require('./terracotta');
 
 // 用于存储 WebSocket 客户端连接
 let wsClients = [];
@@ -357,7 +358,39 @@ function startWeb(options = {}) {
         res.json({ themes, current: config.getConfig('web.theme', 'default') });
     });
 
-    // ===== 创建 HTTP 服务器 =====
+        /**
+     * 联机 / 内网穿透（陶瓦 Terracotta）— V3.3.0
+     */
+    app.post('/api/lan/host', async (req, res) => {
+        try {
+            const roomCode = (req.body && req.body.roomCode) || config.getConfig('lan.room_code', '');
+            const result = await Terracotta.hostRoom({ roomCode });
+            res.json({ success: true, roomCode: result.roomCode, port: result.port, copyright: Terracotta.getCopyright() });
+        } catch (e) {
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+    app.post('/api/lan/stop', async (req, res) => {
+        try {
+            await Terracotta.stopHost();
+            res.json({ success: true });
+        } catch (e) {
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+    app.get('/api/lan/status', async (req, res) => {
+        try {
+            const s = await Terracotta.getStatus();
+            s.copyright = Terracotta.getCopyright();
+            res.json(s);
+        } catch (e) {
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+// ===== 创建 HTTP 服务器 =====
 
     const server = http.createServer(app);
 

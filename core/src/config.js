@@ -78,7 +78,20 @@ const DEFAULT_CONFIG = {
         dir: 'jre',
         auto_download: true
     },
-    auto_scheme: true
+    auto_scheme: true,
+    // 联机 / 内网穿透（陶瓦 Terracotta）配置 V3.3.0
+    // 陶瓦(Terracotta) 基于 EasyTier，为 Minecraft: Java Edition 提供内网/局域网穿透联机。
+    // 项目: https://github.com/burningtnt/Terracotta  国内镜像: https://gitee.com/burningtnt/Terracotta/releases
+    // 3.3.0 仅实现「房主端 / 我要当房主」，加入端由 PCL/HMCL/BakaXL/FCL 等启动器内置支持。
+    lan: {
+        auto_room: false,          // 服务器启动时自动开房（非交互/后台场景推荐）
+        room_code: '',             // 固定房间号（留空 = 由陶瓦自动生成）；好友在启动器输入此号即可加入
+        server_port: 25565,        // 本地 MC 服务端端口（陶瓦会自动扫描本机该端口的 Minecraft 服务端）
+        mirror: 'https://gitee.com/burningtnt/Terracotta/releases', // 二进制下载镜像（默认 Gitee）
+        version: '0.4.2',          // 陶瓦版本号（对应 release tag v0.4.2）
+        binary_url: ''             // 二进制完整下载地址（留空 = 按 mirror/version/platform 自动拼装）
+        // 运行时状态（端口/pid/房间号/二进制路径）由 wow~ 写入 core/.lan.json，请勿手改本段之外的字段
+    }
 };
 
 /**

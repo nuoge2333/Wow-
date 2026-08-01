@@ -1,0 +1,563 @@
+/**
+ * terracotta.js — 陶瓦 (Terracotta) 内网穿透 / 联机 管理器 (V3.3.0)
+ *
+ * ┌─────────────────────────────────────────────────────────────────────────┐
+ * │ 版权与许可声明（AGPL 例外条款要求：通过 HTTP API 驱动陶瓦时，              │
+ * │ 必须在用户界面显著处标识其版权信息。wow~ 已在 CLI / Web 面板 / 菜单中展示。）│
+ * └─────────────────────────────────────────────────────────────────────────┘
+ *
+ * 陶瓦 (Terracotta) 是一个基于 EasyTier 的 Minecraft: Java Edition 联机工具，
+ * 提供开箱即用的内网 / 局域网穿透能力，并内置了对 PCL / HMCL / BakaXL / FCL
+ * 等启动器「加入陶瓦房间」的支持。
+ *
+ *   项目地址: https://github.com/burningtnt/Terracotta
+ *   国内镜像: https://gitee.com/burningtnt/Terracotta/releases
+ *
+ * 许可证: GNU Affero General Public License v3.0 or later，并附以下例外条款：
+ *   「作为特例，如果您的程序通过以下方式利用本作品，则相应的行为不会导致
+ *    您的作品被 AGPL 协议涵盖：
+ *    1. 您的程序通过打包的方式包含本作品未经修改的二进制形式……；或
+ *    2. 您的程序通过本作品提供的进程间通信接口（如 HTTP API）与未经修改的
+ *       本作品应用程序进行交互，且在您的程序用户界面明显处标识了本作品的
+ *       版权信息。」
+ *
+ * wow~ 采用第 2 种方式（HTTP API 驱动未经修改的陶瓦二进制），并据此在
+ * CLI / Web 面板 / 交互菜单中显著标注陶瓦版权。wow~ 本身仍保持 MIT 许可。
+ *
+ * ───────────────────────────────────────────────────────────────────────────
+ * 本地 HTTP API（陶瓦二进制在本地启动的 Web 服务，依据陶瓦源码
+ * src/server、src/controller 整理；二进制启动后监听 127.0.0.1:<动态端口>，
+ * 端口由操作系统分配，陶瓦在 --hmcl 模式下把端口写入指定文件 {"port": N}。
+ * 最终端口以运行时实际读取为准。）
+ *
+ *   GET  /meta                 -> 版本 / 编译信息（用于健康检查）
+ *   GET  /state                -> 当前状态机 {state, room, ...}
+ *   GET  /state/ide            -> 复位为空闲 (waiting)
+ *   GET  /state/scanning[?room=<code>&player=<p>&public_nodes=...]
+ *                              -> 开始「当房主 / 开房」（room 留空=自动生成）
+ *   GET  /state/guesting?room=<code>&player=<p>
+ *                              -> 加入房间（3.3.0 房主端未实现）
+ *   GET  /panic?peaceful=true  -> 优雅退出陶瓦进程
+ *   GET  /log                  -> 下载陶瓦日志
+ *   /                         -> 陶瓦自带 Web UI
+ *
+ * 状态机 state 取值：
+ *   waiting | host-scanning | host-starting | host-ok |
+ *   guest-connecting | guest-starting | guest-ok | exception
+ * 开房成功后 GET /state 返回 room.code —— 即好友在 PCL/HMCL/BakaXL/FCL 中
+ * 输入以加入联机的「房间号」。
+ *
+ * 注意：陶瓦通过扫描本机正在运行的 Minecraft 服务端来自动发现 server-port，
+ * 因此 HTTP API 没有独立的端口 / 密码参数；房间号本身就是加入凭证。
+ * ───────────────────────────────────────────────────────────────────────────
+ */
+
+const fs = require('fs-extra');
+const path = require('path');
+const os = require('os');
+const { spawn } = require('child_process');
+const axios = require('axios');
+const ProgressBar = require('progress');
+const config = require('./config');
+
+// 运行时状态文件（端口 / pid / 房间号 / 二进制路径等），跨进程共享
+const STATE_FILE = path.join(__dirname, '../.lan.json');
+// 陶瓦二进制与临时文件所在目录
+const LAN_DIR = path.join(__dirname, '../lan');
+// 传给陶瓦 --hmcl 的端口文件（陶瓦会把 {"port": N} 写入此处）
+const PORT_FILE = path.join(LAN_DIR, 'wow_terracotta_port.json');
+
+// 默认值
+const TERRA_VERSION_DEFAULT = '0.4.2';
+const TERRA_MIRROR_DEFAULT = 'https://gitee.com/burningtnt/Terracotta/releases';
+
+// 必须在 UI 显著处展示的陶瓦版权（AGPL 例外条款要求）
+const TERRA_COPYRIGHT =
+    'Powered by Terracotta | 陶瓦联机 — https://github.com/burningtnt/Terracotta (AGPLv3)';
+
+// 内存缓存的运行时状态
+let _state = null;
+
+// ==================== 工具函数 ====================
+
+/**
+ * 取得 AGPL 要求的陶瓦版权声明（供 CLI / Web / 菜单展示）
+ */
+function getCopyright() {
+    return TERRA_COPYRIGHT;
+}
+
+/**
+ * 读取运行时状态（带内存缓存）
+ */
+function readState() {
+    if (_state) return _state;
+    try {
+        if (fs.existsSync(STATE_FILE)) {
+            _state = fs.readJsonSync(STATE_FILE);
+        } else {
+            _state = {};
+        }
+    } catch (e) {
+        _state = {};
+    }
+    return _state;
+}
+
+/**
+ * 写入运行时状态
+ */
+function writeState(patch) {
+    const s = Object.assign(readState(), patch);
+    _state = s;
+    try {
+        fs.ensureDirSync(path.dirname(STATE_FILE));
+        fs.writeJsonSync(STATE_FILE, s, { spaces: 2 });
+    } catch (e) {
+        // 状态文件写失败不致命
+    }
+    return s;
+}
+
+/**
+ * 清空运行时状态（保留场景：仅移除 pid/port/roomCode/binaryPath 等运行时字段）
+ */
+function clearRuntimeState() {
+    _state = {};
+    try {
+        if (fs.existsSync(STATE_FILE)) fs.unlinkSync(STATE_FILE);
+    } catch (e) {}
+}
+
+/**
+ * 检测当前平台对应的陶瓦资产 (os / arch / 可执行文件扩展名)
+ * @returns {{osName:string, archName:string, ext:string}|null}
+ */
+function detectTerraAsset() {
+    const p = process.platform; // 'win32' | 'darwin' | 'linux' | ...
+    const a = process.arch;     // 'x64' | 'arm64' | 'ia32' | 'arm' | ...
+    let osName, ext = '';
+    if (p === 'win32') { osName = 'windows'; ext = '.exe'; }
+    else if (p === 'darwin') { osName = 'macos'; ext = ''; }
+    else if (p === 'linux') { osName = 'linux'; ext = ''; }
+    else return null;
+
+    let archName;
+    if (a === 'x64') archName = 'x86_64';
+    else if (a === 'arm64') archName = 'arm64';
+    else if (a === 'ia32') archName = 'x86';
+    else if (a === 'arm') archName = 'armv7';
+    else return null;
+
+    return { osName, archName, ext };
+}
+
+/**
+ * 解析陶瓦二进制下载地址
+ * 默认按 lan.mirror（Gitee 镜像）/ lan.version / 当前平台自动拼装：
+ *   <mirror>/download/v<version>/terracotta-<version>-<os>-<arch>-pkg.tar.gz
+ * 若配置了 lan.binary_url 则直接使用它。
+ */
+function resolveDownloadUrl() {
+    const override = config.getConfig('lan.binary_url', '');
+    if (override && override.trim()) return override.trim();
+
+    const version = config.getConfig('lan.version', TERRA_VERSION_DEFAULT);
+    const mirror = (config.getConfig('lan.mirror', TERRA_MIRROR_DEFAULT) || '').replace(/\/+$/, '');
+    const asset = detectTerraAsset();
+    if (!asset) {
+        throw new Error('当前平台不支持自动下载陶瓦二进制（仅支持 Windows / macOS / Linux 的 x64 / arm64）');
+    }
+    const assetName = `terracotta-${version}-${asset.osName}-${asset.archName}-pkg.tar.gz`;
+    return `${mirror}/download/v${version}/${assetName}`;
+}
+
+/**
+ * 计算陶瓦二进制最终路径（解压并重命名后的稳定文件名）
+ */
+function binaryPath() {
+    const asset = detectTerraAsset();
+    if (!asset) return null;
+    return path.join(LAN_DIR, 'terracotta' + asset.ext);
+}
+
+// ==================== 下载与解压 ====================
+
+/**
+ * 确保陶瓦二进制存在：若已存在则直接返回路径；否则从镜像下载并解压。
+ * @returns {Promise<string>} 二进制绝对路径
+ */
+async function ensureBinary() {
+    const target = binaryPath();
+    if (!target) {
+        throw new Error('当前平台不支持自动下载陶瓦二进制（仅支持 Windows / macOS / Linux 的 x64 / arm64）');
+    }
+    if (fs.existsSync(target) && fs.statSync(target).size > 0) {
+        return target;
+    }
+
+    const url = resolveDownloadUrl();
+    fs.ensureDirSync(LAN_DIR);
+    const tarPath = path.join(LAN_DIR, `terracotta-${Date.now()}.tar.gz`);
+
+    console.log(`\n🌐 正在下载陶瓦 (Terracotta) 二进制（首次使用需联网）`);
+    console.log(`   来源: ${url}`);
+    console.log(`   ${TERRA_COPYRIGHT}`);
+
+    try {
+        const response = await axios({
+            method: 'get',
+            url,
+            responseType: 'stream',
+            timeout: 300000
+        });
+        const total = parseInt(response.headers['content-length'] || '0', 10);
+        const bar = new ProgressBar('   下载 [:bar] :percent :etas', {
+            width: 40, complete: '=', incomplete: ' ', total: total || 1
+        });
+        const writer = fs.createWriteStream(tarPath);
+        response.data.on('data', chunk => bar.tick(chunk.length));
+        response.data.pipe(writer);
+        await new Promise((resolve, reject) => {
+            writer.on('finish', resolve);
+            writer.on('error', reject);
+        });
+
+        console.log('   解压中...');
+        await extractTar(tarPath, LAN_DIR);
+
+        // 在解压目录中找到陶瓦二进制并重命名为稳定文件名
+        const found = locateBinary(LAN_DIR);
+        if (!found) {
+            throw new Error('解压后未找到陶瓦可执行文件，请联系开发者或手动配置 lan.binary_url');
+        }
+        fs.copySync(found, target);
+        fs.chmodSync(target, 0o755);
+        // 清理临时压缩包与解压残留
+        try { fs.unlinkSync(tarPath); } catch (e) {}
+        console.log(`✅ 陶瓦二进制就绪: ${target}`);
+        return target;
+    } catch (e) {
+        try { fs.unlinkSync(tarPath); } catch (e2) {}
+        if (e.response && e.response.status) {
+            throw new Error(`下载陶瓦二进制失败（HTTP ${e.response.status}）。请检查网络或镜像地址；也可手动下载后配置 lan.binary_url。错误: ${e.message}`);
+        }
+        throw new Error(`下载 / 解压陶瓦二进制失败: ${e.message}`);
+    }
+}
+
+/**
+ * 使用系统 tar 解压 .tar.gz（Windows 10+ 自带 tar.exe，Linux/macOS 自带）
+ */
+function extractTar(tarPath, destDir) {
+    return new Promise((resolve, reject) => {
+        const proc = spawn('tar', ['-xzf', tarPath, '-C', destDir], { windowsHide: true });
+        let err = '';
+        proc.stderr.on('data', d => { err += d.toString(); });
+        proc.on('error', reject);
+        proc.on('close', code => {
+            if (code === 0) resolve();
+            else reject(new Error(`解压失败 (tar 退出码 ${code}): ${err || '未知错误'}`));
+        });
+    });
+}
+
+/**
+ * 在解压目录中定位陶瓦可执行文件（按版本/平台命名前缀匹配）
+ */
+function locateBinary(dir) {
+    const asset = detectTerraAsset();
+    if (!asset) return null;
+    const version = config.getConfig('lan.version', TERRA_VERSION_DEFAULT);
+    const prefix = `terracotta-${version}-${asset.osName}-${asset.archName}`;
+    const candidates = [];
+    try {
+        for (const f of fs.readdirSync(dir)) {
+            if (f === path.basename(binaryPath())) continue;
+            if (f.startsWith(prefix) && (f.endsWith('.exe') || !f.includes('.'))) {
+                const full = path.join(dir, f);
+                try { if (fs.statSync(full).isFile()) candidates.push(full); } catch (e) {}
+            }
+        }
+    } catch (e) {}
+    // 优先可执行文件（无扩展名），其次 .exe
+    candidates.sort((a, b) => (a.endsWith('.exe') ? 1 : 0) - (b.endsWith('.exe') ? 1 : 0));
+    return candidates[0] || null;
+}
+
+// ==================== 本地 HTTP API 客户端 ====================
+
+/**
+ * 构建指向陶瓦本地 HTTP API 的 axios 实例
+ */
+function apiClient(port) {
+    return axios.create({
+        baseURL: `http://127.0.0.1:${port}`,
+        timeout: 5000,
+        // 陶瓦返回的是紧凑 JSON，axios 默认即可解析
+    });
+}
+
+/**
+ * 健康检查：GET /meta
+ */
+async function apiMeta(port) {
+    const r = await apiClient(port).get('/meta');
+    return r.data;
+}
+
+/**
+ * 读取状态机：GET /state
+ */
+async function apiState(port) {
+    const r = await apiClient(port).get('/state');
+    return r.data;
+}
+
+/**
+ * 开始开房：GET /state/scanning（room 留空则陶瓦自动生成房间号）
+ */
+async function apiScanning(port, roomCode) {
+    const params = {};
+    if (roomCode && roomCode.trim()) params.room = roomCode.trim();
+    const r = await apiClient(port).get('/state/scanning', { params });
+    return r.data;
+}
+
+/**
+ * 优雅退出陶瓦：GET /panic?peaceful=true
+ */
+async function apiPanic(port) {
+    try {
+        await apiClient(port).get('/panic', { params: { peaceful: true } });
+    } catch (e) {
+        // 进程退出后连接会断开，忽略错误
+    }
+}
+
+// ==================== 进程生命周期 ====================
+
+/**
+ * 启动陶瓦守护进程（--hmcl 模式，便于读取动态端口），并等待端口就绪。
+ * 若已在运行则直接返回当前端口。
+ * @returns {Promise<number>} 本地 HTTP API 端口
+ */
+async function startDaemon() {
+    const st = readState();
+    if (st.pid && st.port) {
+        // 校验是否仍然存活
+        if (isAlive(st.pid)) {
+            try { await apiMeta(st.port); return st.port; }
+            catch (e) { /* 端口失效，重建 */ }
+        }
+        // 进程已死，清理后重启
+        clearRuntimeState();
+    }
+
+    const bin = await ensureBinary();
+    fs.ensureDirSync(LAN_DIR);
+    // 清空旧的端口文件，避免读到上一次的端口
+    try { if (fs.existsSync(PORT_FILE)) fs.unlinkSync(PORT_FILE); } catch (e) {}
+
+    const child = spawn(bin, ['--hmcl', PORT_FILE], {
+        cwd: LAN_DIR,
+        windowsHide: true,
+        stdio: ['ignore', 'ignore', 'ignore']
+    });
+    child.on('error', e => {
+        console.error(`[lan] 启动陶瓦失败: ${e.message}`);
+    });
+
+    // 轮询端口文件，等待陶瓦写入 {"port": N}
+    const deadline = Date.now() + 20000;
+    let port = 0;
+    while (Date.now() < deadline) {
+        try {
+            if (fs.existsSync(PORT_FILE)) {
+                const txt = fs.readFileSync(PORT_FILE, 'utf8').trim();
+                const obj = JSON.parse(txt);
+                if (obj && obj.port && Number.isInteger(obj.port)) {
+                    port = obj.port;
+                    break;
+                }
+            }
+        } catch (e) { /* 文件尚未写好，继续等 */ }
+        await sleep(200);
+    }
+
+    if (!port) {
+        try { child.kill(); } catch (e) {}
+        throw new Error('启动陶瓦超时：未能读取本地 API 端口。请检查网络 / 防火墙，或查看陶瓦日志。');
+    }
+
+    writeState({ pid: child.pid, port, binaryPath: bin, portFile: PORT_FILE, running: true });
+
+    // 等待 /meta 就绪（服务真正可响应）
+    const metaDeadline = Date.now() + 10000;
+    while (Date.now() < metaDeadline) {
+        try {
+            await apiMeta(port);
+            break;
+        } catch (e) {
+            await sleep(200);
+        }
+    }
+    return port;
+}
+
+/**
+ * 停止陶瓦守护进程
+ */
+async function stopDaemon() {
+    const st = readState();
+    if (st && st.port) {
+        await apiPanic(st.port);
+    }
+    if (st && st.pid && isAlive(st.pid)) {
+        try { process.kill(st.pid, 'SIGTERM'); } catch (e) {}
+        // 给一点时间优雅退出
+        await sleep(500);
+        if (isAlive(st.pid)) {
+            try { process.kill(st.pid, 'SIGKILL'); } catch (e2) {}
+        }
+    }
+    // 清理端口文件
+    try { if (fs.existsSync(PORT_FILE)) fs.unlinkSync(PORT_FILE); } catch (e) {}
+    clearRuntimeState();
+}
+
+/**
+ * 判断进程是否存活
+ */
+function isAlive(pid) {
+    if (!pid) return false;
+    try { process.kill(pid, 0); return true; }
+    catch (e) { return false; }
+}
+
+/**
+ * 轮询状态机直到开房成功 (host-ok)，返回房间号 room.code
+ */
+async function waitHostOk(port, timeoutMs = 30000) {
+    const deadline = Date.now() + timeoutMs;
+    let last = null;
+    while (Date.now() < deadline) {
+        try {
+            const s = await apiState(port);
+            last = s;
+            if (s && s.state === 'host-ok' && s.room && s.room.code) {
+                return s.room.code;
+            }
+            if (s && s.state === 'exception') {
+                const typeMap = {
+                    0: 'PingHostFail', 1: 'PingHostRst', 2: 'GuestEasytierCrash',
+                    3: 'HostEasytierCrash', 4: 'PingServerRst', 5: 'ScaffoldingInvalidResponse'
+                };
+                throw new Error(`开房失败（陶瓦异常 type=${s.type} ${typeMap[s.type] || ''}）。请确认本地 Minecraft 服务端已启动并监听配置端口，且网络可访问陶瓦公共节点。`);
+            }
+        } catch (e) {
+            if (e.message && e.message.startsWith('开房失败')) throw e;
+        }
+        await sleep(500);
+    }
+    throw new Error(`等待开房完成超时（最后状态: ${last ? last.state : '未知'}）。请确认本地 Minecraft 服务端已启动并监听 ${config.getConfig('lan.server_port', 25565)} 端口。`);
+}
+
+// ==================== 对外业务接口 ====================
+
+/**
+ * 开房（我要当房主）。确保二进制、启动守护、发起开房、等待房间号。
+ * @param {object} opts
+ * @param {string} [opts.roomCode] 固定房间号（留空自动生成）
+ * @returns {Promise<{roomCode:string, port:number}>}
+ */
+async function hostRoom(opts = {}) {
+    const port = await startDaemon();
+    console.log('\n🏠 正在开房（陶瓦正在扫描本机 Minecraft 服务端并连接公共节点）...');
+    await apiScanning(port, opts.roomCode || config.getConfig('lan.room_code', ''));
+    const roomCode = await waitHostOk(port);
+    writeState({ roomCode, running: true });
+    console.log(`\n✅ 开房成功！房间号: ${roomCode}`);
+    console.log(`   把房间号发给好友，对方在 PCL / HMCL / BakaXL / FCL 中选择「加入陶瓦房间」并输入该房间号即可联机。`);
+    console.log(`   ${TERRA_COPYRIGHT}`);
+    return { roomCode, port };
+}
+
+/**
+ * 服务器启动时自动开房（非阻塞、尽力而为，用于 auto_room 钩子）
+ */
+async function autoHost() {
+    try {
+        const { roomCode } = await hostRoom({});
+        console.log(`\n[lan] 自动开房完成，房间号: ${roomCode}`);
+    } catch (e) {
+        console.warn(`\n[lan] 自动开房失败: ${e.message}`);
+    }
+}
+
+/**
+ * 关房（停止陶瓦守护）
+ */
+async function stopHost() {
+    await stopDaemon();
+    console.log('✅ 已关闭陶瓦联机房间');
+}
+
+/**
+ * 查询状态（合并运行时状态与陶瓦实时状态）
+ */
+async function getStatus() {
+    const st = readState();
+    if (!st || !st.running || !st.port || !isAlive(st.pid)) {
+        return { running: false, roomCode: null, port: null, state: null, meta: null };
+    }
+    let state = null, meta = null;
+    try { state = await apiState(st.port); } catch (e) {}
+    try { meta = await apiMeta(st.port); } catch (e) {}
+    return {
+        running: true,
+        roomCode: st.roomCode || (state && state.room && state.room.code) || null,
+        port: st.port,
+        pid: st.pid,
+        state: state ? state.state : null,
+        meta
+    };
+}
+
+/**
+ * 取得当前房间号（若已开房）
+ */
+function getRoomCode() {
+    const st = readState();
+    return (st && st.roomCode) || null;
+}
+
+/**
+ * 当前是否有陶瓦守护在运行
+ */
+function isRunning() {
+    const st = readState();
+    return !!(st && st.running && st.pid && isAlive(st.pid));
+}
+
+function sleep(ms) {
+    return new Promise(r => setTimeout(r, ms));
+}
+
+module.exports = {
+    getCopyright,
+    detectTerraAsset,
+    resolveDownloadUrl,
+    ensureBinary,
+    binaryPath,
+    startDaemon,
+    stopDaemon,
+    hostRoom,
+    autoHost,
+    stopHost,
+    getStatus,
+    getRoomCode,
+    isRunning,
+    TERRA_VERSION_DEFAULT,
+    TERRA_MIRROR_DEFAULT
+};
