@@ -306,19 +306,54 @@ class ServerManager {
         const cmd = await this._buildCommand(memory, extraJvmArgs);
         console.log(`启动命令: ${cmd.fullCommand.join(' ')}`);
 
-        const logFd = fs.openSync(this.logFile, 'a');
-        const logStream = fs.createWriteStream('', { fd: logFd, autoClose: true });
-        this.process = spawn(cmd.javaPath, cmd.fullCommand.slice(1), {
-            cwd: this.serverDir,
-            stdio: ['pipe', logStream, logStream],
-            detached: false
-        });
+        const isInteractive = Boolean(process.stdin.isTTY);
+        let logStream = null;
+
+        if (isInteractive) {
+            // 交互模式：实时日志输出到控制台 + 写入日志文件，stdin 直接继承终端用于输入指令
+            this.process = spawn(cmd.javaPath, cmd.fullCommand.slice(1), {
+                cwd: this.serverDir,
+                stdio: ['inherit', 'pipe', 'pipe'],
+                detached: false
+            });
+
+            logStream = fs.createWriteStream(this.logFile, { flags: 'a' });
+            this.process.stdout.on('data', (data) => {
+                process.stdout.write(data);
+                logStream.write(data);
+            });
+            this.process.stderr.on('data', (data) => {
+                process.stderr.write(data);
+                logStream.write(data);
+            });
+
+            // 捕获 Ctrl+C，优先向服务器发送 stop 命令优雅关闭
+            this._sigintHandler = () => {
+                console.log('\n⏹ 收到中断信号，正在停止服务器...');
+                this.stop();
+            };
+            process.once('SIGINT', this._sigintHandler);
+        } else {
+            // 非交互模式（Web 面板 / Docker）：重定向到日志文件
+            const logFd = fs.openSync(this.logFile, 'a');
+            logStream = fs.createWriteStream('', { fd: logFd, autoClose: true });
+            this.process = spawn(cmd.javaPath, cmd.fullCommand.slice(1), {
+                cwd: this.serverDir,
+                stdio: ['pipe', logStream, logStream],
+                detached: false
+            });
+        }
 
         this._writePid(this.process.pid);
         console.log(`服务器已启动，PID: ${this.process.pid}`);
         console.log(`日志文件: ${this.logFile}`);
 
         this.process.on('exit', (code) => {
+            if (this._sigintHandler) {
+                process.removeListener('SIGINT', this._sigintHandler);
+                this._sigintHandler = null;
+            }
+            if (logStream) logStream.end();
             console.log(`服务器进程退出，退出码: ${code}`);
             this._removePid();
             this.process = null;
@@ -327,6 +362,13 @@ class ServerManager {
         this.process.on('error', (err) => {
             console.error(`进程错误: ${err.message}`);
         });
+
+        // 交互模式：保持前台运行，直到服务器进程退出（可实时查看日志并输入指令）
+        if (isInteractive) {
+            await new Promise((resolve) => {
+                this.process.on('exit', resolve);
+            });
+        }
     }
 
     /**

@@ -187,7 +187,10 @@ async function dispatchMenu(choice, options) {
                     }
                 } else {
                     const memory = await ask(rl, '内存分配 (默认 2G): ') || '2G';
+                    // 启动期间让出 readline，使服务器能直接读取终端输入（指令 / Ctrl+C）
+                    rl.pause();
                     await serverManager.start(memory);
+                    rl.resume();
                 }
                 break;
             }
