@@ -18,7 +18,7 @@ const SERVER_SOURCES = {
     vanilla: {
         type: 'vanilla',
         url: (version, mirror) => `${mirror}/mc/game/version_manifest.json`,
-        fileName: (version) => `minecraft_server.${version}.jar`,
+        fileName: (version) => `vanilla-${version}.jar`,
         needsManifest: true
     },
     forge: {
@@ -179,6 +179,9 @@ class Installer {
         const fileName = source.fileName(version, build || source.knownBuilds?.[version]);
         const targetPath = path.join(installDir, fileName);
 
+        // 版本隔离：安装前清理目标目录下其它服务端核心，避免多个核心堆在根目录
+        this._cleanupOtherCores(installDir, fileName);
+
         if (fs.existsSync(targetPath)) {
             console.log(`服务端核心已存在: ${fileName}`);
             return targetPath;
@@ -227,6 +230,52 @@ class Installer {
             if (fs.existsSync(tempPath)) fs.removeSync(tempPath);
             throw new Error(`下载失败: ${e.message}`);
         }
+    }
+
+    /**
+     * 清理目录下其它服务端核心，保持单核心隔离（避免多个核心堆在根目录）
+     * @param {string} dir 目标目录
+     * @param {string} keepFileName 需要保留的当前核心文件名
+     */
+    _cleanupOtherCores(dir, keepFileName) {
+        if (!fs.existsSync(dir)) return 0;
+        // 白名单：authlib-injector 等不视为服务端核心
+        const WHITE_LIST = ['authlib-injector'];
+        // 根据所有已知核心 fileName 模板生成匹配模式
+        const patterns = [];
+        for (const key of Object.keys(SERVER_SOURCES)) {
+            const src = SERVER_SOURCES[key];
+            let tmpl;
+            try {
+                tmpl = typeof src.fileName === 'function'
+                    ? src.fileName('__V__', '__B__')
+                    : src.fileName;
+            } catch (e) {
+                continue;
+            }
+            const re = tmpl
+                .replace(/[.+*?^${}()|[\]\\]/g, '\\$&')
+                .replace('__V__', '[^/]+')
+                .replace('__B__', '[^/]+');
+            patterns.push(new RegExp('^' + re + '$'));
+        }
+        let removed = 0;
+        for (const item of fs.readdirSync(dir)) {
+            if (!item.endsWith('.jar')) continue;
+            if (item === keepFileName) continue;
+            if (WHITE_LIST.some(w => item.includes(w))) continue;
+            const full = path.join(dir, item);
+            // 仅处理根目录下的文件（不碰 libraries/ 等依赖子目录）
+            if (!fs.statSync(full).isFile()) continue;
+            if (patterns.some(p => p.test(item))) {
+                try {
+                    fs.removeSync(full);
+                    removed++;
+                    console.log(`🧹 已清理旧核心: ${item}`);
+                } catch (e) { /* 忽略 */ }
+            }
+        }
+        return removed;
     }
 
     /**
