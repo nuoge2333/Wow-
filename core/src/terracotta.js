@@ -1,5 +1,5 @@
 /**
- * terracotta.js — 陶瓦 (Terracotta) 内网穿透 / 联机 管理器 (V3.3.3)
+ * terracotta.js — 陶瓦 (Terracotta) 内网穿透 / 联机 管理器 (V3.3.4)
  *
  * ┌─────────────────────────────────────────────────────────────────────────┐
  * │ 版权与许可声明（AGPL 例外条款要求：通过 HTTP API 驱动陶瓦时，              │
@@ -338,21 +338,29 @@ function locateBinary(dir, asset) {
     if (!asset) return null;
     const version = config.getConfig('lan.version', TERRA_VERSION_DEFAULT);
     const prefix = `terracotta-${version}-${asset.osName}-${asset.archName}`;
+    // 解压目录里常见的非二进制残留：压缩包、日志、文档等
+    const NON_BIN = ['.tar.gz', '.tar', '.zip', '.gz', '.so', '.dll', '.json', '.txt', '.md', '.yaml', '.yml', '.log'];
     const candidates = [];
     try {
         for (const f of fs.readdirSync(dir)) {
             if (f === path.basename(binaryPath())) continue;
-            // linux/arm64 等解压后的二进制无扩展名；windows 为 .exe
-            const isExe = f.endsWith('.exe');
-            const isPlain = !f.includes('.');
-            if (f.startsWith(prefix) && (isExe || isPlain)) {
-                const full = path.join(dir, f);
-                try { if (fs.statSync(full).isFile()) candidates.push(full); } catch (e) {}
-            }
+            if (!f.startsWith(prefix)) continue;
+            const lower = f.toLowerCase();
+            // 排除临时/压缩/文档文件；.exe 是 windows 可执行文件，必须保留
+            if (NON_BIN.some(ext => lower.endsWith(ext))) continue;
+            const full = path.join(dir, f);
+            try { if (fs.statSync(full).isFile()) candidates.push(full); } catch (e) {}
         }
     } catch (e) {}
-    // 优先可执行文件（无扩展名），其次 .exe
-    candidates.sort((a, b) => (a.endsWith('.exe') ? 1 : 0) - (b.endsWith('.exe') ? 1 : 0));
+    // 优先无 .exe（linux/mac），其次 .exe（windows），再按文件名短优先
+    candidates.sort((a, b) => {
+        const na = path.basename(a), nb = path.basename(b);
+        const ea = na.endsWith('.exe') ? 1 : 0;
+        const eb = nb.endsWith('.exe') ? 1 : 0;
+        if (ea !== eb) return ea - eb;
+        if (na.length !== nb.length) return na.length - nb.length;
+        return na.localeCompare(nb);
+    });
     return candidates[0] || null;
 }
 

@@ -1,4 +1,4 @@
-# 🌐 联机 / 内网穿透（陶瓦 Terracotta）— V3.3.3
+# 🌐 联机 / 内网穿透（陶瓦 Terracotta）— V3.3.4
 
 wow~ V3.3.0 起内置对接 **[陶瓦（Terracotta）](https://github.com/burningtnt/Terracotta)**，为你的 Minecraft 服务端提供开箱即用的内网 / 局域网穿透联机能力。没有公网 IP 也能让好友直接加入。
 
