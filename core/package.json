@@ -1,7 +1,7 @@
 {
   "name": "wow",
   "version": "3.3.1",
-  "description": "Minecraft æå¡å¨ç®¡çå·¥å· - é»è®¤ä¼åï¼å¯ä»¥ä¿®æ¹",
+  "description": "Minecraft 服务器管理工具 - 默认优先，可以修改",
   "main": "src/cli.js",
   "bin": {
     "wow": "src/cli.js"

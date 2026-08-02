@@ -1,14 +1,14 @@
 /**
- * äº¤äºå¼èåæ¨¡å (V3.1)
- * - wow m           â è¿å¥äº¤äºå¼ä¸»èåï¼çº¯æ°å­å¯¼èªï¼
- * - wow m <1-14>    â ç´æ¥è·³è½¬å°æå®åè½
- * èåä»æ¯ææ°å­éæ©ï¼å½ä»¤è¡ç¨æ³ï¼å¦ server startï¼è¯·æ¥é README.MD
+ * 交互式菜单模块 (V3.1)
+ * - wow m           → 进入交互式主菜单（纯数字导航）
+ * - wow m <1-14>    → 直接跳转到指定功能
+ * 菜单仅支持数字选择；命令行用法（如 server start）请查阅 README.MD
  */
 
 const readline = require('readline');
 
 /**
- * åå»º readline æ¥å£
+ * 创建 readline 接口
  */
 function createRL() {
     return readline.createInterface({
@@ -18,32 +18,32 @@ function createRL() {
 }
 
 /**
- * å¼æ­¥æé®
+ * 异步提问
  */
 function ask(rl, prompt) {
     return new Promise(resolve => rl.question(prompt, resolve));
 }
 
 /**
- * æ¸å±
+ * 清屏
  */
 function clearScreen() {
     process.stdout.write('\x1Bc');
 }
 
 /**
- * æå°æ é¢æ 
+ * 打印标题栏
  */
 function printHeader(title) {
-    console.log('â'.repeat(60));
+    console.log('═'.repeat(60));
     console.log(`  ${title}`);
-    console.log('â'.repeat(60));
+    console.log('═'.repeat(60));
 }
 
 /**
- * æ¾ç¤ºä¸»èå
- * @param {object} options - æ¨¡åå®ä¾
- * @param {string} directChoice - ç´æ¥è·³è½¬çèåç¼å·ï¼wow m Nï¼
+ * 显示主菜单
+ * @param {object} options - 模块实例
+ * @param {string} directChoice - 直接跳转的菜单编号（wow m N）
  */
 async function showMainMenu(options = {}, directChoice = null) {
     const {
@@ -58,7 +58,7 @@ async function showMainMenu(options = {}, directChoice = null) {
         utils
     } = options;
 
-    // å¦æç´æ¥æå®äºèåé¡¹ï¼æ§è¡åè¿å
+    // 如果直接指定了菜单项，执行后返回
     if (directChoice) {
         await dispatchMenu(directChoice, options);
         return;
@@ -68,84 +68,84 @@ async function showMainMenu(options = {}, directChoice = null) {
 
     while (true) {
         clearScreen();
-        printHeader('wow~ Minecraft æå¡å¨ç®¡çå¨ V3.3.1');
+        printHeader('wow~ Minecraft 服务器管理器 V3.3.1');
 
-        // ç¶æä¿¡æ¯
+        // 状态信息
         try {
             const info = serverManager ? serverManager.getInfo() : null;
             if (info) {
-                console.log(`  æå¡å¨ç¶æ: ${info.running ? 'ð¢ è¿è¡ä¸­' : 'â« å·²åæ­¢'}`);
-                if (info.jarFile && info.jarFile !== 'æªæ¾å°') {
-                    console.log(`  æå¡ç«¯æ ¸å¿: ${info.jarFile}`);
+                console.log(`  服务器状态: ${info.running ? '🟢 运行中' : '⚫ 已停止'}`);
+                if (info.jarFile && info.jarFile !== '未找到') {
+                    console.log(`  服务端核心: ${info.jarFile}`);
                 }
                 if (info.running && info.pid) {
-                    console.log(`  è¿ç¨ PID:   ${info.pid}`);
+                    console.log(`  进程 PID:   ${info.pid}`);
                 }
             }
         } catch (e) {
-            // å¿½ç¥
+            // 忽略
         }
 
-        // Java ä¿¡æ¯
+        // Java 信息
         try {
             if (utils) {
                 const javaPath = utils.detectJava();
                 if (javaPath) {
-                    console.log(`  Java è·¯å¾:  ${javaPath}`);
+                    console.log(`  Java 路径:  ${javaPath}`);
                 } else {
-                    console.log(`  Java è·¯å¾:  (æªæ£æµå°)`);
+                    console.log(`  Java 路径:  (未检测到)`);
                 }
             }
         } catch (e) {
-            // å¿½ç¥
+            // 忽略
         }
 
-        console.log('â'.repeat(60));
+        console.log('─'.repeat(60));
 
-        // ä¸»èåï¼çº¯æ°å­å¯¼èªï¼é¿å½ä»¤ä¸å¨æ­¤å¤æ§è¡ï¼è¯·ç´æ¥æ¥éææ¡£ä½¿ç¨å½ä»¤è¡ï¼
+        // 主菜单（纯数字导航；长命令不在此处执行，请直接查阅文档使用命令行）
         const menuItems = [
-            ['1', 'å¯å¨æå¡å¨'],
-            ['2', 'ä¸è½½/å®è£å®ä¾'],
-            ['3', 'åæ´éç½® (server.properties)'],
-            ['4', 'ç®¡çæ¨¡ç»/æä»¶'],
-            ['5', 'éè¯¯æ¥å¿åæ'],
-            ['6', 'è®¤è¯è®¾ç½® (å¤ç½®ç»å½)'],
-            ['7', 'ä¸è½½ç®¡çå¨è®¾ç½®'],
-            ['8', 'å®è£æ´åå'],
-            ['9', 'çæå®¢æ·ç«¯æ´åå'],
-            ['10', 'æ¨¡ç»/æä»¶æç´¢ä¸è½½'],
-            ['11', 'ç³»ç»è®¾ç½®'],
-            ['12', 'æå¡å¨ç¶æçæ§'],
-            ['13', 'å¤ä»½/æ¢å¤ (æ¹æ¡ç®¡ç)'],
-            ['14', 'Web ä¸»é¢æ´æ¹'],
-            ['15', 'èæº / æè¦å½æ¿ä¸» (é¶ç¦)']
+            ['1', '启动服务器'],
+            ['2', '下载/安装实例'],
+            ['3', '变更配置 (server.properties)'],
+            ['4', '管理模组/插件'],
+            ['5', '错误日志分析'],
+            ['6', '认证设置 (外置登录)'],
+            ['7', '下载管理器设置'],
+            ['8', '安装整合包'],
+            ['9', '生成客户端整合包'],
+            ['10', '模组/插件搜索下载'],
+            ['11', '系统设置'],
+            ['12', '服务器状态监控'],
+            ['13', '备份/恢复 (方案管理)'],
+            ['14', 'Web 主题更改'],
+            ['15', '联机 / 我要当房主 (陶瓦)']
         ];
 
         for (const [num, desc] of menuItems) {
             console.log(`  ${num.padStart(2)}. ${desc}`);
         }
-        console.log(`   0. éåºç¨åº`);
-        console.log('â'.repeat(60));
+        console.log(`   0. 退出程序`);
+        console.log('─'.repeat(60));
 
-        const choice = (await ask(rl, 'è¯·éæ©æä½ (è¾å¥æ°å­ 0-15ï¼å½ä»¤ç¨æ³è§ README.MD): ')).trim();
+        const choice = (await ask(rl, '请选择操作 (输入数字 0-15，命令用法见 README.MD): ')).trim();
 
         if (choice === '0') {
-            const confirm = await ask(rl, 'ç¡®å®è¦éåºå? (y/N): ');
+            const confirm = await ask(rl, '确定要退出吗? (y/N): ');
             if (confirm.toLowerCase() === 'y') {
-                console.log('æè°¢ä½¿ç¨ wow~ï¼åè§!');
+                console.log('感谢使用 wow~，再见!');
                 break;
             }
             continue;
         }
 
-        // çº¯æ°å­å¯¼èªï¼1-15 ç´æ¥ååå°å¯¹åºèåï¼æ°å¼æ¯è¾ï¼é¿åå­ç¬¦ä¸²æ¯è¾è¯¯å¤ï¼
+        // 纯数字导航：1-15 直接分发到对应菜单（数值比较，避免字符串比较误判）
         const num = parseInt(choice, 10);
         if (!isNaN(num) && num >= 1 && num <= 15) {
             await dispatchMenu(String(num), options);
-            await ask(rl, '\næåè½¦é®è¿åä¸»èå...');
+            await ask(rl, '\n按回车键返回主菜单...');
         } else {
-            console.log('æ æçéæ©ãæ¬èåä»æ¯ææ°å­éæ©ï¼å¦éä½¿ç¨å½ä»¤ï¼å¦ server start / web startï¼ï¼è¯·ç´æ¥æ¥é README.MD ä¸­çå½ä»¤è¯´æã');
-            await ask(rl, 'æåè½¦é®ç»§ç»­...');
+            console.log('无效的选择。本菜单仅支持数字选择；如需使用命令（如 server start / web start），请直接查阅 README.MD 中的命令说明。');
+            await ask(rl, '按回车键继续...');
         }
     }
 
@@ -153,7 +153,7 @@ async function showMainMenu(options = {}, directChoice = null) {
 }
 
 /**
- * ååèåéæ©
+ * 分发菜单选择
  */
 async function dispatchMenu(choice, options) {
     const {
@@ -174,21 +174,21 @@ async function dispatchMenu(choice, options) {
     try {
         switch (choice) {
             case '1': {
-                // å¯å¨æå¡å¨
-                printHeader('å¯å¨æå¡å¨');
+                // 启动服务器
+                printHeader('启动服务器');
                 if (!serverManager) {
-                    console.log('æå¡å¨ç®¡çæ¨¡åæªå è½½');
+                    console.log('服务器管理模块未加载');
                     break;
                 }
                 if (serverManager.isRunning()) {
-                    console.log('æå¡å¨å·²å¨è¿è¡ä¸­');
-                    const subChoice = await ask(rl, 'æ¯å¦åæ­¢æå¡å¨? (y/N): ');
+                    console.log('服务器已在运行中');
+                    const subChoice = await ask(rl, '是否停止服务器? (y/N): ');
                     if (subChoice.toLowerCase() === 'y') {
                         await serverManager.stop();
                     }
                 } else {
-                    const memory = await ask(rl, 'åå­åé (é»è®¤ 2G): ') || '2G';
-                    // å¯å¨æé´è®©åº readlineï¼ä½¿æå¡å¨è½ç´æ¥è¯»åç»ç«¯è¾å¥ï¼æä»¤ / Ctrl+Cï¼
+                    const memory = await ask(rl, '内存分配 (默认 2G): ') || '2G';
+                    // 启动期间让出 readline，使服务器能直接读取终端输入（指令 / Ctrl+C）
                     rl.pause();
                     await serverManager.start(memory);
                     rl.resume();
@@ -197,20 +197,20 @@ async function dispatchMenu(choice, options) {
             }
 
             case '2': {
-                // ä¸è½½/å®è£å®ä¾
-                printHeader('ä¸è½½/å®è£å®ä¾');
+                // 下载/安装实例
+                printHeader('下载/安装实例');
                 if (!installer) {
-                    console.log('å®è£å¨æ¨¡åæªå è½½');
+                    console.log('安装器模块未加载');
                     break;
                 }
-                console.log('\næ¯æçæå¡å¨ç±»å:');
+                console.log('\n支持的服务器类型:');
                 const types = ['vanilla', 'forge', 'fabric', 'paper', 'purpur', 'spigot', 'bukkit', 'mohist', 'leaves'];
                 types.forEach((t, i) => console.log(`  ${i + 1}. ${t}`));
-                console.log('  0. è¿å');
-                const tChoice = await ask(rl, '\néæ©ç±»å (1-9): ');
+                console.log('  0. 返回');
+                const tChoice = await ask(rl, '\n选择类型 (1-9): ');
                 const tIdx = parseInt(tChoice) - 1;
                 if (tIdx >= 0 && tIdx < types.length) {
-                    const version = await ask(rl, 'Minecraft çæ¬ (å¦ 1.20.1): ');
+                    const version = await ask(rl, 'Minecraft 版本 (如 1.20.1): ');
                     if (version) {
                         await installer.install(types[tIdx], version);
                     }
@@ -219,21 +219,21 @@ async function dispatchMenu(choice, options) {
             }
 
             case '4': {
-                // ç®¡çæ¨¡ç»/æä»¶
-                printHeader('ç®¡çæ¨¡ç»/æä»¶');
+                // 管理模组/插件
+                printHeader('管理模组/插件');
                 if (!modManager) {
-                    console.log('æ¨¡ç»ç®¡çæ¨¡åæªå è½½');
+                    console.log('模组管理模块未加载');
                     break;
                 }
-                console.log('\n  1. ååºå·²å®è£æ¨¡ç»');
-                console.log('  2. å®è£æ¨¡ç»');
-                console.log('  3. å¸è½½æ¨¡ç»');
-                console.log('  4. å¯ç¨/ç¦ç¨æ¨¡ç»');
-                console.log('  5. æ¥çæ¨¡ç»éç½®');
-                console.log('  6. ç¼è¾æ¨¡ç»éç½®');
-                console.log('  7. å¤ä»½æ¨¡ç»éç½®');
-                console.log('  0. è¿å');
-                const subChoice = await ask(rl, '\nè¯·éæ© (0-7): ');
+                console.log('\n  1. 列出已安装模组');
+                console.log('  2. 安装模组');
+                console.log('  3. 卸载模组');
+                console.log('  4. 启用/禁用模组');
+                console.log('  5. 查看模组配置');
+                console.log('  6. 编辑模组配置');
+                console.log('  7. 备份模组配置');
+                console.log('  0. 返回');
+                const subChoice = await ask(rl, '\n请选择 (0-7): ');
 
                 const serverDir = utils ? utils.getServerDir() : '../server';
                 const configEditor = require('./config_editor');
@@ -241,16 +241,16 @@ async function dispatchMenu(choice, options) {
                 switch (subChoice) {
                     case '1': {
                         const mods = modManager.listMods();
-                        console.log(`\nå·²å®è£æ¨¡ç» (${mods.length}):`);
+                        console.log(`\n已安装模组 (${mods.length}):`);
                         for (const mod of mods) {
-                            const status = mod.enabled ? 'â' : 'â';
+                            const status = mod.enabled ? '✅' : '❌';
                             const sizeKB = (mod.size / 1024).toFixed(1);
                             console.log(`  ${status} ${mod.name} (${sizeKB} KB) [${mod.loader}/${mod.version}]`);
                         }
                         break;
                     }
                     case '2': {
-                        const target = await ask(rl, 'æ¨¡ç» URL ææ¬å°è·¯å¾: ');
+                        const target = await ask(rl, '模组 URL 或本地路径: ');
                         if (target) {
                             await modManager.install(target);
                         }
@@ -259,7 +259,7 @@ async function dispatchMenu(choice, options) {
                     case '3': {
                         const mods = modManager.listMods();
                         mods.forEach((m, i) => console.log(`  ${i + 1}. ${m.name}`));
-                        const idx = parseInt(await ask(rl, 'éæ©è¦å¸è½½çæ¨¡ç»ç¼å·: ')) - 1;
+                        const idx = parseInt(await ask(rl, '选择要卸载的模组编号: ')) - 1;
                         if (idx >= 0 && idx < mods.length) {
                             modManager.remove(mods[idx].name);
                         }
@@ -267,8 +267,8 @@ async function dispatchMenu(choice, options) {
                     }
                     case '4': {
                         const mods = modManager.listMods();
-                        mods.forEach((m, i) => console.log(`  ${i + 1}. ${m.status || (m.enabled ? 'â' : 'â')} ${m.name}`));
-                        const idx = parseInt(await ask(rl, 'éæ©è¦åæ¢çæ¨¡ç»ç¼å·: ')) - 1;
+                        mods.forEach((m, i) => console.log(`  ${i + 1}. ${m.status || (m.enabled ? '✅' : '❌')} ${m.name}`));
+                        const idx = parseInt(await ask(rl, '选择要切换的模组编号: ')) - 1;
                         if (idx >= 0 && idx < mods.length) {
                             modManager.toggleMod(mods[idx].name);
                         }
@@ -277,25 +277,25 @@ async function dispatchMenu(choice, options) {
                     case '5': {
                         const files = configEditor.getConfigFiles(serverDir);
                         if (files.length === 0) {
-                            console.log('config ç®å½ä¸æ²¡æéç½®æä»¶');
+                            console.log('config 目录下没有配置文件');
                         } else {
-                            console.log(`\néç½®æä»¶ (${files.length}):`);
+                            console.log(`\n配置文件 (${files.length}):`);
                             files.forEach((f, i) => console.log(`  ${i + 1}. ${f.relPath} (${f.ext}, ${utils ? utils.formatFileSize(f.size) : f.size} B)`));
-                            const idx = parseInt(await ask(rl, '\néæ©è¦æ¥ççæä»¶ç¼å·: ')) - 1;
+                            const idx = parseInt(await ask(rl, '\n选择要查看的文件编号: ')) - 1;
                             if (idx >= 0 && idx < files.length) {
                                 const result = configEditor.readConfig(files[idx].fullPath);
                                 if (result.success) {
-                                    console.log(`\n${'â'.repeat(60)}`);
-                                    console.log(`æä»¶: ${files[idx].relPath}`);
-                                    if (result.warning) console.log(`â  ${result.warning}`);
-                                    console.log('â'.repeat(60));
+                                    console.log(`\n${'═'.repeat(60)}`);
+                                    console.log(`文件: ${files[idx].relPath}`);
+                                    if (result.warning) console.log(`⚠ ${result.warning}`);
+                                    console.log('═'.repeat(60));
                                     if (typeof result.data === 'object') {
                                         console.log(JSON.stringify(result.data, null, 2));
                                     } else {
                                         console.log(result.data);
                                     }
                                 } else {
-                                    console.log(`è¯»åå¤±è´¥: ${result.error}`);
+                                    console.log(`读取失败: ${result.error}`);
                                 }
                             }
                         }
@@ -304,33 +304,33 @@ async function dispatchMenu(choice, options) {
                     case '6': {
                         const files = configEditor.getConfigFiles(serverDir);
                         if (files.length === 0) {
-                            console.log('config ç®å½ä¸æ²¡æéç½®æä»¶');
+                            console.log('config 目录下没有配置文件');
                         } else {
-                            console.log(`\nå¯ç¼è¾çéç½®æä»¶ (JSON/TOML/YAML):`);
+                            console.log(`\n可编辑的配置文件 (JSON/TOML/YAML):`);
                             const editable = files.filter(f => ['.json', '.toml', '.yml', '.yaml', '.properties', '.cfg', '.conf', '.ini'].includes(f.ext));
                             editable.forEach((f, i) => console.log(`  ${i + 1}. ${f.relPath} (${f.ext})`));
                             if (editable.length === 0) {
-                                console.log('  æ²¡æå¯ç¼è¾çç»æåéç½®æä»¶');
+                                console.log('  没有可编辑的结构化配置文件');
                                 break;
                             }
-                            const idx = parseInt(await ask(rl, '\néæ©è¦ç¼è¾çæä»¶ç¼å·: ')) - 1;
+                            const idx = parseInt(await ask(rl, '\n选择要编辑的文件编号: ')) - 1;
                             if (idx >= 0 && idx < editable.length) {
                                 const file = editable[idx];
-                                // åæ¾ç¤ºå½åé®å¼
+                                // 先显示当前键值
                                 const listResult = configEditor.listConfig(file.fullPath);
                                 if (listResult.success) {
-                                    console.log(`\nå½åé®å¼ (${file.relPath}):`);
+                                    console.log(`\n当前键值 (${file.relPath}):`);
                                     listResult.entries.forEach(e => console.log(`  ${e.key} = ${JSON.stringify(e.value)}`));
                                 }
-                                const key = await ask(rl, '\nè¾å¥è¦ä¿®æ¹çé® (ç¹å·åé, å¦ general.enable): ');
-                                const value = await ask(rl, 'è¾å¥æ°å¼: ');
+                                const key = await ask(rl, '\n输入要修改的键 (点号分隔, 如 general.enable): ');
+                                const value = await ask(rl, '输入新值: ');
                                 if (key && value !== undefined) {
                                     const setResult = configEditor.setConfigValue(file.fullPath, key, value);
                                     if (setResult.success) {
-                                        console.log(`â å·²è®¾ç½® ${key} = ${value}`);
-                                        if (setResult.backupPath) console.log(`   å¤ä»½å·²ä¿å­: ${setResult.backupPath}`);
+                                        console.log(`✅ 已设置 ${key} = ${value}`);
+                                        if (setResult.backupPath) console.log(`   备份已保存: ${setResult.backupPath}`);
                                     } else {
-                                        console.log(`â è®¾ç½®å¤±è´¥: ${setResult.error}`);
+                                        console.log(`❌ 设置失败: ${setResult.error}`);
                                     }
                                 }
                             }
@@ -340,10 +340,10 @@ async function dispatchMenu(choice, options) {
                     case '7': {
                         const backupResult = configEditor.backupConfigs(serverDir);
                         if (backupResult.success) {
-                            console.log(`â å·²å¤ä»½ ${backupResult.count} ä¸ªéç½®æä»¶`);
-                            console.log(`   å¤ä»½ç®å½: ${backupResult.backupDir}`);
+                            console.log(`✅ 已备份 ${backupResult.count} 个配置文件`);
+                            console.log(`   备份目录: ${backupResult.backupDir}`);
                         } else {
-                            console.log(`â å¤ä»½å¤±è´¥: ${backupResult.error}`);
+                            console.log(`❌ 备份失败: ${backupResult.error}`);
                         }
                         break;
                     }
@@ -352,31 +352,31 @@ async function dispatchMenu(choice, options) {
             }
 
             case '3': {
-                // ä¿®æ¹æå¡å¨éç½® (server.properties)
-                printHeader('ä¿®æ¹æå¡å¨éç½® (server.properties)');
+                // 修改服务器配置 (server.properties)
+                printHeader('修改服务器配置 (server.properties)');
                 const ServerProperties = require('./config').ServerProperties;
                 const serverDir = utils ? utils.getServerDir() : '../server';
                 const props = new ServerProperties(serverDir);
 
-                console.log('\n  1. æ¥çææå±æ§');
-                console.log('  2. è®¾ç½®/ä¿®æ¹åä¸ªå±æ§');
-                console.log('  3. å¿«éè®¾ç½®åå¯¼');
-                console.log('  4. éç½®å±æ§ä¸ºé»è®¤å¼');
-                console.log('  0. è¿å');
-                const subChoice = await ask(rl, '\nè¯·éæ© (0-4): ');
+                console.log('\n  1. 查看所有属性');
+                console.log('  2. 设置/修改单个属性');
+                console.log('  3. 快速设置向导');
+                console.log('  4. 重置属性为默认值');
+                console.log('  0. 返回');
+                const subChoice = await ask(rl, '\n请选择 (0-4): ');
 
                 switch (subChoice) {
                     case '1':
                         props.listAll();
                         break;
                     case '2': {
-                        const key = await ask(rl, 'å±æ§å: ');
+                        const key = await ask(rl, '属性名: ');
                         const current = props.get(key);
-                        console.log(`å½åå¼: ${current !== null ? current : '(æªè®¾ç½®)'}`);
-                        const value = await ask(rl, 'æ°å¼: ');
+                        console.log(`当前值: ${current !== null ? current : '(未设置)'}`);
+                        const value = await ask(rl, '新值: ');
                         if (value) {
                             props.set(key, value);
-                            console.log(`â ${key} = ${value}`);
+                            console.log(`✅ ${key} = ${value}`);
                         }
                         break;
                     }
@@ -384,9 +384,9 @@ async function dispatchMenu(choice, options) {
                         await props.quickSet();
                         break;
                     case '4': {
-                        const key = await ask(rl, 'è¦éç½®çå±æ§å: ');
+                        const key = await ask(rl, '要重置的属性名: ');
                         const result = props.reset(key);
-                        console.log(`â ${result.key} å·²éç½®ä¸º ${result.value}`);
+                        console.log(`✅ ${result.key} 已重置为 ${result.value}`);
                         break;
                     }
                 }
@@ -394,17 +394,17 @@ async function dispatchMenu(choice, options) {
             }
 
             case '5': {
-                // éè¯¯æ¥å¿åæ
-                printHeader('éè¯¯æ¥å¿åæ');
+                // 错误日志分析
+                printHeader('错误日志分析');
                 if (!logHandler) {
-                    console.log('æ¥å¿å¤çæ¨¡åæªå è½½');
+                    console.log('日志处理模块未加载');
                     break;
                 }
-                console.log('\n  1. AI åææè¿æ¥å¿');
-                console.log('  2. çæç»è®¡æ¥å');
-                console.log('  3. å®æ¶æ¥å¿è·è¸ª');
-                console.log('  0. è¿å');
-                const subChoice = await ask(rl, '\nè¯·éæ© (0-3): ');
+                console.log('\n  1. AI 分析最近日志');
+                console.log('  2. 生成统计报告');
+                console.log('  3. 实时日志跟踪');
+                console.log('  0. 返回');
+                const subChoice = await ask(rl, '\n请选择 (0-3): ');
                 switch (subChoice) {
                     case '1':
                         await logHandler.analyze();
@@ -413,7 +413,7 @@ async function dispatchMenu(choice, options) {
                         await logHandler.report();
                         break;
                     case '3':
-                        console.log('æ­£å¨è·è¸ªæ¥å¿ (Ctrl+C éåº)...');
+                        console.log('正在跟踪日志 (Ctrl+C 退出)...');
                         logHandler.tail();
                         break;
                 }
@@ -421,72 +421,72 @@ async function dispatchMenu(choice, options) {
             }
 
             case '6': {
-                // è®¤è¯è®¾ç½®
-                printHeader('è®¤è¯è®¾ç½® (å¤ç½®ç»å½)');
+                // 认证设置
+                printHeader('认证设置 (外置登录)');
                 if (!config) {
-                    console.log('éç½®æ¨¡åæªå è½½');
+                    console.log('配置模块未加载');
                     break;
                 }
                 const authConfig = config.getConfig('auth', {});
-                console.log(`\n  å¤ç½®ç»å½: ${authConfig.enable ? 'â å·²å¯ç¨' : 'â æªå¯ç¨'}`);
-                console.log(`  è®¤è¯æå¡å¨: ${authConfig.server || '(æªè®¾ç½®)'}`);
-                console.log(`  javaagent: ${authConfig.javaagent || '(èªå¨)'}`);
-                const enable = await ask(rl, '\nå¯ç¨å¤ç½®ç»å½? (y/N): ');
+                console.log(`\n  外置登录: ${authConfig.enable ? '✅ 已启用' : '❌ 未启用'}`);
+                console.log(`  认证服务器: ${authConfig.server || '(未设置)'}`);
+                console.log(`  javaagent: ${authConfig.javaagent || '(自动)'}`);
+                const enable = await ask(rl, '\n启用外置登录? (y/N): ');
                 if (enable.toLowerCase() === 'y') {
                     config.setConfig('auth.enable', true);
-                    const server = await ask(rl, 'è®¤è¯æå¡å¨å°å (é»è®¤ https://authlib-injector.yushi.moe): ');
+                    const server = await ask(rl, '认证服务器地址 (默认 https://authlib-injector.yushi.moe): ');
                     if (server) config.setConfig('auth.server', server);
-                    console.log('â å¤ç½®ç»å½å·²å¯ç¨ï¼ä¸æ¬¡å¯å¨æå¡å¨æ¶çæ');
+                    console.log('✅ 外置登录已启用，下次启动服务器时生效');
                 } else if (enable !== '') {
                     config.setConfig('auth.enable', false);
-                    console.log('å¤ç½®ç»å½å·²ç¦ç¨');
+                    console.log('外置登录已禁用');
                 }
                 break;
             }
 
             case '7': {
-                // ä¸è½½ç®¡çå¨è®¾ç½®
-                printHeader('ä¸è½½ç®¡çå¨è®¾ç½®');
+                // 下载管理器设置
+                printHeader('下载管理器设置');
                 if (!config) {
-                    console.log('éç½®æ¨¡åæªå è½½');
+                    console.log('配置模块未加载');
                     break;
                 }
                 const mirror = config.getConfig('download.mirror', 'https://bmclapi2.bangbang93.com');
                 const timeout = config.getConfig('download.timeout', 30);
                 const retry = config.getConfig('download.retry', 3);
-                console.log(`\n  éåå°å: ${mirror}`);
-                console.log(`  è¶æ¶æ¶é´: ${timeout}s`);
-                console.log(`  éè¯æ¬¡æ°: ${retry}`);
-                console.log('\n  1. ä¿®æ¹éåå°å');
-                console.log('  2. ä¿®æ¹è¶æ¶æ¶é´');
-                console.log('  3. ä¿®æ¹éè¯æ¬¡æ°');
-                console.log('  0. è¿å');
-                const subChoice = await ask(rl, '\nè¯·éæ© (0-3): ');
+                console.log(`\n  镜像地址: ${mirror}`);
+                console.log(`  超时时间: ${timeout}s`);
+                console.log(`  重试次数: ${retry}`);
+                console.log('\n  1. 修改镜像地址');
+                console.log('  2. 修改超时时间');
+                console.log('  3. 修改重试次数');
+                console.log('  0. 返回');
+                const subChoice = await ask(rl, '\n请选择 (0-3): ');
                 switch (subChoice) {
                     case '1': {
-                        console.log('\n  1. BMCLAPI2 (æ¨è) - https://bmclapi2.bangbang93.com');
-                        console.log('  2. å®æ¹æº - https://launcher.mojang.com');
-                        console.log('  3. èªå®ä¹');
-                        const m = await ask(rl, 'éæ©: ');
+                        console.log('\n  1. BMCLAPI2 (推荐) - https://bmclapi2.bangbang93.com');
+                        console.log('  2. 官方源 - https://launcher.mojang.com');
+                        console.log('  3. 自定义');
+                        const m = await ask(rl, '选择: ');
                         if (m === '1') config.setConfig('download.mirror', 'https://bmclapi2.bangbang93.com');
                         else if (m === '2') config.setConfig('download.mirror', 'https://launcher.mojang.com');
                         else if (m === '3') {
-                            const custom = await ask(rl, 'èªå®ä¹å°å: ');
+                            const custom = await ask(rl, '自定义地址: ');
                             if (custom) config.setConfig('download.mirror', custom);
                         }
-                        console.log('â éåå°åå·²æ´æ°');
+                        console.log('✅ 镜像地址已更新');
                         break;
                     }
                     case '2': {
-                        const t = await ask(rl, 'è¶æ¶æ¶é´(ç§): ');
+                        const t = await ask(rl, '超时时间(秒): ');
                         if (t) config.setConfig('download.timeout', parseInt(t));
-                        console.log('â è¶æ¶æ¶é´å·²æ´æ°');
+                        console.log('✅ 超时时间已更新');
                         break;
                     }
                     case '3': {
-                        const r = await ask(rl, 'éè¯æ¬¡æ°: ');
+                        const r = await ask(rl, '重试次数: ');
                         if (r) config.setConfig('download.retry', parseInt(r));
-                        console.log('â éè¯æ¬¡æ°å·²æ´æ°');
+                        console.log('✅ 重试次数已更新');
                         break;
                     }
                 }
@@ -494,23 +494,23 @@ async function dispatchMenu(choice, options) {
             }
 
             case '8': {
-                // å®è£æ´åå
-                printHeader('å®è£æ´åå');
+                // 安装整合包
+                printHeader('安装整合包');
                 if (!packGenerator) {
-                    console.log('æ´ååæ¨¡åæªå è½½');
+                    console.log('整合包模块未加载');
                     break;
                 }
-                console.log('\n  1. ä»æ¬å°æä»¶å®è£ (.zip)');
-                console.log('  2. ä» URL ä¸è½½å®è£');
-                console.log('  0. è¿å');
-                const subChoice = await ask(rl, '\nè¯·éæ© (0-2): ');
+                console.log('\n  1. 从本地文件安装 (.zip)');
+                console.log('  2. 从 URL 下载安装');
+                console.log('  0. 返回');
+                const subChoice = await ask(rl, '\n请选择 (0-2): ');
                 if (subChoice === '1') {
-                    const filePath = await ask(rl, 'æ´ååæä»¶è·¯å¾: ');
+                    const filePath = await ask(rl, '整合包文件路径: ');
                     if (filePath) {
                         await packGenerator.install(filePath);
                     }
                 } else if (subChoice === '2') {
-                    const url = await ask(rl, 'æ´åå URL: ');
+                    const url = await ask(rl, '整合包 URL: ');
                     if (url) {
                         await packGenerator.install(url);
                     }
@@ -519,36 +519,36 @@ async function dispatchMenu(choice, options) {
             }
 
             case '9': {
-                // çæå®¢æ·ç«¯æ´åå
-                printHeader('çæå®¢æ·ç«¯æ´åå');
+                // 生成客户端整合包
+                printHeader('生成客户端整合包');
                 if (!packGenerator) {
-                    console.log('æ´ååæ¨¡åæªå è½½');
+                    console.log('整合包模块未加载');
                     break;
                 }
-                const name = await ask(rl, 'æ´åååç§°: ') || 'client-pack';
-                const version = await ask(rl, 'Minecraft çæ¬ (é»è®¤ 1.20.1): ') || '1.20.1';
+                const name = await ask(rl, '整合包名称: ') || 'client-pack';
+                const version = await ask(rl, 'Minecraft 版本 (默认 1.20.1): ') || '1.20.1';
                 await packGenerator.generate({ name, version });
                 break;
             }
 
             case '10': {
-                // æ¨¡ç»/æä»¶æç´¢ä¸è½½
-                printHeader('æ¨¡ç»/æä»¶æç´¢ä¸è½½');
+                // 模组/插件搜索下载
+                printHeader('模组/插件搜索下载');
                 if (!modManager) {
-                    console.log('æ¨¡ç»ç®¡çæ¨¡åæªå è½½');
+                    console.log('模组管理模块未加载');
                     break;
                 }
-                console.log('\n  1. ä» URL ä¸è½½æ¨¡ç»');
-                console.log('  2. ä»æ¬å°å®è£æ¨¡ç»');
-                console.log('  0. è¿å');
-                const subChoice = await ask(rl, '\nè¯·éæ© (0-2): ');
+                console.log('\n  1. 从 URL 下载模组');
+                console.log('  2. 从本地安装模组');
+                console.log('  0. 返回');
+                const subChoice = await ask(rl, '\n请选择 (0-2): ');
                 if (subChoice === '1') {
-                    const url = await ask(rl, 'æ¨¡ç»ä¸è½½ URL: ');
+                    const url = await ask(rl, '模组下载 URL: ');
                     if (url) {
                         await modManager.install(url);
                     }
                 } else if (subChoice === '2') {
-                    const filePath = await ask(rl, 'æ¨¡ç»æä»¶è·¯å¾: ');
+                    const filePath = await ask(rl, '模组文件路径: ');
                     if (filePath) {
                         await modManager.install(filePath);
                     }
@@ -557,51 +557,51 @@ async function dispatchMenu(choice, options) {
             }
 
             case '11': {
-                // ç³»ç»è®¾ç½®
-                printHeader('ç³»ç»è®¾ç½®');
+                // 系统设置
+                printHeader('系统设置');
                 if (!config || !utils) {
-                    console.log('éç½®æ¨¡åæªå è½½');
+                    console.log('配置模块未加载');
                     break;
                 }
-                console.log('\n  1. ä¿®æ¹ Java è·¯å¾');
-                console.log('  2. ä¿®æ¹ JVM åæ°');
-                console.log('  3. æ¥çç³»ç»ä¿¡æ¯');
-                console.log('  4. éç½®éç½®');
-                console.log('  0. è¿å');
-                const subChoice = await ask(rl, '\nè¯·éæ© (0-4): ');
+                console.log('\n  1. 修改 Java 路径');
+                console.log('  2. 修改 JVM 参数');
+                console.log('  3. 查看系统信息');
+                console.log('  4. 重置配置');
+                console.log('  0. 返回');
+                const subChoice = await ask(rl, '\n请选择 (0-4): ');
                 switch (subChoice) {
                     case '1': {
-                        const current = config.getConfig('server.java', '(èªå¨æ£æµ)');
-                        console.log(`å½å Java: ${current}`);
-                        const newPath = await ask(rl, 'æ° Java è·¯å¾ (çç©ºèªå¨æ£æµ): ');
+                        const current = config.getConfig('server.java', '(自动检测)');
+                        console.log(`当前 Java: ${current}`);
+                        const newPath = await ask(rl, '新 Java 路径 (留空自动检测): ');
                         config.setConfig('server.java', newPath || null);
-                        console.log('â Java è·¯å¾å·²æ´æ°');
+                        console.log('✅ Java 路径已更新');
                         break;
                     }
                     case '2': {
                         const current = config.getConfig('server.jvm_args', []).join(' ');
-                        console.log(`å½å JVM åæ°: ${current}`);
-                        const newArgs = await ask(rl, 'æ° JVM åæ° (ç©ºæ ¼åé): ');
+                        console.log(`当前 JVM 参数: ${current}`);
+                        const newArgs = await ask(rl, '新 JVM 参数 (空格分隔): ');
                         if (newArgs) {
                             config.setConfig('server.jvm_args', newArgs.split(/\s+/));
-                            console.log('â JVM åæ°å·²æ´æ°');
+                            console.log('✅ JVM 参数已更新');
                         }
                         break;
                     }
                     case '3': {
                         const os = require('os');
-                        console.log(`\n  æä½ç³»ç»: ${os.type()} ${os.release()}`);
-                        console.log(`  æ¶æ: ${os.arch()}`);
-                        console.log(`  åå­: ${(os.totalmem() / 1024 / 1024 / 1024).toFixed(1)} GB`);
+                        console.log(`\n  操作系统: ${os.type()} ${os.release()}`);
+                        console.log(`  架构: ${os.arch()}`);
+                        console.log(`  内存: ${(os.totalmem() / 1024 / 1024 / 1024).toFixed(1)} GB`);
                         console.log(`  CPU: ${os.cpus()[0]?.model || 'Unknown'}`);
                         console.log(`  Node.js: ${process.version}`);
                         break;
                     }
                     case '4': {
-                        const confirm = await ask(rl, 'ç¡®å®éç½®ææéç½®? (y/N): ');
+                        const confirm = await ask(rl, '确定重置所有配置? (y/N): ');
                         if (confirm.toLowerCase() === 'y') {
                             config.saveConfig(config.DEFAULT_CONFIG);
-                            console.log('â éç½®å·²éç½®ä¸ºé»è®¤å¼');
+                            console.log('✅ 配置已重置为默认值');
                         }
                         break;
                     }
@@ -610,15 +610,15 @@ async function dispatchMenu(choice, options) {
             }
 
             case '12': {
-                // æå¡å¨ç¶æçæ§
-                printHeader('æå¡å¨ç¶æçæ§');
+                // 服务器状态监控
+                printHeader('服务器状态监控');
                 if (!serverManager) {
-                    console.log('æå¡å¨ç®¡çæ¨¡åæªå è½½');
+                    console.log('服务器管理模块未加载');
                     break;
                 }
                 serverManager.status();
                 if (serverManager.isRunning()) {
-                    const tailChoice = await ask(rl, '\næ¯å¦æ¥çå®æ¶æ¥å¿? (y/N): ');
+                    const tailChoice = await ask(rl, '\n是否查看实时日志? (y/N): ');
                     if (tailChoice.toLowerCase() === 'y' && logHandler) {
                         logHandler.tail();
                     }
@@ -627,32 +627,32 @@ async function dispatchMenu(choice, options) {
             }
 
             case '13': {
-                // å¤ä»½/æ¢å¤
-                printHeader('å¤ä»½/æ¢å¤ (æ¹æ¡ç®¡ç)');
+                // 备份/恢复
+                printHeader('备份/恢复 (方案管理)');
                 if (!schemeManager) {
-                    console.log('æ¹æ¡ç®¡çæ¨¡åæªå è½½');
+                    console.log('方案管理模块未加载');
                     break;
                 }
-                console.log('\n  1. åå»ºæ¹æ¡');
-                console.log('  2. åæ¢æ¹æ¡');
-                console.log('  3. ååºæ¹æ¡');
-                console.log('  4. å é¤æ¹æ¡');
-                console.log('  5. æ¹æ¡ä¿¡æ¯');
-                console.log('  0. è¿å');
-                const subChoice = await ask(rl, '\nè¯·éæ© (0-5): ');
+                console.log('\n  1. 创建方案');
+                console.log('  2. 切换方案');
+                console.log('  3. 列出方案');
+                console.log('  4. 删除方案');
+                console.log('  5. 方案信息');
+                console.log('  0. 返回');
+                const subChoice = await ask(rl, '\n请选择 (0-5): ');
                 switch (subChoice) {
                     case '1': {
-                        const name = await ask(rl, 'æ¹æ¡åç§°: ');
+                        const name = await ask(rl, '方案名称: ');
                         if (name) {
-                            const version = await ask(rl, 'MC çæ¬ (é»è®¤ 1.20.1): ') || '1.20.1';
-                            const loader = await ask(rl, 'å è½½å¨ (é»è®¤ vanilla): ') || 'vanilla';
+                            const version = await ask(rl, 'MC 版本 (默认 1.20.1): ') || '1.20.1';
+                            const loader = await ask(rl, '加载器 (默认 vanilla): ') || 'vanilla';
                             schemeManager.create(name, version, loader);
                         }
                         break;
                     }
                     case '2': {
                         schemeManager.list();
-                        const name = await ask(rl, 'è¦åæ¢å°çæ¹æ¡å: ');
+                        const name = await ask(rl, '要切换到的方案名: ');
                         if (name) {
                             schemeManager.switch(name);
                         }
@@ -663,9 +663,9 @@ async function dispatchMenu(choice, options) {
                         break;
                     case '4': {
                         schemeManager.list();
-                        const name = await ask(rl, 'è¦å é¤çæ¹æ¡å: ');
+                        const name = await ask(rl, '要删除的方案名: ');
                         if (name) {
-                            const confirm = await ask(rl, `ç¡®å®å é¤æ¹æ¡ "${name}"? (y/N): `);
+                            const confirm = await ask(rl, `确定删除方案 "${name}"? (y/N): `);
                             if (confirm.toLowerCase() === 'y') {
                                 schemeManager.delete(name);
                             }
@@ -674,7 +674,7 @@ async function dispatchMenu(choice, options) {
                     }
                     case '5': {
                         schemeManager.list();
-                        const name = await ask(rl, 'æ¹æ¡å: ');
+                        const name = await ask(rl, '方案名: ');
                         if (name) {
                             schemeManager.info(name);
                         }
@@ -685,24 +685,24 @@ async function dispatchMenu(choice, options) {
             }
 
             case '14': {
-                // Web ä¸»é¢æ´æ¹
-                printHeader('Web ä¸»é¢æ´æ¹');
+                // Web 主题更改
+                printHeader('Web 主题更改');
                 if (!themeManager) {
-                    console.log('ä¸»é¢ç®¡çæ¨¡åæªå è½½');
+                    console.log('主题管理模块未加载');
                     break;
                 }
-                console.log('\n  1. ååºå·²å®è£ä¸»é¢');
-                console.log('  2. å®è£ä¸»é¢');
-                console.log('  3. åæ¢ä¸»é¢');
-                console.log('  4. å é¤ä¸»é¢');
-                console.log('  0. è¿å');
-                const subChoice = await ask(rl, '\nè¯·éæ© (0-4): ');
+                console.log('\n  1. 列出已安装主题');
+                console.log('  2. 安装主题');
+                console.log('  3. 切换主题');
+                console.log('  4. 删除主题');
+                console.log('  0. 返回');
+                const subChoice = await ask(rl, '\n请选择 (0-4): ');
                 switch (subChoice) {
                     case '1':
                         themeManager.list();
                         break;
                     case '2': {
-                        const filePath = await ask(rl, 'ä¸»é¢ ZIP æä»¶è·¯å¾: ');
+                        const filePath = await ask(rl, '主题 ZIP 文件路径: ');
                         if (filePath) {
                             await themeManager.install(filePath);
                         }
@@ -710,7 +710,7 @@ async function dispatchMenu(choice, options) {
                     }
                     case '3': {
                         themeManager.list();
-                        const name = await ask(rl, 'è¦åæ¢çä¸»é¢å: ');
+                        const name = await ask(rl, '要切换的主题名: ');
                         if (name) {
                             await themeManager.switch(name);
                         }
@@ -718,7 +718,7 @@ async function dispatchMenu(choice, options) {
                     }
                     case '4': {
                         themeManager.list();
-                        const name = await ask(rl, 'è¦å é¤çä¸»é¢å: ');
+                        const name = await ask(rl, '要删除的主题名: ');
                         if (name) {
                             themeManager.delete(name);
                         }
@@ -729,48 +729,48 @@ async function dispatchMenu(choice, options) {
             }
 
             case '15': {
-                // èæº / æè¦å½æ¿ä¸»ï¼é¶ç¦ Terracottaï¼
-                printHeader('èæº / æè¦å½æ¿ä¸» (é¶ç¦)');
+                // 联机 / 我要当房主（陶瓦 Terracotta）
+                printHeader('联机 / 我要当房主 (陶瓦)');
                 const Terracotta = require('./terracotta');
-                console.log('\n   powered by Terracotta | é¶ç¦èæº (AGPLv3)');
-                console.log('   åºäº EasyTier çåç½ç©¿éï¼å¥½åæ éå¬ç½ IP å³å¯å å¥ä½ ç Minecraft æå¡ç«¯ã');
-                console.log('   å å¥ç«¯ç± PCL / HMCL / BakaXL / FCL ç­å¯å¨å¨åç½®æ¯æã\n');
-                console.log('  1. æè¦å½æ¿ä¸»ï¼å¼æ¿ï¼');
-                console.log('  2. æ¥çæ¿é´å· / ç¶æ');
-                console.log('  3. å³æ¿ï¼åæ­¢é¶ç¦ï¼');
-                console.log('  0. è¿å');
-                const sub = await ask(rl, '\nè¯·éæ© (0-3): ');
+                console.log('\n   powered by Terracotta | 陶瓦联机 (AGPLv3)');
+                console.log('   基于 EasyTier 的内网穿透，好友无需公网 IP 即可加入你的 Minecraft 服务端。');
+                console.log('   加入端由 PCL / HMCL / BakaXL / FCL 等启动器内置支持。\n');
+                console.log('  1. 我要当房主（开房）');
+                console.log('  2. 查看房间号 / 状态');
+                console.log('  3. 关房（停止陶瓦）');
+                console.log('  0. 返回');
+                const sub = await ask(rl, '\n请选择 (0-3): ');
                 try {
                     if (sub === '1') {
-                        console.log('æç¤ºï¼å¼æ¿åè¯·åå¯å¨ Minecraft æå¡ç«¯ï¼èå 1ï¼ï¼é¶ç¦ä¼èªå¨æ«ææ¬æºæå¡ç«¯ç«¯å£ã');
+                        console.log('提示：开房前请先启动 Minecraft 服务端（菜单 1），陶瓦会自动扫描本机服务端端口。');
                         await Terracotta.hostRoom({});
                     } else if (sub === '2') {
                         const s = await Terracotta.getStatus();
                         if (!s.running) {
-                            console.log('å½åæªå¼æ¿ï¼é¶ç¦æªè¿è¡ï¼ãéæ© 1 å¼æ¿ã');
+                            console.log('当前未开房（陶瓦未运行）。选择 1 开房。');
                         } else {
-                            console.log(`è¿è¡ç¶æ:  ð¢ è¿è¡ä¸­`);
-                            console.log(`æ¬å° API:  127.0.0.1:${s.port}`);
-                            console.log(`æ¿é´å·:    ${s.roomCode || '(çæä¸­)'}`);
-                            console.log(`ç¶ææº:    ${s.state || 'æªç¥'}`);
+                            console.log(`运行状态:  🟢 运行中`);
+                            console.log(`本地 API:  127.0.0.1:${s.port}`);
+                            console.log(`房间号:    ${s.roomCode || '(生成中)'}`);
+                            console.log(`状态机:    ${s.state || '未知'}`);
                             if (s.roomCode) {
-                                console.log(`\nææ¿é´å·åç»å¥½åï¼å¯¹æ¹å¨ PCL / HMCL / BakaXL / FCL ä¸­éæ©ãå å¥é¶ç¦æ¿é´ãå¹¶è¾å¥è¯¥æ¿é´å·å³å¯èæºã`);
+                                console.log(`\n把房间号发给好友，对方在 PCL / HMCL / BakaXL / FCL 中选择「加入陶瓦房间」并输入该房间号即可联机。`);
                             }
                         }
                     } else if (sub === '3') {
                         await Terracotta.stopHost();
                     }
                 } catch (e) {
-                    console.error(`â æä½å¤±è´¥: ${e.message}`);
+                    console.error(`❌ 操作失败: ${e.message}`);
                 }
                 break;
             }
 
             default:
-                console.log(`æªç¥èåéé¡¹: ${choice}`);
+                console.log(`未知菜单选项: ${choice}`);
         }
     } catch (e) {
-        console.error(`æ§è¡èåæä½æ¶åºé: ${e.message}`);
+        console.error(`执行菜单操作时出错: ${e.message}`);
     }
 
     rl.close();
