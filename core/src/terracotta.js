@@ -1,5 +1,5 @@
 /**
- * terracotta.js — 陶瓦 (Terracotta) 内网穿透 / 联机 管理器 (V3.3.0)
+ * terracotta.js — 陶瓦 (Terracotta) 内网穿透 / 联机 管理器 (V3.3.2)
  *
  * ┌─────────────────────────────────────────────────────────────────────────┐
  * │ 版权与许可声明（AGPL 例外条款要求：通过 HTTP API 驱动陶瓦时，              │
@@ -134,20 +134,28 @@ function clearRuntimeState() {
  * @returns {{osName:string, archName:string, ext:string}|null}
  */
 function detectTerraAsset() {
-    const p = process.platform; // 'win32' | 'darwin' | 'linux' | ...
+    const p = process.platform; // 'win32' | 'darwin' | 'linux' | 'android' | ...
     const a = process.arch;     // 'x64' | 'arm64' | 'ia32' | 'arm' | ...
     let osName, ext = '';
     if (p === 'win32') { osName = 'windows'; ext = '.exe'; }
     else if (p === 'darwin') { osName = 'macos'; ext = ''; }
     else if (p === 'linux') { osName = 'linux'; ext = ''; }
+    // Android：Gitee 上提供 terracotta-<ver>-android-<arch>.so（JNI 共享库）。
+    // 注意：在 Termux 中 process.platform 为 'linux'，走上面的 linux 分支
+    //（terracotta 的 linux/arm64 是 musl 静态二进制，可直接运行）；仅当以
+    // nodejs-mobile 等真·Android 运行时才会走到此分支。
+    else if (p === 'android') { osName = 'android'; ext = '.so'; }
     else return null;
 
     let archName;
     if (a === 'x64') archName = 'x86_64';
-    else if (a === 'arm64') archName = 'arm64';
+    // 桌面端 arm64 命名为 arm64；Android 端（.so）命名为 arm64v8a
+    else if (a === 'arm64') archName = (p === 'android') ? 'arm64v8a' : 'arm64';
     else if (a === 'ia32') archName = 'x86';
-    else if (a === 'arm') archName = 'armv7';
+    // 32 位：桌面端无对应构建（返回 null），Android 端命名为 armv7
+    else if (a === 'arm') archName = (p === 'android') ? 'armv7' : null;
     else return null;
+    if (!archName) return null;
 
     return { osName, archName, ext };
 }
@@ -166,9 +174,11 @@ function resolveDownloadUrl() {
     const mirror = (config.getConfig('lan.mirror', TERRA_MIRROR_DEFAULT) || '').replace(/\/+$/, '');
     const asset = detectTerraAsset();
     if (!asset) {
-        throw new Error('当前平台不支持自动下载陶瓦二进制（仅支持 Windows / macOS / Linux 的 x64 / arm64）');
+        throw new Error('当前平台不支持自动下载陶瓦二进制（仅支持 Windows / macOS / Linux 的 x64 / arm64，以及 Android 的 arm64v8a / armv7 / x86_64 / x86）');
     }
-    const assetName = `terracotta-${version}-${asset.osName}-${asset.archName}-pkg.tar.gz`;
+    // Android 的 .so 直接发布（无 -pkg.tar.gz 包裹）；其余平台为 -pkg.tar.gz 压缩包
+    const suffix = (asset.ext === '.so') ? asset.ext : '-pkg.tar.gz';
+    const assetName = `terracotta-${version}-${asset.osName}-${asset.archName}${suffix}`;
     return `${mirror}/download/v${version}/${assetName}`;
 }
 
@@ -190,15 +200,16 @@ function binaryPath() {
 async function ensureBinary() {
     const target = binaryPath();
     if (!target) {
-        throw new Error('当前平台不支持自动下载陶瓦二进制（仅支持 Windows / macOS / Linux 的 x64 / arm64）');
+        throw new Error('当前平台不支持自动下载陶瓦二进制（仅支持 Windows / macOS / Linux 的 x64 / arm64，以及 Android 的 arm64v8a / armv7 / x86_64 / x86）');
     }
     if (fs.existsSync(target) && fs.statSync(target).size > 0) {
         return target;
     }
 
     const url = resolveDownloadUrl();
+    const isAndroid = target.endsWith('.so'); // Android 为 JNI 库，直接下载 .so
     fs.ensureDirSync(LAN_DIR);
-    const tarPath = path.join(LAN_DIR, `terracotta-${Date.now()}.tar.gz`);
+    const tmpPath = isAndroid ? target : path.join(LAN_DIR, `terracotta-${Date.now()}.tar.gz`);
 
     console.log(`\n🌐 正在下载陶瓦 (Terracotta) 二进制（首次使用需联网）`);
     console.log(`   来源: ${url}`);
@@ -215,7 +226,7 @@ async function ensureBinary() {
         const bar = new ProgressBar('   下载 [:bar] :percent :etas', {
             width: 40, complete: '=', incomplete: ' ', total: total || 1
         });
-        const writer = fs.createWriteStream(tarPath);
+        const writer = fs.createWriteStream(tmpPath);
         response.data.on('data', chunk => bar.tick(chunk.length));
         response.data.pipe(writer);
         await new Promise((resolve, reject) => {
@@ -223,22 +234,27 @@ async function ensureBinary() {
             writer.on('error', reject);
         });
 
-        console.log('   解压中...');
-        await extractTar(tarPath, LAN_DIR);
+        if (isAndroid) {
+            // Android：.so 即最终文件（JNI 共享库），无需解压
+            fs.chmodSync(target, 0o755);
+        } else {
+            console.log('   解压中...');
+            await extractTar(tmpPath, LAN_DIR);
 
-        // 在解压目录中找到陶瓦二进制并重命名为稳定文件名
-        const found = locateBinary(LAN_DIR);
-        if (!found) {
-            throw new Error('解压后未找到陶瓦可执行文件，请联系开发者或手动配置 lan.binary_url');
+            // 在解压目录中找到陶瓦二进制并重命名为稳定文件名
+            const found = locateBinary(LAN_DIR);
+            if (!found) {
+                throw new Error('解压后未找到陶瓦可执行文件，请联系开发者或手动配置 lan.binary_url');
+            }
+            fs.copySync(found, target);
+            fs.chmodSync(target, 0o755);
+            // 清理临时压缩包与解压残留
+            try { fs.unlinkSync(tmpPath); } catch (e) {}
         }
-        fs.copySync(found, target);
-        fs.chmodSync(target, 0o755);
-        // 清理临时压缩包与解压残留
-        try { fs.unlinkSync(tarPath); } catch (e) {}
         console.log(`✅ 陶瓦二进制就绪: ${target}`);
         return target;
     } catch (e) {
-        try { fs.unlinkSync(tarPath); } catch (e2) {}
+        try { fs.unlinkSync(tmpPath); } catch (e2) {}
         if (e.response && e.response.status) {
             throw new Error(`下载陶瓦二进制失败（HTTP ${e.response.status}）。请检查网络或镜像地址；也可手动下载后配置 lan.binary_url。错误: ${e.message}`);
         }
@@ -355,6 +371,18 @@ async function startDaemon() {
     }
 
     const bin = await ensureBinary();
+    // Android 的 terracotta-*.so 是 JNI 共享库（由 FCL / HMCL 等安卓启动器加载），
+    // 不能作为独立 CLI 进程 spawn。Termux 中 process.platform 为 'linux'，走的是
+    // linux/arm64 的 musl 静态二进制，可正常启动；此处仅拦截真·Android 运行时。
+    if (bin.endsWith('.so')) {
+        throw new Error(
+            '当前为 Android 平台：陶瓦提供的 .so 是 JNI 共享库，需由 FCL / HMCL 等启动器通过 ' +
+            'JNI 加载，无法作为独立命令行进程启动。\n' +
+            '若要在手机上用 wow~ 开陶瓦房间，请在 Termux 中运行 wow~（此时 process.platform 为 ' +
+            'linux，会使用可独立运行的 linux/arm64 musl 二进制）。\n' +
+            '如需自定义二进制，可配置 lan.binary_url 指向可用文件。'
+        );
+    }
     fs.ensureDirSync(LAN_DIR);
     // 清空旧的端口文件，避免读到上一次的端口
     try { if (fs.existsSync(PORT_FILE)) fs.unlinkSync(PORT_FILE); } catch (e) {}

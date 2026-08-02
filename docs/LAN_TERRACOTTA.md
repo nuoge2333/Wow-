@@ -1,4 +1,4 @@
-# 🌐 联机 / 内网穿透（陶瓦 Terracotta）— V3.3.0
+# 🌐 联机 / 内网穿透（陶瓦 Terracotta）— V3.3.2
 
 wow~ V3.3.0 起内置对接 **[陶瓦（Terracotta）](https://github.com/burningtnt/Terracotta)**，为你的 Minecraft 服务端提供开箱即用的内网 / 局域网穿透联机能力。没有公网 IP 也能让好友直接加入。
 
@@ -113,4 +113,8 @@ Powered by Terracotta | 陶瓦联机 — https://github.com/burningtnt/Terracott
 - **开房失败 / 一直 scanning**：确认 Minecraft 服务端已启动并监听 `server_port`（默认 25565），且本机网络可访问陶瓦公共节点。
 - **想固定房间号**：在 `lan.room_code` 填写，或在 `wow lan host -r <房间号>` 指定；若格式不被陶瓦接受，陶瓦会自动重新生成一个（不会报错）。
 - **关不掉房间**：`wow lan stop` 会先通过陶瓦 API 优雅退出，失败时回退为终止进程；也可直接结束陶瓦进程（运行时状态记录在 `core/.lan.json`）。
-- **平台支持**：自动下载支持 Windows / macOS / Linux 的 x64 与 arm64（Linux 为 musl 静态二进制，免 glibc 依赖）。其它架构请改用 `lan.binary_url` 手动提供。
+- **平台支持**：自动下载支持 **Windows / macOS / Linux** 的 x64 与 arm64（Linux 为 musl 静态二进制，免 glibc 依赖，可直接在 Termux 运行），以及 **Android** 的 arm64v8a / armv7 / x86_64 / x86（下载 `terracotta-<ver>-android-<arch>.so`）。
+- **在手机上怎么用（Android / Termux 重要说明）**：
+  - **Termux 里可以直接用**：Termux 中 `process.platform` 为 `linux`，wow~ 会下载 `linux/arm64` 的 musl 静态二进制并直接启动，开房流程与桌面端一致。
+  - **真·Android（如 nodejs-mobile 等把 wow~ 嵌进 App 的运行时）**：陶瓦提供的 `.so` 是 **JNI 共享库**，需要由 **FCL / HMCL** 等安卓启动器通过 `System.loadLibrary` 加载，**不能**作为独立命令行进程启动；此时 `wow lan host` 会给出明确提示，请改用 Termux 或在启动器中直接开陶瓦房间。
+  - 其它未覆盖的架构（如 32 位 Linux）请改用 `lan.binary_url` 手动提供可用二进制。
