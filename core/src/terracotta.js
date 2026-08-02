@@ -1,5 +1,5 @@
 /**
- * terracotta.js — 陶瓦 (Terracotta) 内网穿透 / 联机 管理器 (V3.3.2)
+ * terracotta.js — 陶瓦 (Terracotta) 内网穿透 / 联机 管理器 (V3.3.3)
  *
  * ┌─────────────────────────────────────────────────────────────────────────┐
  * │ 版权与许可声明（AGPL 例外条款要求：通过 HTTP API 驱动陶瓦时，              │
@@ -130,49 +130,63 @@ function clearRuntimeState() {
 }
 
 /**
- * 检测当前平台对应的陶瓦资产 (os / arch / 可执行文件扩展名)
- * @returns {{osName:string, archName:string, ext:string}|null}
+ * 检测当前平台对应的陶瓦候选资产列表（按优先级排序）。
+ *
+ * 普通平台（Windows / macOS / Linux）：只有一个候选。
+ *
+ * Android（Termux 下 process.platform === 'android'，并非 'linux'）：
+ *   1) 优先尝试 android 的 .so（JNI 共享库，供 FCL / HMCL 等安卓启动器加载）；
+ *   2) 若 .so 下载 404 / 网络错误 / 实际作为 CLI 无法 spawn，则回退到
+ *      linux/arm64 的 musl 静态二进制（可在 Termux 中直接 spawn 运行）。
+ *
+ * @returns {Array<{osName:string, archName:string, ext:string}>}
  */
-function detectTerraAsset() {
+function detectTerraAssets() {
     const p = process.platform; // 'win32' | 'darwin' | 'linux' | 'android' | ...
     const a = process.arch;     // 'x64' | 'arm64' | 'ia32' | 'arm' | ...
-    let osName, ext = '';
-    if (p === 'win32') { osName = 'windows'; ext = '.exe'; }
-    else if (p === 'darwin') { osName = 'macos'; ext = ''; }
-    else if (p === 'linux') { osName = 'linux'; ext = ''; }
-    // Android：Gitee 上提供 terracotta-<ver>-android-<arch>.so（JNI 共享库）。
-    // 注意：在 Termux 中 process.platform 为 'linux'，走上面的 linux 分支
-    //（terracotta 的 linux/arm64 是 musl 静态二进制，可直接运行）；仅当以
-    // nodejs-mobile 等真·Android 运行时才会走到此分支。
-    else if (p === 'android') { osName = 'android'; ext = '.so'; }
-    else return null;
 
-    let archName;
-    if (a === 'x64') archName = 'x86_64';
-    // 桌面端 arm64 命名为 arm64；Android 端（.so）命名为 arm64v8a
-    else if (a === 'arm64') archName = (p === 'android') ? 'arm64v8a' : 'arm64';
-    else if (a === 'ia32') archName = 'x86';
-    // 32 位：桌面端无对应构建（返回 null），Android 端命名为 armv7
-    else if (a === 'arm') archName = (p === 'android') ? 'armv7' : null;
-    else return null;
-    if (!archName) return null;
+    // 单个平台资产构造；archName 为 null 表示当前架构无可用构建
+    function build(osName, ext) {
+        let archName;
+        if (a === 'x64') archName = 'x86_64';
+        // 桌面端 arm64 命名为 arm64；Android 端（.so）命名为 arm64v8a
+        else if (a === 'arm64') archName = (osName === 'android') ? 'arm64v8a' : 'arm64';
+        else if (a === 'ia32') archName = 'x86';
+        // 32 位：桌面端无对应构建，Android 端命名为 armv7
+        else if (a === 'arm') archName = (osName === 'android') ? 'armv7' : null;
+        else archName = null;
+        if (!archName) return null;
+        return { osName, archName, ext };
+    }
 
-    return { osName, archName, ext };
+    if (p === 'win32') return [build('windows', '.exe')].filter(Boolean);
+    if (p === 'darwin') return [build('macos', '')].filter(Boolean);
+    if (p === 'linux')  return [build('linux', '')].filter(Boolean);
+
+    if (p === 'android') {
+        // 优先：android .so（JNI 共享库）；回退：linux/arm64 musl 静态二进制（Termux 可运行）
+        const androidSo = build('android', '.so');
+        const linuxArm64 = { osName: 'linux', archName: 'arm64', ext: '' };
+        return (androidSo ? [androidSo] : []).concat(linuxArm64);
+    }
+
+    return [];
 }
 
 /**
  * 解析陶瓦二进制下载地址
- * 默认按 lan.mirror（Gitee 镜像）/ lan.version / 当前平台自动拼装：
- *   <mirror>/download/v<version>/terracotta-<version>-<os>-<arch>-pkg.tar.gz
+ * 默认按 lan.mirror（Gitee 镜像）/ lan.version / 给定资产自动拼装：
+ *   <mirror>/download/v<version>/terracotta-<version>-<os>-<arch>[-pkg.tar.gz|.so]
  * 若配置了 lan.binary_url 则直接使用它。
+ * @param {{osName:string, archName:string, ext:string}} [asset] 目标资产（缺省取第一个候选）
  */
-function resolveDownloadUrl() {
+function resolveDownloadUrl(asset) {
     const override = config.getConfig('lan.binary_url', '');
     if (override && override.trim()) return override.trim();
 
     const version = config.getConfig('lan.version', TERRA_VERSION_DEFAULT);
     const mirror = (config.getConfig('lan.mirror', TERRA_MIRROR_DEFAULT) || '').replace(/\/+$/, '');
-    const asset = detectTerraAsset();
+    if (!asset) asset = detectTerraAssets()[0];
     if (!asset) {
         throw new Error('当前平台不支持自动下载陶瓦二进制（仅支持 Windows / macOS / Linux 的 x64 / arm64，以及 Android 的 arm64v8a / armv7 / x86_64 / x86）');
     }
@@ -183,12 +197,14 @@ function resolveDownloadUrl() {
 }
 
 /**
- * 计算陶瓦二进制最终路径（解压并重命名后的稳定文件名）
+ * 计算陶瓦二进制最终路径（解压并重命名后的稳定文件名）。
+ * 使用固定文件名，避免不同扩展名 / 候选资产导致的路径漂移：
+ *   - Windows 需要 .exe；
+ *   - 其余平台（含 Android 回退的 linux/arm64 静态二进制）无扩展名。
  */
 function binaryPath() {
-    const asset = detectTerraAsset();
-    if (!asset) return null;
-    return path.join(LAN_DIR, 'terracotta' + asset.ext);
+    const winExt = (process.platform === 'win32') ? '.exe' : '';
+    return path.join(LAN_DIR, 'terracotta' + winExt);
 }
 
 // ==================== 下载与解压 ====================
@@ -197,69 +213,103 @@ function binaryPath() {
  * 确保陶瓦二进制存在：若已存在则直接返回路径；否则从镜像下载并解压。
  * @returns {Promise<string>} 二进制绝对路径
  */
+/**
+ * 流式下载文件并带进度条。
+ * 对 HTTP >= 400（含 404）显式 reject 并带上 status，便于上层回退到下一个候选。
+ */
+function downloadFile(url, destPath) {
+    return new Promise((resolve, reject) => {
+        axios({ method: 'get', url, responseType: 'stream', timeout: 300000 })
+            .then(response => {
+                if (response.status >= 400) {
+                    const err = new Error(`HTTP ${response.status}`);
+                    err.response = { status: response.status };
+                    return reject(err);
+                }
+                const total = parseInt(response.headers['content-length'] || '0', 10);
+                const bar = new ProgressBar('   下载 [:bar] :percent :etas', {
+                    width: 40, complete: '=', incomplete: ' ', total: total || 1
+                });
+                const writer = fs.createWriteStream(destPath);
+                response.data.on('data', chunk => bar.tick(chunk.length));
+                response.data.pipe(writer);
+                writer.on('finish', resolve);
+                writer.on('error', reject);
+            })
+            .catch(reject);
+    });
+}
+
+/**
+ * 确保陶瓦二进制存在：若已存在则直接返回路径；否则按候选顺序下载。
+ * Android 场景：优先下载 .so，若 404 / 网络错误 / 无法作为 CLI 启动，则回退到
+ * linux/arm64 的 musl 静态二进制（Termux 可直接运行）。所有候选耗尽才抛错。
+ * @returns {Promise<string>} 二进制绝对路径
+ */
 async function ensureBinary() {
     const target = binaryPath();
-    if (!target) {
-        throw new Error('当前平台不支持自动下载陶瓦二进制（仅支持 Windows / macOS / Linux 的 x64 / arm64，以及 Android 的 arm64v8a / armv7 / x86_64 / x86）');
-    }
     if (fs.existsSync(target) && fs.statSync(target).size > 0) {
         return target;
     }
 
-    const url = resolveDownloadUrl();
-    const isAndroid = target.endsWith('.so'); // Android 为 JNI 库，直接下载 .so
+    const candidates = detectTerraAssets();
+    if (!candidates.length) {
+        throw new Error('当前平台不支持自动下载陶瓦二进制（仅支持 Windows / macOS / Linux 的 x64 / arm64，以及 Android 的 arm64v8a / armv7 / x86_64 / x86）');
+    }
     fs.ensureDirSync(LAN_DIR);
-    const tmpPath = isAndroid ? target : path.join(LAN_DIR, `terracotta-${Date.now()}.tar.gz`);
 
-    console.log(`\n🌐 正在下载陶瓦 (Terracotta) 二进制（首次使用需联网）`);
-    console.log(`   来源: ${url}`);
-    console.log(`   ${TERRA_COPYRIGHT}`);
+    let lastErr = null;
+    for (let i = 0; i < candidates.length; i++) {
+        const asset = candidates[i];
+        const isAndroidSo = asset.ext === '.so';
+        const url = resolveDownloadUrl(asset);
+        // .so 是 JNI 共享库，不可作为 CLI 直接 spawn；下载到临时名，避免污染最终二进制。
+        const tmpPath = isAndroidSo
+            ? path.join(LAN_DIR, `terracotta-android-${Date.now()}.so`)
+            : path.join(LAN_DIR, `terracotta-${Date.now()}.tar.gz`);
 
-    try {
-        const response = await axios({
-            method: 'get',
-            url,
-            responseType: 'stream',
-            timeout: 300000
-        });
-        const total = parseInt(response.headers['content-length'] || '0', 10);
-        const bar = new ProgressBar('   下载 [:bar] :percent :etas', {
-            width: 40, complete: '=', incomplete: ' ', total: total || 1
-        });
-        const writer = fs.createWriteStream(tmpPath);
-        response.data.on('data', chunk => bar.tick(chunk.length));
-        response.data.pipe(writer);
-        await new Promise((resolve, reject) => {
-            writer.on('finish', resolve);
-            writer.on('error', reject);
-        });
+        console.log(`\n🌐 [${i + 1}/${candidates.length}] 正在下载陶瓦 (Terracotta) 二进制（首次使用需联网）`);
+        console.log(`   来源(${asset.osName}-${asset.archName}): ${url}`);
+        console.log(`   ${TERRA_COPYRIGHT}`);
 
-        if (isAndroid) {
-            // Android：.so 即最终文件（JNI 共享库），无需解压
-            fs.chmodSync(target, 0o755);
-        } else {
+        try {
+            await downloadFile(url, tmpPath);
+
+            // .so 下载成功，但它是 JNI 共享库（供 FCL / HMCL 加载），不可作为命令行
+            // 进程直接启动。在 Termux（process.platform === 'android'）场景下，回退到
+            // 可独立运行的 linux/arm64 二进制。
+            if (isAndroidSo) {
+                console.log('⚠️ 已下载 android .so（JNI 共享库），不可作为命令行进程直接启动，回退到 linux/arm64 二进制…');
+                try { fs.unlinkSync(tmpPath); } catch (e) {}
+                lastErr = new Error('android .so 为 JNI 共享库，已回退到可运行二进制');
+                continue;
+            }
+
+            // 可运行二进制：解压并重命名为稳定文件名
             console.log('   解压中...');
             await extractTar(tmpPath, LAN_DIR);
-
-            // 在解压目录中找到陶瓦二进制并重命名为稳定文件名
-            const found = locateBinary(LAN_DIR);
+            const found = locateBinary(LAN_DIR, asset);
             if (!found) {
                 throw new Error('解压后未找到陶瓦可执行文件，请联系开发者或手动配置 lan.binary_url');
             }
             fs.copySync(found, target);
             fs.chmodSync(target, 0o755);
-            // 清理临时压缩包与解压残留
             try { fs.unlinkSync(tmpPath); } catch (e) {}
+            console.log(`✅ 陶瓦二进制就绪: ${target}`);
+            return target;
+        } catch (e) {
+            try { fs.unlinkSync(tmpPath); } catch (e2) {}
+            lastErr = e;
+            const status = (e.response && e.response.status) ? ` (HTTP ${e.response.status})` : '';
+            console.log(`❌ 候选 ${asset.osName}-${asset.archName} 下载/解压失败${status}，回退到下一个候选…`);
         }
-        console.log(`✅ 陶瓦二进制就绪: ${target}`);
-        return target;
-    } catch (e) {
-        try { fs.unlinkSync(tmpPath); } catch (e2) {}
-        if (e.response && e.response.status) {
-            throw new Error(`下载陶瓦二进制失败（HTTP ${e.response.status}）。请检查网络或镜像地址；也可手动下载后配置 lan.binary_url。错误: ${e.message}`);
-        }
-        throw new Error(`下载 / 解压陶瓦二进制失败: ${e.message}`);
     }
+
+    // 所有候选耗尽
+    const msg = (lastErr && lastErr.response && lastErr.response.status)
+        ? `下载陶瓦二进制失败（HTTP ${lastErr.response.status}）`
+        : `下载 / 解压陶瓦二进制失败: ${lastErr ? lastErr.message : '未知错误'}`;
+    throw new Error(`${msg}。请检查网络或镜像地址；也可手动下载后配置 lan.binary_url。`);
 }
 
 /**
@@ -280,9 +330,11 @@ function extractTar(tarPath, destDir) {
 
 /**
  * 在解压目录中定位陶瓦可执行文件（按版本/平台命名前缀匹配）
+ * @param {string} dir 解压目录
+ * @param {{osName:string, archName:string, ext:string}} [asset] 目标资产（缺省取第一个候选）
  */
-function locateBinary(dir) {
-    const asset = detectTerraAsset();
+function locateBinary(dir, asset) {
+    if (!asset) asset = detectTerraAssets()[0];
     if (!asset) return null;
     const version = config.getConfig('lan.version', TERRA_VERSION_DEFAULT);
     const prefix = `terracotta-${version}-${asset.osName}-${asset.archName}`;
@@ -290,7 +342,10 @@ function locateBinary(dir) {
     try {
         for (const f of fs.readdirSync(dir)) {
             if (f === path.basename(binaryPath())) continue;
-            if (f.startsWith(prefix) && (f.endsWith('.exe') || !f.includes('.'))) {
+            // linux/arm64 等解压后的二进制无扩展名；windows 为 .exe
+            const isExe = f.endsWith('.exe');
+            const isPlain = !f.includes('.');
+            if (f.startsWith(prefix) && (isExe || isPlain)) {
                 const full = path.join(dir, f);
                 try { if (fs.statSync(full).isFile()) candidates.push(full); } catch (e) {}
             }
@@ -371,18 +426,8 @@ async function startDaemon() {
     }
 
     const bin = await ensureBinary();
-    // Android 的 terracotta-*.so 是 JNI 共享库（由 FCL / HMCL 等安卓启动器加载），
-    // 不能作为独立 CLI 进程 spawn。Termux 中 process.platform 为 'linux'，走的是
-    // linux/arm64 的 musl 静态二进制，可正常启动；此处仅拦截真·Android 运行时。
-    if (bin.endsWith('.so')) {
-        throw new Error(
-            '当前为 Android 平台：陶瓦提供的 .so 是 JNI 共享库，需由 FCL / HMCL 等启动器通过 ' +
-            'JNI 加载，无法作为独立命令行进程启动。\n' +
-            '若要在手机上用 wow~ 开陶瓦房间，请在 Termux 中运行 wow~（此时 process.platform 为 ' +
-            'linux，会使用可独立运行的 linux/arm64 musl 二进制）。\n' +
-            '如需自定义二进制，可配置 lan.binary_url 指向可用文件。'
-        );
-    }
+    // 注：Android 场景下 ensureBinary() 已优先尝试 .so，并在其不可作为 CLI 启动
+    // （JNI 共享库）时自动回退到 linux/arm64 的 musl 静态二进制，因此此处无需再拦截。
     fs.ensureDirSync(LAN_DIR);
     // 清空旧的端口文件，避免读到上一次的端口
     try { if (fs.existsSync(PORT_FILE)) fs.unlinkSync(PORT_FILE); } catch (e) {}
@@ -574,7 +619,7 @@ function sleep(ms) {
 
 module.exports = {
     getCopyright,
-    detectTerraAsset,
+    detectTerraAssets,
     resolveDownloadUrl,
     ensureBinary,
     binaryPath,
