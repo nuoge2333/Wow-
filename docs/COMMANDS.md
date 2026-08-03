@@ -4,6 +4,18 @@
 
 ---
 
+> 💡 **开服控制台可直接输入 wow 指令（V3.3.5+）**
+> 在 `wow server start` 的交互终端里，除了 MC 服务端管理员指令（如 `/stop`、`op Steve`），还可以直接输入本文件中的 **wow 服务端指令**（无需另开终端），例如：
+> ```
+> lan host          # 开房让好友联机
+> server status     # 查看服务器状态
+> scheme list       # 列出方案
+> help              # 查看帮助
+> ```
+> **不可用**：会修改运行中的方案文件的指令（`scheme create`、各种 `edit`/`install`/`switch` 等）、交互菜单 `M`、`server start/restart`、`web start`、`logs tail` —— 这些会提示「请另开终端执行」。其余无法识别的输入一律当作 MC 指令转发给服务端。
+
+---
+
 ## 全局选项
 
 所有命令均可使用以下全局选项：

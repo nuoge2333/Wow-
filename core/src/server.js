@@ -9,10 +9,122 @@
 const fs = require('fs-extra');
 const path = require('path');
 const { spawn, exec } = require('child_process');
+const readline = require('readline');
 const utils = require('./utils');
 const config = require('./config');
 const JreManager = require('./jre_manager');
 const axios = require('axios');
+
+// ==================== 开服控制台：wow 指令拦截 ====================
+// 在 `wow server start` 的交互终端中，用户输入既可发给 MC 服务端（如 /stop、op），
+// 也可直接输入 wow 指令（如 lan host、server status）。此处定义「允许 / 禁用」清单，
+// 以及将输入分类后交由子进程执行或转发给 MC 的逻辑。
+
+// wow 顶层指令命名空间（用于区分「wow 指令」与「MC 指令」）
+const WOW_NAMESPACES = new Set([
+    'server', 'scheme', 'mod', 'pack', 'theme', 'plugin', 'web', 'logs',
+    'config', 'mail', 'pool', 'lan', 'down', 'install', 'init', 'set', 'help'
+]);
+
+// 允许在开服控制台直接执行的 wow 指令（不修改运行中的方案文件，且非长驻进程）
+const ALLOWED_CONSOLE = new Set([
+    'server status', 'server stop', 'server kill',
+    'lan host', 'lan stop', 'lan status',
+    'scheme list', 'scheme info', 'scheme status',
+    'mod list',
+    'logs analyze', 'logs report',
+    'config wow', 'config server', 'config white',
+    'web stop', 'web status',
+    'pool stats',
+    'mail test', 'mail send-code', 'mail crash',
+    'down',
+    'plugin list', 'plugin info',
+    'theme list', 'theme info',
+    'help'
+]);
+
+// 在开服控制台明确禁用的指令：会修改运行中的方案文件 / 与开服进程冲突 / 长驻或抢占终端
+const DENIED_CONSOLE = new Set([
+    'server start', 'server restart',
+    'scheme create', 'scheme switch', 'scheme delete', 'scheme edit', 'scheme pull',
+    'scheme prune', 'scheme register', 'scheme export', 'scheme import',
+    'mod remove', 'mod sync', 'mod toggle',
+    'pack install', 'pack generate',
+    'theme install', 'theme switch', 'theme delete',
+    'plugin install', 'plugin remove',
+    'install',
+    'init',
+    'pool prune',
+    'web start',          // 常驻进程，会在控制台子进程中挂起
+    'logs tail'           // tail -f，会抢占终端
+]);
+
+/**
+ * 分类开服控制台的一行输入：
+ *  - action 'mc'   : 转发给 MC 服务端（MC 管理员指令，如 /stop、op Steve）
+ *  - action 'run'  : 作为 wow 指令，由子进程执行（args 为已规范化的参数数组）
+ *  - action 'deny' : 禁用指令（危险 / 冲突 / 长驻），返回 reason
+ */
+function classifyConsoleInput(rawLine) {
+    const line = (rawLine || '').trim();
+    if (!line) return { action: 'mc' };
+
+    let tokens = line.split(/\s+/);
+    if (tokens[0].toLowerCase() === 'wow') tokens = tokens.slice(1); // 允许行首带 wow
+    if (tokens.length === 0) return { action: 'mc' };
+
+    // 交互菜单 M / m 在开服控制台中不可用
+    if (tokens[0] === 'm' || tokens[0] === 'M') {
+        return { action: 'deny', reason: '交互菜单(M)在开服控制台中不可用，请另开终端运行 wow m' };
+    }
+
+    const head = tokens[0].toLowerCase();
+    if (!WOW_NAMESPACES.has(head)) return { action: 'mc' }; // 非 wow 命名空间 → 当作 MC 指令
+
+    const two = tokens.slice(0, 2).join(' ').toLowerCase();
+
+    // config / set 的写入形式需与只读形式区分
+    if (head === 'config') {
+        if ((tokens[1] === 'wow' || tokens[1] === 'server') && tokens.length >= 4) {
+            return { action: 'deny', reason: '修改 wow.yaml / server.properties 会改动运行中的方案文件，开服控制台中不可用，请另开终端执行' };
+        }
+        if (two === 'config white' && tokens.length >= 4 && (tokens[2] === 'add' || tokens[2] === 'remove')) {
+            return { action: 'deny', reason: '修改白名单文件会改动运行中的方案，开服控制台中不可用，请另开终端执行' };
+        }
+        return ALLOWED_CONSOLE.has(two)
+            ? { action: 'run', args: tokens.map(t => t.toLowerCase()) }
+            : { action: 'deny', reason: '该指令在开服控制台中不可用，请另开终端执行' };
+    }
+    if (head === 'set') {
+        return { action: 'deny', reason: '快捷设置配置会改动运行中的方案文件，开服控制台中不可用，请另开终端执行' };
+    }
+
+    if (DENIED_CONSOLE.has(two) || DENIED_CONSOLE.has(head)) {
+        return { action: 'deny', reason: '该指令会修改运行中的方案文件 / 与开服进程冲突 / 抢占终端，开服控制台中不可用，请另开终端执行' };
+    }
+    if (ALLOWED_CONSOLE.has(two) || ALLOWED_CONSOLE.has(head)) {
+        return { action: 'run', args: tokens.map(t => t.toLowerCase()) };
+    }
+    return { action: 'deny', reason: '该指令在开服控制台中不可用（可能需修改运行中的方案文件），请另开终端执行' };
+}
+
+/**
+ * 以子进程方式执行一条 wow 指令，输出直接继承当前终端。
+ * 子进程退出后返回，不阻塞 MC 服务端（MC 是独立进程）。
+ */
+function runWowSubcommand(args) {
+    return new Promise((resolve, reject) => {
+        const child = spawn(process.execPath, [path.join(__dirname, 'cli.js'), ...args], {
+            stdio: ['ignore', 'inherit', 'inherit'],
+            windowsHide: true
+        });
+        child.on('error', reject);
+        child.on('exit', code => {
+            if (code && code !== 0) console.warn(`[wow] 子命令退出码: ${code}`);
+            resolve();
+        });
+    });
+}
 
 class ServerManager {
     constructor() {
@@ -310,10 +422,10 @@ class ServerManager {
         let logStream = null;
 
         if (isInteractive) {
-            // 交互模式：实时日志输出到控制台 + 写入日志文件，stdin 直接继承终端用于输入指令
+            // 交互模式：wow 接管终端输入——拦截 wow 指令，其余转发给 MC 服务端控制台
             this.process = spawn(cmd.javaPath, cmd.fullCommand.slice(1), {
                 cwd: this.serverDir,
-                stdio: ['inherit', 'pipe', 'pipe'],
+                stdio: ['pipe', 'pipe', 'pipe'],
                 detached: false
             });
 
@@ -325,6 +437,39 @@ class ServerManager {
             this.process.stderr.on('data', (data) => {
                 process.stderr.write(data);
                 logStream.write(data);
+            });
+
+            // 接管 stdin：readline 读取用户输入，区分 wow 指令与 MC 指令
+            const rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: true });
+            this._rl = rl;
+            console.log('💡 开服控制台：直接输入 MC 指令（如 /stop、op Steve）；也可直接输入 wow 指令（如 lan host、server status）。');
+            console.log('   ⛔ 会修改运行中的方案文件的危险指令与交互菜单(M)已禁用，需用时请另开终端。');
+
+            rl.on('line', async (raw) => {
+                const line = (raw || '').trim();
+                if (!line) return;
+                const d = classifyConsoleInput(line);
+                if (d.action === 'mc') {
+                    if (this.process && this.process.stdin && this.process.stdin.writable) {
+                        this.process.stdin.write(line + '\n');
+                    }
+                } else if (d.action === 'run') {
+                    rl.pause();
+                    try {
+                        await runWowSubcommand(d.args);
+                    } catch (e) {
+                        console.error(`[wow] 指令执行失败: ${e.message}`);
+                    }
+                    if (!rl.closed) rl.resume();
+                } else {
+                    console.log(`⛔ ${d.reason}`);
+                }
+            });
+            rl.on('SIGINT', () => {
+                if (this.isRunning()) {
+                    console.log('\n⏹ 收到中断信号，正在停止服务器...');
+                    this.stop();
+                }
             });
 
             // 捕获 Ctrl+C，优先向服务器发送 stop 命令优雅关闭
@@ -361,6 +506,10 @@ class ServerManager {
             if (this._sigintHandler) {
                 process.removeListener('SIGINT', this._sigintHandler);
                 this._sigintHandler = null;
+            }
+            if (this._rl) {
+                try { this._rl.close(); } catch (e) {}
+                this._rl = null;
             }
             if (logStream) logStream.end();
             console.log(`服务器进程退出，退出码: ${code}`);
