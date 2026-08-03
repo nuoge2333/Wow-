@@ -1,5 +1,5 @@
 /**
- * terracotta.js — 陶瓦 (Terracotta) 内网穿透 / 联机 管理器 (V3.3.5)
+ * terracotta.js — 陶瓦 (Terracotta) 内网穿透 / 联机 管理器 (V3.3.6)
  *
  * ┌─────────────────────────────────────────────────────────────────────────┐
  * │ 版权与许可声明（AGPL 例外条款要求：通过 HTTP API 驱动陶瓦时，              │
@@ -58,6 +58,9 @@ const os = require('os');
 const { spawn } = require('child_process');
 const axios = require('axios');
 const ProgressBar = require('progress');
+const net = require('net');
+
+const utils = require('./utils');
 const config = require('./config');
 
 // 运行时状态文件（端口 / pid / 房间号 / 二进制路径等），跨进程共享
@@ -519,7 +522,49 @@ function isAlive(pid) {
 /**
  * 轮询状态机直到开房成功 (host-ok)，返回房间号 room.code
  */
-async function waitHostOk(port, timeoutMs = 30000) {
+/**
+ * 取得本地 Minecraft 服务端端口（V3.3.6）。
+ * 优先级：server.properties 的 server-port > 配置 lan.server_port > 默认 25565。
+ * 陶瓦本身会通过扫描本机运行中的 MC 服务端自动发现端口，但 wow~ 显式读取
+ * server.properties 用于开房前自检与报错提示，避免使用过时的默认 25565。
+ */
+function getServerPort() {
+    try {
+        const ServerProperties = config.ServerProperties;
+        const props = new ServerProperties(utils.getServerDir());
+        const raw = props.get('server-port');
+        const n = parseInt(raw, 10);
+        if (Number.isInteger(n) && n > 0 && n <= 65535) return n;
+    } catch (e) { /* 读取失败则回退 */ }
+    try {
+        const n = parseInt(config.getConfig('lan.server_port', 25565), 10);
+        if (Number.isInteger(n) && n > 0 && n <= 65535) return n;
+    } catch (e) {}
+    return 25565;
+}
+
+/**
+ * 探测本地端口是否有服务监听（开房前自检，避免陶瓦空等 30s 超时）。
+ */
+function isPortListening(port, host = '127.0.0.1', timeoutMs = 1500) {
+    return new Promise(resolve => {
+        const sock = new net.Socket();
+        let done = false;
+        const finish = ok => {
+            if (done) return;
+            done = true;
+            try { sock.destroy(); } catch (e) {}
+            resolve(ok);
+        };
+        sock.setTimeout(timeoutMs);
+        sock.once('connect', () => finish(true));
+        sock.once('error', () => finish(false));
+        sock.once('timeout', () => finish(false));
+        try { sock.connect(port, host); } catch (e) { finish(false); }
+    });
+}
+
+async function waitHostOk(port, mcPort = getServerPort(), timeoutMs = 30000) {
     const deadline = Date.now() + timeoutMs;
     let last = null;
     while (Date.now() < deadline) {
@@ -534,14 +579,14 @@ async function waitHostOk(port, timeoutMs = 30000) {
                     0: 'PingHostFail', 1: 'PingHostRst', 2: 'GuestEasytierCrash',
                     3: 'HostEasytierCrash', 4: 'PingServerRst', 5: 'ScaffoldingInvalidResponse'
                 };
-                throw new Error(`开房失败（陶瓦异常 type=${s.type} ${typeMap[s.type] || ''}）。请确认本地 Minecraft 服务端已启动并监听配置端口，且网络可访问陶瓦公共节点。`);
+                throw new Error(`开房失败（陶瓦异常 type=${s.type} ${typeMap[s.type] || ''}）。请确认本地 Minecraft 服务端已启动并监听 ${mcPort} 端口，且网络可访问陶瓦公共节点。`);
             }
         } catch (e) {
             if (e.message && e.message.startsWith('开房失败')) throw e;
         }
         await sleep(500);
     }
-    throw new Error(`等待开房完成超时（最后状态: ${last ? last.state : '未知'}）。请确认本地 Minecraft 服务端已启动并监听 ${config.getConfig('lan.server_port', 25565)} 端口。`);
+    throw new Error(`等待开房完成超时（最后状态: ${last ? last.state : '未知'}）。请确认本地 Minecraft 服务端已启动并监听 ${mcPort} 端口（server.properties 的 server-port）。`);
 }
 
 // ==================== 对外业务接口 ====================
@@ -554,9 +599,18 @@ async function waitHostOk(port, timeoutMs = 30000) {
  */
 async function hostRoom(opts = {}) {
     const port = await startDaemon();
-    console.log('\n🏠 正在开房（陶瓦正在扫描本机 Minecraft 服务端并连接公共节点）...');
+    const mcPort = getServerPort();
+    console.log(`\n🏠 正在开房（陶瓦将扫描本机 ${mcPort} 端口的 Minecraft 服务端并连接公共节点）...`);
+    // 开房前自检：确认本机 MC 服务端已在 server-port 监听，否则立即给出明确报错，
+    // 避免陶瓦空等 30s 才超时（最常见的失败原因就是服务器还没启动）。
+    let listening = false;
+    try { listening = await isPortListening(mcPort); } catch (e) { listening = false; }
+    if (!listening) {
+        await stopDaemon();
+        throw new Error(`开房前自检失败：未在 ${mcPort} 端口检测到 Minecraft 服务端监听。请先执行 wow server start 启动服务器，并确保 server.properties 的 server-port（${mcPort}）与之匹配，然后再执行 lan host。`);
+    }
     await apiScanning(port, opts.roomCode || config.getConfig('lan.room_code', ''));
-    const roomCode = await waitHostOk(port);
+    const roomCode = await waitHostOk(port, mcPort);
     writeState({ roomCode, running: true });
     console.log(`\n✅ 开房成功！房间号: ${roomCode}`);
     console.log(`   把房间号发给好友，对方在 PCL / HMCL / BakaXL / FCL 中选择「加入陶瓦房间」并输入该房间号即可联机。`);
