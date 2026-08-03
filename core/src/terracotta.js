@@ -1,5 +1,5 @@
 /**
- * terracotta.js — 陶瓦 (Terracotta) 内网穿透 / 联机 管理器 (V3.3.6)
+ * terracotta.js — 陶瓦 (Terracotta) 内网穿透 / 联机 管理器 (V3.3.7)
  *
  * ┌─────────────────────────────────────────────────────────────────────────┐
  * │ 版权与许可声明（AGPL 例外条款要求：通过 HTTP API 驱动陶瓦时，              │
@@ -448,6 +448,10 @@ async function startDaemon() {
         windowsHide: true,
         stdio: ['ignore', 'ignore', 'ignore']
     });
+    // 守护进程是长驻服务：unref 使其不阻止本 Node 进程退出（如 lan host 子进程、
+    // 或 auto_host 所在的 server start 主进程）。父进程退出时陶瓦会被托管继续运行，
+    // 关房时由 stopHost 依据 .lan.json 中的 pid 显式清理。
+    if (typeof child.unref === 'function') child.unref();
     child.on('error', e => {
         console.error(`[lan] 启动陶瓦失败: ${e.message}`);
     });

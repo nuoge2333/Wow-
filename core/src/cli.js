@@ -30,7 +30,7 @@ const Terracotta = require('./terracotta');
 program
     .name('wow')
     .description('Minecraft 服务器管理工具 - 默认优先，可以修改')
-    .version('3.3.6', '-V');
+    .version('3.3.7', '-V');
 
 // ==================== init ====================
 
@@ -434,11 +434,19 @@ lanCmd
     .description('我要当房主：开房让好友联机（自动下载并启动陶瓦）')
     .option('-r, --room <code>', '指定固定房间号（留空则自动生成）')
     .action(async (options) => {
+        let failed = false;
         try {
             const { roomCode } = await Terracotta.hostRoom({ roomCode: options.room });
             console.log(`\n🎮 好友在 PCL / HMCL / BakaXL / FCL 中选择「加入陶瓦房间」并输入房间号 ${roomCode} 即可联机。`);
         } catch (e) {
+            failed = true;
             console.error(`❌ 开房失败: ${e.message}`);
+        } finally {
+            // 陶瓦守护进程是长驻子进程，会阻止本 CLI 进程退出；若不显式退出，
+            // 在开服控制台（server start 交互终端）中调用 lan host 后会卡死，
+            // 用户再也无法输入 MC / wow 指令。此处显式退出把控制权交还上层，
+            // 守护进程会被父进程接管继续运行，关房时由 stopHost 依据 .lan.json 清理。
+            process.exit(failed ? 1 : 0);
         }
     });
 
