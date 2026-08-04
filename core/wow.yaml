@@ -1,0 +1,66 @@
+language: zh_CN
+server:
+  dir: ../server
+  jar: null
+  java: null
+  jvm_args:
+    - '-Xmx2G'
+    - '-Xms2G'
+    - '-XX:+UseG1GC'
+download:
+  mirror: https://bmclapi2.bangbang93.com
+  timeout: 30
+  retry: 3
+mod:
+  auto_dependencies: true
+  sources:
+    - curseforge
+    - modrinth
+backup:
+  dir: ../server/backups
+  auto: false
+  max: 5
+web:
+  port: 8080
+  host: 127.0.0.1
+  auth_token: null
+  run_startup: true
+  theme: default
+mail:
+  smtp:
+    host: null
+    port: 587
+    user: null
+    pass: null
+    from: null
+  admin_email: null
+  send_on_crash: true
+  send_logs_interval: 0
+ai:
+  api_key: null
+  model: null
+  api_url: null
+auth:
+  enable: false
+  javaagent: null
+  server: null
+plugins:
+  port: 9000
+  enabled: false
+verbose: false
+pool:
+  dir: pool
+  cores: pool/cores
+  mods: pool/mods
+  plugins: pool/plugins
+  loader: pool/loader
+jre:
+  dir: jre
+  auto_download: true
+auto_scheme: true
+lan:
+  auto_room: false
+  room_code: ''
+  mirror: https://gitee.com/burningtnt/Terracotta/releases
+  version: 0.4.2
+  binary_url: ''

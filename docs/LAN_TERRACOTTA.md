@@ -70,7 +70,6 @@ wow lan stop                 # 关房（停止陶瓦）
 |--------|------|--------|------|
 | `auto_room` | boolean | `false` | 设为 `true` 后，启动 Minecraft 服务端时**自动开房**、停止服务端时**自动关房**（适合后台 / Docker 场景） |
 | `room_code` | string | `''` | 固定房间号（留空 = 陶瓦自动生成） |
-| `server_port` | number | `25565` | 本地 MC 服务端端口（陶瓦会自动扫描，无需手动传递） |
 | `mirror` | string | `https://gitee.com/burningtnt/Terracotta/releases` | 陶瓦二进制下载镜像（默认 Gitee 国内镜像） |
 | `version` | string | `0.4.2` | 陶瓦版本号（对应 release tag） |
 | `binary_url` | string | `''` | 二进制完整下载地址（留空 = 按 `mirror`/`version`/平台自动拼装；如镜像不可用可手动填写） |
@@ -80,13 +79,14 @@ wow lan stop                 # 关房（停止陶瓦）
 lan:
   auto_room: true          # 服务器启动即自动开房
   room_code: ''            # 房间号自动生成
-  server_port: 25565
   mirror: 'https://gitee.com/burningtnt/Terracotta/releases'
   version: '0.4.2'
   binary_url: ''
 ```
 
 修改配置后无需重启 wow~（开房时实时读取）。
+
+> 💡 **端口不再需要配置**：陶瓦联机的本地 MC 端口统一从 `server.properties` 的 `server-port` **自动读取**，不再提供 `lan.server_port` 配置项。改了 `server-port` 后直接 `wow lan host` 即可，无需改 wow 配置。
 
 ---
 
@@ -110,7 +110,7 @@ Powered by Terracotta | 陶瓦联机 — https://github.com/burningtnt/Terracott
 
 - **首次开房很慢 / 卡在下载**：会从 Gitee 镜像下载陶瓦二进制（Linux x64 约 9.7 MB）。若网络到 Gitee 不通，可在 `lan.binary_url` 填写 GitHub 直链，例如：
   `https://github.com/burningtnt/Terracotta/releases/download/v0.4.2/terracotta-0.4.2-linux-x86_64-pkg.tar.gz`
-- **开房失败 / 一直 scanning**：确认 Minecraft 服务端已启动并监听 `server_port`（默认 25565），且本机网络可访问陶瓦公共节点。
+- **开房失败 / 一直 scanning**：确认 Minecraft 服务端已启动并监听 `server-port`（自动读取自 `server.properties`，默认 25565），且本机网络可访问陶瓦公共节点。
 - **想固定房间号**：在 `lan.room_code` 填写，或在 `wow lan host -r <房间号>` 指定；若格式不被陶瓦接受，陶瓦会自动重新生成一个（不会报错）。
 - **关不掉房间**：`wow lan stop` 会先通过陶瓦 API 优雅退出，失败时回退为终止进程；也可直接结束陶瓦进程（运行时状态记录在 `core/.lan.json`）。
 - **平台支持**：自动下载支持 **Windows / macOS / Linux** 的 x64 与 arm64（Linux 为 musl 静态二进制，免 glibc 依赖，可直接在 Termux 运行）。**Android** 端（arm64v8a / armv7 / x86_64 / x86）会**优先尝试**下载 `terracotta-<ver>-android-<arch>.so`，但该 `.so` 是 **JNI 共享库**、不可作为命令行进程启动，因此 wow~ 会自动**回退到 `linux/arm64` 的 musl 静态二进制**（可在 Termux 中直接运行），无需手动切换。
