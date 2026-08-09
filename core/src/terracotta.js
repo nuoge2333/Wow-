@@ -1,5 +1,5 @@
 /**
- * terracotta.js — 陶瓦 (Terracotta) 内网穿透 / 联机 管理器 (V3.3.8)
+ * terracotta.js — 陶瓦 (Terracotta) 内网穿透 / 联机 管理器 (V3.3.9)
  *
  * ┌─────────────────────────────────────────────────────────────────────────┐
  * │ 版权与许可声明（AGPL 例外条款要求：通过 HTTP API 驱动陶瓦时，              │
@@ -527,7 +527,7 @@ function isAlive(pid) {
  * 轮询状态机直到开房成功 (host-ok)，返回房间号 room.code
  */
 /**
- * 取得本地 Minecraft 服务端端口（V3.3.8）。
+ * 取得本地 Minecraft 服务端端口（V3.3.9）。
  * 陶瓦放弃自身配置（lan.server_port），统一从 server.properties 的 server-port 读取；
  * 若未配置或非法，回退到 Minecraft 默认端口 25565。
  * 陶瓦本身会通过扫描本机运行中的 MC 服务端自动发现端口，但 wow~ 显式读取

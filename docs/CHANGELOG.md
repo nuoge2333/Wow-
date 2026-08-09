@@ -8,7 +8,8 @@
 
 | 版本 | 状态 | 发布时间 |
 |------|------|------|
-| **3.3.8** | 当前版本 |2026-08-04|
+| **3.3.9** | 当前版本 |2026-08-05|
+| **3.3.8** | 上一版本 |2026-08-04|
 | **3.3.7** | 上一版本 |2026-08-03|
 | **3.3.6** | 上一版本 |2026-08-03|
 | **3.3.5** | 上一版本 |2026-08-03|
@@ -28,6 +29,20 @@
 | **3.0.0** | 上一版本 |2026-07-23|
 | **2.0.0** | 内部迭代 |2026-02-27|
 | **1.0.0** | 内部迭代 |2026-02-07|
+
+---
+
+## [3.3.9] — 2026-08-05
+
+### 🧹 安装与镜像源：隐藏 install、修复符号链接、多镜像源轮换、模组服改用官方安装器
+
+> 本版本聚焦「安装体验」：把 `install` 从 `--help` 藏起来、修好 wow 符号链接不生效、`scheme` 与安装器统一走多镜像源轮换、以及把 Forge/Fabric/NeoForge/Quilt 改为用官方 `installer.jar` 安装（而非直接下服务端核心）。
+
+- **`--help` 不再提示 `install`**：`install` 是进阶操作，对其加 `.hideHelp()`（仅交互菜单与显式 `wow install ...` 仍可触发）；`init` 引导文案也不再列 `install`
+- **修复 wow 符号链接不生效**：`start.sh` 的 node/npm 软链改用**绝对路径**（`$CORE_DIR/$NODE_DIR/extracted/bin/...`），并加 `cp` 兜底（软链不可用时复制），同时补齐 npm 软链；解决此前相对软链在 CWD/解析差异下失效的问题
+- **多镜像源轮换（scheme / 安装器共用）**：原版版本清单 `launchermeta` 获取顺序改为 `默认镜像 → mojang (launchermeta.mojang.com) → bangbang93 (bmclapi2.bangbang93.com)`，任一镜像失败自动轮换下一个；`scheme` 走 `installer.install()`，天然继承该轮换
+- **模组服安装方式修正（装对应安装器）**：Forge/Fabric/NeoForge/Quilt 不再直接下载服务端 jar，而是依次——用镜像轮换下载对应 `installer.jar` → `java -jar installer.jar [参数]` 执行安装 → 探测产物 jar（`forge-*-server.jar` / `fabric-server-launch.jar` / `neoforge-*-server.jar` / `quilt-server-launch.jar`）→ 在 `config` 写入 `server.jar`，供 `server.js` 优先选用（避免 Fabric/Quilt 安装后原版 `server.jar` 与之并存导致选错核心）
+- **配套**：`server.js` 的 `_getServerJar()` 优先使用 `server.jar` 配置项，其次回退到过滤 `authlib-injector` 后的自动探测
 
 ---
 

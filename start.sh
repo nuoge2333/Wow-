@@ -165,9 +165,24 @@ if [ ! -f "$NODE_EXE" ]; then
 
     # 保留完整目录结构（npm 需要 lib/node_modules 等）
     mv "$EXTRACT_DIR" "$NODE_DIR/extracted"
-    # 创建 node 和 npm 的符号链接
-    ln -sf "extracted/bin/node" "$NODE_EXE" 2>/dev/null || cp "$NODE_DIR/extracted/bin/node" "$NODE_EXE"
+    # 创建 node 的符号链接：使用【绝对路径】作为链接目标，
+    # 避免原先相对路径（extracted/bin/node）因 CWD 不同导致符号链接指向错误、node 实际跑不起来。
+    mkdir -p "$(dirname "$NODE_EXE")"
+    if ln -sf "$CORE_DIR/$NODE_DIR/extracted/bin/node" "$NODE_EXE" 2>/dev/null; then
+        echo "  ✅ 已创建 node 符号链接"
+    else
+        cp "$CORE_DIR/$NODE_DIR/extracted/bin/node" "$NODE_EXE"
+        echo "  ✅ 已复制 node（符号链接不可用，回退为复制）"
+    fi
     chmod +x "$NODE_EXE"
+    # 同步为 npm 建立符号链接，保证 npm 命令可用
+    NPM_LINK="$NODE_DIR/npm"
+    if ln -sf "$CORE_DIR/$NODE_DIR/extracted/bin/npm" "$NPM_LINK" 2>/dev/null; then
+        :
+    else
+        cp "$CORE_DIR/$NODE_DIR/extracted/bin/npm" "$NPM_LINK" 2>/dev/null || true
+    fi
+    chmod +x "$NPM_LINK" 2>/dev/null || true
     rm -f "$FILENAME"
 
     echo "Node.js 便携版已安装到 $NODE_DIR"

@@ -279,6 +279,12 @@ class ServerManager {
      */
     _getServerJar() {
         const serverDir = this.serverDir;
+        // 优先使用安装器写入的 server.jar 配置（Fabric/Quilt 安装后会同时存在原版 server.jar，
+        // 必须以启动器jar为准，否则会误选原版核心）
+        const cfgJar = this.config.getConfig('server.jar');
+        if (cfgJar && fs.existsSync(path.join(serverDir, cfgJar))) {
+            return cfgJar;
+        }
         const files = fs.readdirSync(serverDir);
         const jarFiles = files.filter(f => f.endsWith('.jar') && !f.includes('authlib-injector'));
         if (jarFiles.length === 0) {

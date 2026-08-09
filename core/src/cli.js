@@ -30,7 +30,7 @@ const Terracotta = require('./terracotta');
 program
     .name('wow')
     .description('Minecraft 服务器管理工具 - 默认优先，可以修改')
-    .version('3.3.8', '-V');
+    .version('3.3.9', '-V');
 
 // ==================== init ====================
 
@@ -97,7 +97,6 @@ program
         console.log('运行命令:');
         console.log('  wow server start   - 启动服务器');
         console.log('  wow web start      - 启动 Web 面板');
-        console.log('  wow install <类型> <版本> - 安装服务端');
         console.log('  wow help           - 查看帮助');
     });
 
@@ -164,7 +163,8 @@ serverCmd
 program
     .command('install <target> [version]')
     .description('安装服务端核心 或 下载任意 URL 文件')
-    .option('-b, --build <number>', '构建号（仅 Mohist 需要）')
+    .hideHelp() // V3.3.9：install 为进阶操作，--help 不再提示
+    .option('-b, --build <number>', '构建号（Mohist）或加载器版本（forge/fabric/neoforge/quilt）')
     .option('-o, --output <path>', '输出路径（仅 URL 下载时有效）')
     .action(async (target, version, options) => {
         const installer = new Installer();
