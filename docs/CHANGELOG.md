@@ -8,7 +8,8 @@
 
 | 版本 | 状态 | 发布时间 |
 |------|------|------|
-| **3.3.9** | 当前版本 |2026-08-05|
+| **3.3.10** | 当前版本 |2026-08-09|
+| **3.3.9** | 上一版本 |2026-08-05|
 | **3.3.8** | 上一版本 |2026-08-04|
 | **3.3.7** | 上一版本 |2026-08-03|
 | **3.3.6** | 上一版本 |2026-08-03|
@@ -29,6 +30,18 @@
 | **3.0.0** | 上一版本 |2026-07-23|
 | **2.0.0** | 内部迭代 |2026-02-27|
 | **1.0.0** | 内部迭代 |2026-02-07|
+
+---
+
+## [3.3.10] — 2026-08-09
+
+### 🐛 修复：`install` 隐藏在 commander v11 下崩溃（Termux 启动报错）
+
+> v3.3.9 用 `Command.prototype.hideHelp()` 隐藏 `install`，但该项目锁定的 `commander ^11.0.0` 实际安装 v11.1.0，`.hideHelp()` 是 commander v12 才有的 API；在 Termux 运行 `./start.sh` 时报 `TypeError: ...hideHelp is not a function`，主程序直接退出。
+
+- **改用 v11 兼容写法**：`install` 子命令保留，通过链式 `.command('install <target> [version>').description(...).option(...).action(...)._hidden = true` 隐藏（commander v11 无公开 `hideHelp()`，用内部 `_hidden = true` 同样可从 `--help` 移除，但命令仍可被 `wow install ...` 显式调用）
+- **背景说明（用户确认）**：`install` 暂不移除，仅逐步弱化、最终计划全部迁移到 `scheme`；v3.3.10 仅修复兼容性崩溃，行为不变
+- **避坑**：v11 的 `.command(name, desc, {hidden:true})` 会返回父对象，导致后续 `.option()` 错挂到全局；本版本已规避
 
 ---
 

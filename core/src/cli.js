@@ -30,7 +30,7 @@ const Terracotta = require('./terracotta');
 program
     .name('wow')
     .description('Minecraft 服务器管理工具 - 默认优先，可以修改')
-    .version('3.3.9', '-V');
+    .version('3.3.10', '-V');
 
 // ==================== init ====================
 
@@ -160,10 +160,10 @@ serverCmd
 
 // ==================== install ====================
 
+// V3.3.10：install 仍保留但不在 --help 列出（commander v11 无 .hideHelp()，用 _hidden 属性实现）。
 program
     .command('install <target> [version]')
     .description('安装服务端核心 或 下载任意 URL 文件')
-    .hideHelp() // V3.3.9：install 为进阶操作，--help 不再提示
     .option('-b, --build <number>', '构建号（Mohist）或加载器版本（forge/fabric/neoforge/quilt）')
     .option('-o, --output <path>', '输出路径（仅 URL 下载时有效）')
     .action(async (target, version, options) => {
@@ -178,7 +178,7 @@ program
         } catch (e) {
             console.error(`❌ 操作失败: ${e.message}`);
         }
-    });
+    })._hidden = true;
 
 // ==================== mod ====================
 
