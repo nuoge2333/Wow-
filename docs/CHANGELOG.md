@@ -8,7 +8,8 @@
 
 | 版本 | 状态 | 发布时间 |
 |------|------|------|
-| **3.3.10** | 当前版本 |2026-08-09|
+| **3.3.11** | 当前版本 |2026-08-10|
+| **3.3.10** | 上一版本 |2026-08-09|
 | **3.3.9** | 上一版本 |2026-08-05|
 | **3.3.8** | 上一版本 |2026-08-04|
 | **3.3.7** | 上一版本 |2026-08-03|
@@ -30,6 +31,25 @@
 | **3.0.0** | 上一版本 |2026-07-23|
 | **2.0.0** | 内部迭代 |2026-02-27|
 | **1.0.0** | 内部迭代 |2026-02-07|
+
+---
+
+## [3.3.11] — 2026-08-10
+
+### 🐛 修复：Forge（及现代 NeoForge）安装失败 + 启动方式错误
+
+> 现象：`wow install forge 1.20.1` 安装器跑完后报错「未在 … 找到匹配的服务端核心（/^forge-.+-server\\.jar$/）」，安装判定失败。
+
+根因有两层：
+
+- **核心生成位置变了**：现代 Forge / NeoForge（1.17+）用 `--installServer` 不再把 `forge-*-server.jar` 放在服务器根目录，而是生成在 `libraries/net/minecraftforge/forge/<mc>-<loader>/` 子目录；原 `_detectServerJar` 只扫根目录，自然扫不到。
+- **启动方式不成立**：现代 Forge 不能用 `java -jar <jar>` 启动，必须用 `java @user_jvm_args.txt @libraries/.../unix_args.txt nogui`（args 文件里含完整 classpath / 模块参数）。原 `server.js` 写死 `-jar`，即使扫到核心也起不来。
+
+修复：
+
+- **`installer.js`**：`_detectServerJar` 改为**递归扫描**（跳过 world/logs/backups 等运行时目录），能找到 `libraries/` 子目录里的核心；并新增 `_detectForgeArgsFile`，在核心同目录探测 `unix_args.txt` / `win_args.txt`，把其相对路径写入配置 `server.launchArgsFile`
+- **`server.js`**：`_buildCommand` 若检测到 `server.launchArgsFile` 且文件存在，改用 `@args` 启动模式（`java ... @user_jvm_args.txt @<argsFile> nogui`），否则退回原 `-jar` 模式（Fabric/Quilt/旧版 Forge 不受影响）
+- 验证：本地 `wow install forge 1.20.1 -b 47.2.0` 安装成功，`server start` 实测 Forge 1.20.1 服务端正常启动并输出 `Done (30.149s)! For help, type "help"`
 
 ---
 

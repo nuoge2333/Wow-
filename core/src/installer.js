@@ -287,21 +287,28 @@ class Installer {
 
         await this._runInstaller(java, args, installDir);
 
-        // 检测生成的服务端核心
-        const serverJar = this._detectServerJar(installDir, source.serverJarPattern);
-        if (!serverJar) {
+        // 检测生成的服务端核心（现代 Forge/NeoForge 会把核心生成在 libraries/ 子目录，需递归扫描）
+        const serverJarAbs = this._detectServerJar(installDir, source.serverJarPattern);
+        if (!serverJarAbs) {
             throw new Error(`安装器执行完成，但未在 ${installDir} 找到匹配的服务端核心（${source.serverJarPattern}）。请检查 java 输出。`);
         }
+        const serverJar = path.relative(installDir, serverJarAbs);
         console.log(`✅ 已生成服务端核心: ${serverJar}`);
 
         // 记录配置 & 共享核心
         this._recordConfig(type, mc);
         this.config.setConfig('server.jar', serverJar);
-        await this._copyToPool(type, mc, path.join(installDir, serverJar));
+
+        // 现代 Forge / NeoForge 用 unix_args.txt 启动（不再能用 java -jar），记录启动参数文件
+        const argsFileAbs = this._detectForgeArgsFile(serverJarAbs);
+        this.config.setConfig('server.launchArgsFile', argsFileAbs ? path.relative(installDir, argsFileAbs) : '');
+        if (argsFileAbs) console.log(`🔧 检测到启动参数文件（用 @args 方式启动）: ${path.relative(installDir, argsFileAbs)}`);
+
+        await this._copyToPool(type, mc, serverJarAbs);
 
         // 清理安装器 jar（可选，保留也无妨；这里删除避免混淆）
         try { fs.removeSync(installerPath); } catch (e) {}
-        return path.join(installDir, serverJar);
+        return serverJarAbs;
     }
 
     /**
@@ -430,13 +437,45 @@ class Installer {
      */
     _detectServerJar(dir, pattern) {
         let found = null;
-        for (const f of fs.readdirSync(dir)) {
-            if (f.endsWith('.jar') && !f.includes('installer') && !f.includes('authlib-injector') && pattern.test(f)) {
-                found = f;
-                break;
+        // 现代 Forge/NeoForge 会把服务端核心生成在 libraries/ 子目录，必须递归扫描；
+        // 跳过运行时数据目录，避免无谓遍历 world/logs/backups
+        const skip = new Set(['world', 'logs', 'backups', 'node_modules']);
+        const walk = (d) => {
+            if (found) return;
+            let entries;
+            try { entries = fs.readdirSync(d, { withFileTypes: true }); }
+            catch (e) { return; }
+            for (const e of entries) {
+                if (found) return;
+                const p = path.join(d, e.name);
+                if (e.isDirectory()) {
+                    if (skip.has(e.name)) continue;
+                    walk(p);
+                } else if (e.isFile()
+                    && e.name.endsWith('.jar')
+                    && !e.name.includes('installer')
+                    && !e.name.includes('authlib-injector')
+                    && pattern.test(e.name)) {
+                    found = p;
+                    return;
+                }
             }
-        }
+        };
+        walk(dir);
         return found;
+    }
+
+    /**
+     * 现代 Forge / NeoForge 用 unix_args.txt / win_args.txt 提供完整 classpath 与模块参数，
+     * 无法用 java -jar 直接启动。在 server jar 同目录查找该启动参数文件。
+     */
+    _detectForgeArgsFile(serverJarAbs) {
+        const dir = path.dirname(serverJarAbs);
+        for (const name of ['unix_args.txt', 'win_args.txt', 'args.txt']) {
+            const p = path.join(dir, name);
+            if (fs.existsSync(p)) return p;
+        }
+        return null;
     }
 
     // ==================== vanilla 镜像源轮换 ====================

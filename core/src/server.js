@@ -386,6 +386,23 @@ class ServerManager {
             jvmArgs.push(extraJvmArgs);
         }
 
+        // 现代 Forge / NeoForge：核心生成在 libraries/ 子目录，且必须用 @unix_args.txt 提供完整
+        // classpath / 模块参数启动，无法用 java -jar <jar>。若存在 server.launchArgsFile，则走该模式。
+        const serverDir = this.serverDir;
+        const launchArgsFile = this.config.getConfig('server.launchArgsFile');
+        if (launchArgsFile && fs.existsSync(path.join(serverDir, launchArgsFile))) {
+            const userJvm = path.join(serverDir, 'user_jvm_args.txt');
+            const prefix = fs.existsSync(userJvm)
+                ? ['@' + path.relative(serverDir, userJvm)]
+                : [];
+            return {
+                javaPath,
+                jvmArgs,
+                jarFile,
+                fullCommand: [javaPath, ...jvmArgs, ...prefix, '@' + launchArgsFile, 'nogui']
+            };
+        }
+
         return {
             javaPath,
             jvmArgs,
