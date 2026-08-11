@@ -11,6 +11,7 @@ const fs = require('fs-extra');
 const path = require('path');
 const { spawn } = require('child_process');
 const axios = require('axios');
+const AdmZip = require('adm-zip');
 const ProgressBar = require('progress');
 const utils = require('./utils');
 const config = require('./config');
@@ -279,6 +280,53 @@ class Installer {
         console.log(`下载 ${type} 安装器（MC ${mc}，加载器 ${loader}）...`);
         await this._downloadFirst(candidates, installerPath);
 
+        // 预下载原版核心，并放到安装器「期望的位置」，使其跳过「自行下载原版核心」这一步。
+        // 关键：现代 Forge/NeoForge 安装器仅在目标文件已存在时才跳过下载，
+        // 而该目标路径写在安装器 jar 内 install_profile.json 的 serverJarPath（含 {LIBRARY_DIR} 等占位符），
+        // 并非固定放在根目录的 minecraft_server.<mc>.jar（放错位置安装器仍会自行下载并卡在慢速 mojang）。
+        const vanillaInfo = this._resolveInstallerVanillaTarget(installerPath, mc, installDir);
+        if (vanillaInfo) {
+            try {
+                const vanillaUrl = await this._getVanillaDownloadUrl(vanillaInfo.mc);
+                let sha1 = null;
+                const m = vanillaUrl.match(/v1\/objects\/([0-9a-f]+)\//);
+                if (m) sha1 = m[1];
+                const vanillaCandidates = [];
+                // 1) BMCLAPI2 按 SHA1 精确寻址：与官方对象字节一致，且国内快、稳
+                if (sha1) vanillaCandidates.push(`${BMCLAPI2}/v1/objects/${sha1}/server.jar`);
+                // 2) mojang 官方（精确但慢，兜底）
+                vanillaCandidates.push(vanillaUrl);
+                // 3) BMCLAPI2 按版本（备用）
+                vanillaCandidates.push(`${BMCLAPI2}/version/${vanillaInfo.mc}/server`);
+
+                // 仅对缺失的目标下载（避免重复），下载一次后复制到其余目标以省流量
+                const missing = vanillaInfo.targetPaths.filter(p => !fs.existsSync(p));
+                if (missing.length === 0) {
+                    console.log(`原版核心已存在于安装器期望位置，安装器将直接复用`);
+                } else {
+                    console.log(`预下载原版核心（${vanillaInfo.mc}），供 ${type} 安装器复用，避免其自行下载...`);
+                    const firstTarget = missing[0];
+                    fs.ensureDirSync(path.dirname(firstTarget));
+                    await this._downloadFirst(vanillaCandidates, firstTarget);
+                    const sz = fs.statSync(firstTarget).size;
+                    // 完整性校验：原版服务端核心至少数十 MB，过小说明下载被截断
+                    if (sz < 10 * 1024 * 1024) {
+                        try { fs.removeSync(firstTarget); } catch (e) {}
+                        throw new Error(`原版核心下载不完整（${Math.round(sz / 1024 / 1024)}MB），疑似被截断`);
+                    }
+                    for (const p of missing.slice(1)) {
+                        fs.ensureDirSync(path.dirname(p));
+                        fs.copyFileSync(firstTarget, p);
+                    }
+                    console.log(`✅ 原版核心已就绪: ${path.basename(firstTarget)} (${Math.round(sz / 1024 / 1024)}MB)，放置于 ${missing.length} 个安装器期望位置`);
+                }
+            } catch (e) {
+                console.warn(`⚠️ 预下载原版核心失败，将交由 ${type} 安装器自行下载: ${e.message}`);
+            }
+        } else {
+            console.log(`该 ${type} 安装器无 serverJarPath 声明，跳过原版核心预下载（由其自行处理）`);
+        }
+
         // 解析 java
         const java = this._resolveJava();
         const args = [].concat(['-jar', installerName], source.installArgs(mc));
@@ -309,6 +357,39 @@ class Installer {
         // 清理安装器 jar（可选，保留也无妨；这里删除避免混淆）
         try { fs.removeSync(installerPath); } catch (e) {}
         return serverJarAbs;
+    }
+
+    /**
+     * 从模组安装器 jar 内读取 install_profile.json，解析 Forge/NeoForge 期望的原版核心路径。
+     * 安装器的 downloadVanilla 仅在「目标文件已存在」时跳过下载，而该目标路径写在 serverJarPath，
+     * 形如 {LIBRARY_DIR}/net/minecraft/server/{MINECRAFT_VERSION}/server-{MINECRAFT_VERSION}.jar。
+     * 把官方原版核心预置到该路径，安装器即复用、不再连慢速 mojang 下载。
+     * 返回 { targetPaths: [绝对路径...], mc } 或 null（无 install_profile.json / 无 serverJarPath）。
+     */
+    _resolveInstallerVanillaTarget(installerPath, mc, installDir) {
+        try {
+            const zip = new AdmZip(installerPath);
+            const entry = zip.getEntry('install_profile.json');
+            if (!entry) return null;
+            const profile = JSON.parse(entry.getData().toString('utf8'));
+            const serverJarPath = profile.serverJarPath;
+            if (!serverJarPath || typeof serverJarPath !== 'string') return null;
+            const mcVersion = profile.minecraft || mc;
+            const tokens = {
+                ROOT: installDir,
+                LIBRARY_DIR: path.join(installDir, 'libraries'),
+                MINECRAFT_VERSION: mcVersion
+            };
+            const substituted = serverJarPath.replace(/\{([A-Z_]+)\}/g, (m, k) => (k in tokens ? tokens[k] : m));
+            const primary = path.isAbsolute(substituted) ? substituted : path.resolve(installDir, substituted);
+            // 保险：部分安装器也会读根目录的 minecraft_server.<mc>.jar
+            const fallbackRoot = path.join(installDir, `minecraft_server.${mcVersion}.jar`);
+            const targetPaths = [primary];
+            if (path.resolve(fallbackRoot) !== path.resolve(primary)) targetPaths.push(fallbackRoot);
+            return { targetPaths, mc: mcVersion };
+        } catch (e) {
+            return null;
+        }
     }
 
     /**

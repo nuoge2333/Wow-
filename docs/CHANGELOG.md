@@ -8,7 +8,8 @@
 
 | 版本 | 状态 | 发布时间 |
 |------|------|------|
-| **3.3.11** | 当前版本 |2026-08-10|
+| **3.3.12** | 当前版本 |2026-08-11|
+| **3.3.11** | 上一版本 |2026-08-10|
 | **3.3.10** | 上一版本 |2026-08-09|
 | **3.3.9** | 上一版本 |2026-08-05|
 | **3.3.8** | 上一版本 |2026-08-04|
@@ -31,6 +32,26 @@
 | **3.0.0** | 上一版本 |2026-07-23|
 | **2.0.0** | 内部迭代 |2026-02-27|
 | **1.0.0** | 内部迭代 |2026-02-07|
+
+---
+
+## [3.3.12] — 2026-08-11
+
+### ⚡ 优化：Forge / NeoForge 安装前预下载原版核心，避开安装器慢速下载
+
+> 现象：上一版（3.3.11）虽然装出了 Forge 核心，但安装器仍会自行从 `piston-data.mojang.com` 下载原版核心（`minecraft_server.<mc>.jar`），在部分网络环境下极慢甚至超时，导致安装卡死。
+
+根因：
+
+- Forge / NeoForge 安装器的 `downloadVanilla` **仅在目标文件已存在时才跳过下载**，而该目标路径写在安装器 jar 内 `install_profile.json` 的 `serverJarPath`（形如 `{LIBRARY_DIR}/net/minecraft/server/{MINECRAFT_VERSION}/server-{MINECRAFT_VERSION}.jar`），**不是**根目录的 `minecraft_server.<mc>.jar`。旧实现把预下载的核心放错位置，安装器判定目标不存在 → 照常连 mojang 慢速下载 → 超时失败（`A problem installing was detected`）。
+- 3.3.12 初版还曾把 BMCLAPI2 的 `/version/<mc>/server` 当作首选，仍偶发不对版；最终改为按 SHA1 精确寻址。
+
+修复：
+
+- **`installer.js`**：新增 `_resolveInstallerVanillaTarget`，用 `adm-zip` 读取安装器 jar 内的 `install_profile.json`，按 `{ROOT}` / `{LIBRARY_DIR}` / `{MINECRAFT_VERSION}` 占位符**动态推导**安装器真正期望的原版核心路径（兼容新旧 Forge / NeoForge 的不同布局）；并把官方原版核心预置到该路径（下载一次后复制到其余期望位置作为保险）。
+- 下载源顺序：**BMCLAPI2 按 SHA1 精确寻址**（`/v1/objects/<sha1>/server.jar`，与官方对象字节一致、国内快、稳）→ mojang 官方（兜底）→ BMCLAPI2 按版本（备用）；并保留 ≥10MB 截断校验。
+- 无 `serverJarPath` 声明的加载器（如 Fabric / Quilt）自动跳过预下载，由其自行处理，互不干扰。
+- 验证：本地 `wow install forge 1.20.1 -b 47.2.0` 全程**未出现一次 mojang 原版核心下载**，安装器直接复用预置核心并成功生成 `forge-*-server.jar` + `unix_args.txt`。
 
 ---
 
