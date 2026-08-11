@@ -8,7 +8,8 @@
 
 | 版本 | 状态 | 发布时间 |
 |------|------|------|
-| **3.3.12** | 当前版本 |2026-08-11|
+| **3.3.13** | 当前版本 |2026-08-11|
+| **3.3.12** | 上一版本 |2026-08-11|
 | **3.3.11** | 上一版本 |2026-08-10|
 | **3.3.10** | 上一版本 |2026-08-09|
 | **3.3.9** | 上一版本 |2026-08-05|
@@ -32,6 +33,35 @@
 | **3.0.0** | 上一版本 |2026-07-23|
 | **2.0.0** | 内部迭代 |2026-02-27|
 | **1.0.0** | 内部迭代 |2026-02-07|
+
+---
+
+## [3.3.13] — 2026-08-11
+
+### 🐛 修复：Fabric 安装崩溃 + ⚡ 优化：Fabric/Quilt 运行时复用预拉原版核心
+
+> 现象：用户反馈「fabric 和 quilt 能跑的动吗」。实测发现 Fabric 安装直接崩溃，Quilt 正常。
+
+#### 1) Fabric 安装崩溃（既有 bug，非 3.3.12 引入）
+
+- `_resolveFabricInstaller` 把 Fabric 版本 API（**降序**返回，最新在前）当升序处理，取了**最后一个＝最旧的 `0.2.0.7`** 安装器；该老安装器用 `args[0]` 空格拆分解析子命令，而 wow 传入的 `server -downloadMinecraft` 是两个独立参数，导致 `ArrayIndexOutOfBoundsException: Index 1 out of bounds` 崩溃。
+- 同时 Fabric 服务端安装命令**缺少 `-mcversion <mc>`**（必需参数）。
+
+修复：
+
+- `_resolveFabricInstaller` 改为取**最新稳定版**安装器（做语义化排序兜底，不依赖接口排序顺序），现解析为 `1.1.2`。
+- Fabric `installArgs` 改为 `(mc) => ['server', '-mcversion', mc, '-downloadMinecraft']`。
+
+#### 2) Fabric / Quilt 运行时复用预拉的原版核心
+
+- 与 Forge/NeoForge 不同，Fabric/Quilt 安装器**安装阶段总是自行从 mojang 重新下载原版核心、不复用预置文件**（Forge 的 3.3.12 预置技巧对它们无效），所以在沙箱/弱网里安装或首次启动仍可能慢。
+- 但它们的**运行启动器**（`fabric-server-launch.jar` / `quilt-server-launch.jar`）启动时会优先复用目录里已存在的 `minecraft_server.<mc>.jar`。
+- 新增 `_ensureVanillaAtRoot`：模组加载器安装成功后，把官方原版核心（BMCLAPI2 按 SHA1 精确寻址，快且字节一致）预置到安装目录根 `minecraft_server.<mc>.jar`，让 Fabric/Quilt 运行时**跳过从 mojang 拉取**；Forge/NeoForge 也兜底确保根目录有完整副本。
+
+#### 验证
+
+- Quilt `1.20.1` 安装成功并触发 `_ensureVanillaAtRoot`，根目录生成 46MB 官方原版核心（沙箱内 BMCLAPI2 约 2.4s）。
+- Fabric 修复后解析 `1.1.2`、参数正确、能正常下载 Fabric 库；安装末尾从 mojang 拉原版核心在沙箱超时（环境限制，真实网络下正常），其运行时同样受益于根目录预拉。
 
 ---
 

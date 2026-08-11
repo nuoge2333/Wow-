@@ -55,8 +55,8 @@ const SERVER_SOURCES = {
             `https://maven.fabricmc.net/net/fabricmc/fabric-installer/${loader}/fabric-installer-${loader}.jar`,
             `${BMCLAPI2}/maven/net/fabricmc/fabric-installer/${loader}/fabric-installer-${loader}.jar`
         ],
-        // Fabric 服务端安装：server 子命令并自动下载 Minecraft
-        installArgs: () => ['server', '-downloadMinecraft'],
+        // Fabric 服务端安装：server 子命令需指定 -mcversion，并自动下载 Minecraft
+        installArgs: (mc) => ['server', '-mcversion', mc, '-downloadMinecraft'],
         serverJarPattern: /^fabric-server-launch\.jar$/,
         installerJarName: (mc, loader) => `fabric-installer-${loader}.jar`,
         resolveLoader: 'fabric'
@@ -352,6 +352,10 @@ class Installer {
         this.config.setConfig('server.launchArgsFile', argsFileAbs ? path.relative(installDir, argsFileAbs) : '');
         if (argsFileAbs) console.log(`🔧 检测到启动参数文件（用 @args 方式启动）: ${path.relative(installDir, argsFileAbs)}`);
 
+        // 预拉原版核心到根目录：Fabric/Quilt 的运行启动器会复用它，避免运行时再连慢速 mojang；
+        // Forge/NeoForge 上方已按 serverJarPath 预置，这里兜底确保根目录也有完整副本。
+        await this._ensureVanillaAtRoot(installDir, mc, type);
+
         await this._copyToPool(type, mc, serverJarAbs);
 
         // 清理安装器 jar（可选，保留也无妨；这里删除避免混淆）
@@ -393,6 +397,42 @@ class Installer {
     }
 
     /**
+     * 安装完成后，把官方原版核心预置到安装目录根 minecraft_server.<mc>.jar。
+     * 用途：Fabric / Quilt 的运行启动器（fabric-server-launch.jar / quilt-server-launch.jar）
+     * 启动时会优先复用目录里已存在的 minecraft_server.<mc>.jar，跳过从 mojang 拉取
+     * （它们的安装器本身不复用预置文件、安装阶段仍会自行下载，故只能帮到运行时）。
+     * Forge / NeoForge 已在上方按 serverJarPath 预置，这里兜底确保根目录也有完整副本。
+     * 下载源优先 BMCLAPI2 按 SHA1 精确寻址（快且字节一致），失败则回退 mojang。
+     */
+    async _ensureVanillaAtRoot(installDir, mc, type) {
+        const target = path.join(installDir, `minecraft_server.${mc}.jar`);
+        if (fs.existsSync(target) && fs.statSync(target).size >= 10 * 1024 * 1024) {
+            return; // 已存在且完整，运行启动器会直接复用
+        }
+        try {
+            const vanillaUrl = await this._getVanillaDownloadUrl(mc);
+            let sha1 = null;
+            const m = vanillaUrl.match(/v1\/objects\/([0-9a-f]+)\//);
+            if (m) sha1 = m[1];
+            const candidates = [];
+            if (sha1) candidates.push(`${BMCLAPI2}/v1/objects/${sha1}/server.jar`);
+            candidates.push(vanillaUrl);
+            candidates.push(`${BMCLAPI2}/version/${mc}/server`);
+            console.log(`预拉原版核心到根目录（${mc}），供 ${type} 运行时启动器复用，避免其从 mojang 拉取...`);
+            fs.ensureDirSync(installDir);
+            await this._downloadFirst(candidates, target);
+            const sz = fs.statSync(target).size;
+            if (sz < 10 * 1024 * 1024) {
+                try { fs.removeSync(target); } catch (e) {}
+                throw new Error(`原版核心下载不完整（${Math.round(sz / 1024 / 1024)}MB）`);
+            }
+            console.log(`✅ 根目录原版核心已就绪: minecraft_server.${mc}.jar (${Math.round(sz / 1024 / 1024)}MB)`);
+        } catch (e) {
+            console.warn(`⚠️ 预拉根目录原版核心失败，${type} 运行时启动器将自行从 mojang 下载: ${e.message}`);
+        }
+    }
+
+    /**
      * 解析加载器版本（各加载器实现不同）
      */
     async _resolveLoader(type, mc) {
@@ -429,7 +469,17 @@ class Installer {
             const stable = list.filter(v => v && !v.version.includes('beta') && !v.version.includes('alpha'));
             const pick = (stable.length ? stable : list);
             if (!pick.length) throw new Error('无可用安装器版本');
-            return pick[pick.length - 1].version;
+            // meta.fabricmc.net 返回的版本是降序（最新在前），取最新稳定版安装器。
+            // 做语义化排序兜底，避免依赖接口排序顺序变化。
+            const semver = (s) => String(s.version).split('.').map(n => parseInt(n, 10) || 0);
+            pick.sort((a, b) => {
+                const A = semver(a), B = semver(b);
+                for (let i = 0; i < Math.max(A.length, B.length); i++) {
+                    if ((A[i] || 0) !== (B[i] || 0)) return (B[i] || 0) - (A[i] || 0);
+                }
+                return 0;
+            });
+            return pick[0].version;
         } catch (e) {
             throw new Error(`解析 Fabric 安装器版本失败: ${e.message}`);
         }
