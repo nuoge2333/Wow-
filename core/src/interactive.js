@@ -68,7 +68,7 @@ async function showMainMenu(options = {}, directChoice = null) {
 
     while (true) {
         clearScreen();
-        printHeader('wow~ Minecraft 服务器管理器 V3.3.14');
+        printHeader('wow~ Minecraft 服务器管理器 V3.3.15');
 
         // 状态信息
         try {
@@ -743,7 +743,7 @@ async function dispatchMenu(choice, options) {
                 try {
                     if (sub === '1') {
                         console.log('提示：开房前请先启动 Minecraft 服务端（菜单 1），陶瓦会自动扫描本机服务端端口。');
-                        await Terracotta.hostRoom({});
+                        await Terracotta.hostRoom({ promptPort: (msg) => ask(rl, msg) });
                     } else if (sub === '2') {
                         const s = await Terracotta.getStatus();
                         if (!s.running) {

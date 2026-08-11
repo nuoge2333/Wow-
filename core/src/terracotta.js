@@ -1,5 +1,5 @@
 /**
- * terracotta.js — 陶瓦 (Terracotta) 内网穿透 / 联机 管理器 (V3.3.14)
+ * terracotta.js — 陶瓦 (Terracotta) 内网穿透 / 联机 管理器 (V3.3.15)
  *
  * ┌─────────────────────────────────────────────────────────────────────────┐
  * │ 版权与许可声明（AGPL 例外条款要求：通过 HTTP API 驱动陶瓦时，              │
@@ -527,7 +527,7 @@ function isAlive(pid) {
  * 轮询状态机直到开房成功 (host-ok)，返回房间号 room.code
  */
 /**
- * 取得本地 Minecraft 服务端端口（V3.3.14）。
+ * 取得本地 Minecraft 服务端端口（V3.3.15）。
  * 陶瓦放弃自身配置（lan.server_port），统一从 server.properties 的 server-port 读取；
  * 若未配置或非法，回退到 Minecraft 默认端口 25565。
  * 陶瓦本身会通过扫描本机运行中的 MC 服务端自动发现端口，但 wow~ 显式读取
@@ -606,21 +606,51 @@ async function waitHostOk(port, mcPort = getServerPort(), timeoutMs = 30000) {
 
 /**
  * 开房（我要当房主）。确保二进制、启动守护、发起开房、等待房间号。
+ * 开房前会自检本机 server-port 是否有 MC 服务端监听：
+ *   - 自检通过 → 直接开房；
+ *   - 自检失败且传入 opts.promptPort → 交互式让用户手动输入端口，非法值视为放弃开服（返回 null，不抛错）；
+ *   - 自检失败且未传入 opts.promptPort（非交互 autoHost）→ 静默失败并抛错。
  * @param {object} opts
  * @param {string} [opts.roomCode] 固定房间号（留空自动生成）
- * @returns {Promise<{roomCode:string, port:number}>}
+ * @param {function} [opts.promptPort] 交互式端口输入回调，传入提示语、返回 Promise<string>
+ * @returns {Promise<{roomCode:string, port:number}|null>} 放弃开服时返回 null
  */
 async function hostRoom(opts = {}) {
     const port = await startDaemon();
-    const mcPort = getServerPort();
+    let mcPort = getServerPort();
     console.log(`\n🏠 正在开房（陶瓦将扫描本机 ${mcPort} 端口的 Minecraft 服务端并连接公共节点）...`);
-    // 开房前自检：确认本机 MC 服务端已在 server-port 监听，否则立即给出明确报错，
-    // 避免陶瓦空等 30s 才超时（最常见的失败原因就是服务器还没启动）。
+    // 开房前自检：确认本机 MC 服务端已在 server-port 监听，避免陶瓦空等 30s 才超时。
+    // 自检失败（端口未检测到监听）时：
+    //   - 交互模式（opts.promptPort 存在，菜单调用）：提示用户手动输入端口，
+    //     输入非法值（空 / 非数字 / 越界）视为「放弃开服」，不抛错、正常退出；
+    //   - 非交互模式（autoHost 等无 opts.promptPort）：保持原有静默失败行为。
     let listening = false;
     try { listening = await isPortListening(mcPort); } catch (e) { listening = false; }
     if (!listening) {
-        await stopDaemon();
-        throw new Error(`开房前自检失败：未在 ${mcPort} 端口检测到 Minecraft 服务端监听。请先执行 wow server start 启动服务器，并确保 server.properties 的 server-port（${mcPort}）与之匹配，然后再执行 lan host。`);
+        if (!opts.promptPort) {
+            await stopDaemon();
+            throw new Error(`开房前自检失败：未在 ${mcPort} 端口检测到 Minecraft 服务端监听。请先执行 wow server start 启动服务器，并确保 server.properties 的 server-port（${mcPort}）与之匹配，然后再执行 lan host。`);
+        }
+        // 交互式：扫描失败时让用户手动指定端口，避免一刀切报错。
+        while (true) {
+            console.log(`\n⚠️ 未在 ${mcPort} 端口检测到 Minecraft 服务端监听（可能服务端尚未启动、监听在非默认端口、或自检探测偶发失败）。`);
+            console.log(`   若确认服务端已在运行，可手动指定其监听端口继续开房；输入非法值（空 / 非数字 / 越界）将放弃开服。`);
+            const raw = String(await opts.promptPort(`   请输入 Minecraft 服务端端口 (1-65535): `) || '').trim();
+            if (!/^\d+$/.test(raw)) {
+                console.log('\n🚫 端口输入非法，已放弃开服。');
+                await stopDaemon();
+                return null;
+            }
+            const n = parseInt(raw, 10);
+            if (n < 1 || n > 65535) {
+                console.log('\n🚫 端口超出合法范围 (1-65535)，已放弃开服。');
+                await stopDaemon();
+                return null;
+            }
+            mcPort = n;
+            console.log(`\n✅ 已采用手动端口 ${mcPort}，继续开房...`);
+            break;
+        }
     }
     await apiScanning(port, opts.roomCode || config.getConfig('lan.room_code', ''));
     const roomCode = await waitHostOk(port, mcPort);
@@ -636,8 +666,9 @@ async function hostRoom(opts = {}) {
  */
 async function autoHost() {
     try {
-        const { roomCode } = await hostRoom({});
-        console.log(`\n[lan] 自动开房完成，房间号: ${roomCode}`);
+        const res = await hostRoom({});
+        if (!res) return; // 非交互下不会走到放弃开服分支，这里仅作兜底
+        console.log(`\n[lan] 自动开房完成，房间号: ${res.roomCode}`);
     } catch (e) {
         console.warn(`\n[lan] 自动开房失败: ${e.message}`);
     }
