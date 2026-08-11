@@ -68,7 +68,7 @@ async function showMainMenu(options = {}, directChoice = null) {
 
     while (true) {
         clearScreen();
-        printHeader('wow~ Minecraft 服务器管理器 V3.3.13');
+        printHeader('wow~ Minecraft 服务器管理器 V3.3.14');
 
         // 状态信息
         try {

@@ -1,5 +1,5 @@
 /**
- * terracotta.js — 陶瓦 (Terracotta) 内网穿透 / 联机 管理器 (V3.3.13)
+ * terracotta.js — 陶瓦 (Terracotta) 内网穿透 / 联机 管理器 (V3.3.14)
  *
  * ┌─────────────────────────────────────────────────────────────────────────┐
  * │ 版权与许可声明（AGPL 例外条款要求：通过 HTTP API 驱动陶瓦时，              │
@@ -527,20 +527,32 @@ function isAlive(pid) {
  * 轮询状态机直到开房成功 (host-ok)，返回房间号 room.code
  */
 /**
- * 取得本地 Minecraft 服务端端口（V3.3.13）。
+ * 取得本地 Minecraft 服务端端口（V3.3.14）。
  * 陶瓦放弃自身配置（lan.server_port），统一从 server.properties 的 server-port 读取；
  * 若未配置或非法，回退到 Minecraft 默认端口 25565。
  * 陶瓦本身会通过扫描本机运行中的 MC 服务端自动发现端口，但 wow~ 显式读取
  * server.properties 用于开房前自检与报错提示，避免使用过时的默认 25565。
  */
 function getServerPort() {
+    const serverDir = utils.getServerDir();
+    const propFile = path.join(serverDir, 'server.properties');
     try {
         const ServerProperties = config.ServerProperties;
-        const props = new ServerProperties(utils.getServerDir());
+        const props = new ServerProperties(serverDir);
         const raw = props.get('server-port');
+        if (raw === null || raw === undefined) {
+            console.warn(`⚠️ server.properties 中未找到 server-port，回退默认 25565。文件路径：${propFile}`);
+            return 25565;
+        }
         const n = parseInt(raw, 10);
-        if (Number.isInteger(n) && n > 0 && n <= 65535) return n;
-    } catch (e) { /* 读取失败则回退默认 25565 */ }
+        if (Number.isInteger(n) && n > 0 && n <= 65535) {
+            console.log(`📡 从 server.properties 读取到 server-port: ${n}（${propFile}）`);
+            return n;
+        }
+        console.warn(`⚠️ server.properties 中的 server-port 值非法（"${raw}"），回退默认 25565。文件路径：${propFile}`);
+    } catch (e) {
+        console.warn(`⚠️ 读取 server.properties 失败: ${e.message}，回退默认 25565。文件路径：${propFile}`);
+    }
     return 25565;
 }
 

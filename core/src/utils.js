@@ -113,7 +113,7 @@ function getJrePath() {
  */
 function getServerDir() {
     const config = require('./config');
-    const serverDir = config.getConfig('server.dir', '../../server');
+    const serverDir = config.getConfig('server.dir', '../server');
     return resolvePath(serverDir);
 }
 
