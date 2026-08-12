@@ -60,7 +60,12 @@ async function showMainMenu(options = {}, directChoice = null) {
 
     // 如果直接指定了菜单项，执行后返回
     if (directChoice) {
-        await dispatchMenu(directChoice, options);
+        const rl = createRL();
+        try {
+            await dispatchMenu(directChoice, options, rl);
+        } finally {
+            rl.close();
+        }
         return;
     }
 
@@ -68,7 +73,7 @@ async function showMainMenu(options = {}, directChoice = null) {
 
     while (true) {
         clearScreen();
-        printHeader('wow~ Minecraft 服务器管理器 V3.3.16');
+        printHeader('wow~ Minecraft 服务器管理器 V3.3.17');
 
         // 状态信息
         try {
@@ -141,7 +146,7 @@ async function showMainMenu(options = {}, directChoice = null) {
         // 纯数字导航：1-15 直接分发到对应菜单（数值比较，避免字符串比较误判）
         const num = parseInt(choice, 10);
         if (!isNaN(num) && num >= 1 && num <= 15) {
-            await dispatchMenu(String(num), options);
+            await dispatchMenu(String(num), options, rl);
             await ask(rl, '\n按回车键返回主菜单...');
         } else {
             console.log('无效的选择。本菜单仅支持数字选择；如需使用命令（如 server start / web start），请直接查阅 README.MD 中的命令说明。');
@@ -155,7 +160,12 @@ async function showMainMenu(options = {}, directChoice = null) {
 /**
  * 分发菜单选择
  */
-async function dispatchMenu(choice, options) {
+async function dispatchMenu(choice, options, rl) {
+    // 复用调用方（showMainMenu）已有的 readline 接口，不要再新建一个挂在同一 process.stdin 上。
+    // 否则两个 readline 接口同时消费同一 stdin，每个按键会被读两次 → 终端把输入回显成两倍
+    // （如输入 1.20.1 显示成 11..2200..11）。本函数仅在外部未传入 rl 时才自建并负责关闭。
+    const ownRl = !rl;
+    if (!rl) rl = createRL();
     const {
         serverManager,
         installer,
@@ -169,7 +179,6 @@ async function dispatchMenu(choice, options) {
         mailer
     } = options;
 
-    const rl = createRL();
 
     try {
         switch (choice) {
@@ -381,7 +390,7 @@ async function dispatchMenu(choice, options) {
                         break;
                     }
                     case '3':
-                        await props.quickSet();
+                        await props.quickSet(undefined, rl);
                         break;
                     case '4': {
                         const key = await ask(rl, '要重置的属性名: ');
@@ -507,12 +516,12 @@ async function dispatchMenu(choice, options) {
                 if (subChoice === '1') {
                     const filePath = await ask(rl, '整合包文件路径: ');
                     if (filePath) {
-                        await packGenerator.install(filePath);
+                        await packGenerator.install(filePath, rl);
                     }
                 } else if (subChoice === '2') {
                     const url = await ask(rl, '整合包 URL: ');
                     if (url) {
-                        await packGenerator.install(url);
+                        await packGenerator.install(url, rl);
                     }
                 }
                 break;
@@ -704,7 +713,7 @@ async function dispatchMenu(choice, options) {
                     case '2': {
                         const filePath = await ask(rl, '主题 ZIP 文件路径: ');
                         if (filePath) {
-                            await themeManager.install(filePath);
+                            await themeManager.install(filePath, rl);
                         }
                         break;
                     }
@@ -712,7 +721,7 @@ async function dispatchMenu(choice, options) {
                         themeManager.list();
                         const name = await ask(rl, '要切换的主题名: ');
                         if (name) {
-                            await themeManager.switch(name);
+                            await themeManager.switch(name, rl);
                         }
                         break;
                     }
@@ -771,9 +780,9 @@ async function dispatchMenu(choice, options) {
         }
     } catch (e) {
         console.error(`执行菜单操作时出错: ${e.message}`);
+    } finally {
+        if (ownRl) rl.close();
     }
-
-    rl.close();
 }
 
 module.exports = {

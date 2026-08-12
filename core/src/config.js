@@ -316,11 +316,13 @@ class ServerProperties {
 
     /**
      * 快速设置常用属性（V3.1 新增）
-     * @param {object} readline - readline 接口（可选，用于交互式输入）
+     * @param {object} [readlineModule] readline 模块（可选，默认 require('readline')）
+     * @param {object} [existingRl] 复用已有的 readline 接口（避免与主菜单的 readline 重复挂在同一 stdin 上导致输入被读两次）
      */
-    async quickSet(readline) {
-        const readlineModule = readline || require('readline');
-        const rl = readlineModule.createInterface({
+    async quickSet(readlineModule, existingRl) {
+        const rlModule = readlineModule || require('readline');
+        const ownRl = !existingRl;
+        const rl = existingRl || rlModule.createInterface({
             input: process.stdin,
             output: process.stdout
         });
@@ -356,7 +358,7 @@ class ServerProperties {
             console.log(`    ✅ ${item.key} = ${value}`);
         }
 
-        rl.close();
+        if (ownRl) rl.close();
         console.log('\n✅ server.properties 快速设置完成');
     }
 

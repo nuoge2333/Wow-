@@ -30,7 +30,7 @@ class PackGenerator {
      * 安装客户端整合包
      * @param {string} source - 整合包文件路径或 URL
      */
-    async install(source) {
+    async install(source, existingRl) {
         console.log(`📦 安装整合包: ${source}`);
 
         // 1. 下载或复制到临时目录
@@ -53,7 +53,7 @@ class PackGenerator {
         console.log(`   模组数量: ${manifest.mods?.length || 0}`);
 
         // 4. 询问用户使用哪个存档
-        const worldOption = await this._askWorldOption();
+        const worldOption = await this._askWorldOption(existingRl);
         let worldSource = null;
         if (worldOption === 'new') {
             console.log('将创建新世界');
@@ -63,7 +63,7 @@ class PackGenerator {
             if (worlds.length === 0) {
                 console.log('没有现有存档，将创建新世界');
             } else {
-                const selected = await this._selectWorld(worlds);
+                const selected = await this._selectWorld(worlds, existingRl);
                 if (selected) {
                     worldSource = path.join(this.serverDir, '..', '..', 'server', 'worlds', selected);
                     if (!fs.existsSync(worldSource)) {
@@ -124,7 +124,7 @@ class PackGenerator {
         if (testResult.success) {
             console.log('✅ 整合包安装成功！服务器可正常启动');
             // 询问是否保留该方案
-            const keep = await this._askConfirm('是否保留此方案？ (y/N): ');
+            const keep = await this._askConfirm('是否保留此方案？ (y/N): ', existingRl);
             if (keep.toLowerCase() !== 'y') {
                 await this.schemeManager.delete(schemeName);
                 console.log('方案已删除');
@@ -156,7 +156,7 @@ class PackGenerator {
         console.log('请检查日志文件: logs/latest.log');
         console.log('您可以手动删除不兼容的模组后重试。');
         // 询问是否删除该方案
-        const del = await this._askConfirm('是否删除此方案？ (y/N): ');
+        const del = await this._askConfirm('是否删除此方案？ (y/N): ', existingRl);
         if (del.toLowerCase() === 'y') {
             await this.schemeManager.delete(schemeName);
             console.log('方案已删除');
@@ -286,14 +286,16 @@ class PackGenerator {
     /**
      * 询问存档选项
      */
-    _askWorldOption() {
+    _askWorldOption(existingRl) {
+        // existingRl 由调用方（交互菜单）复用同一 readline 接口传入，避免重复挂在同一 stdin 导致输入被读两次。
+        const ownRl = !existingRl;
+        const rl = existingRl || require('readline').createInterface({
+            input: process.stdin,
+            output: process.stdout
+        });
         return new Promise((resolve) => {
-            const rl = require('readline').createInterface({
-                input: process.stdin,
-                output: process.stdout
-            });
             rl.question('选择存档: (1) 新建 (2) 使用现有存档 (默认: 新建): ', (answer) => {
-                rl.close();
+                if (ownRl) rl.close();
                 if (answer.trim() === '2') {
                     resolve('existing');
                 } else {
@@ -315,18 +317,19 @@ class PackGenerator {
     /**
      * 选择存档
      */
-    _selectWorld(worlds) {
+    _selectWorld(worlds, existingRl) {
+        const ownRl = !existingRl;
+        const rl = existingRl || require('readline').createInterface({
+            input: process.stdin,
+            output: process.stdout
+        });
         return new Promise((resolve) => {
             console.log('可用存档:');
             for (let i = 0; i < worlds.length; i++) {
                 console.log(`  ${i+1}. ${worlds[i]}`);
             }
-            const rl = require('readline').createInterface({
-                input: process.stdin,
-                output: process.stdout
-            });
             rl.question('请输入编号 (默认: 1): ', (answer) => {
-                rl.close();
+                if (ownRl) rl.close();
                 const idx = parseInt(answer) - 1;
                 if (idx >= 0 && idx < worlds.length) {
                     resolve(worlds[idx]);
@@ -401,14 +404,15 @@ class PackGenerator {
     /**
      * 询问确认
      */
-    _askConfirm(prompt) {
+    _askConfirm(prompt, existingRl) {
+        const ownRl = !existingRl;
+        const rl = existingRl || require('readline').createInterface({
+            input: process.stdin,
+            output: process.stdout
+        });
         return new Promise((resolve) => {
-            const rl = require('readline').createInterface({
-                input: process.stdin,
-                output: process.stdout
-            });
             rl.question(prompt, (answer) => {
-                rl.close();
+                if (ownRl) rl.close();
                 resolve(answer);
             });
         });

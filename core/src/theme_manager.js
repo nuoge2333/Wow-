@@ -20,7 +20,7 @@ class ThemeManager {
     /**
      * 安装主题包
      */
-    async install(sourcePath) {
+    async install(sourcePath, existingRl) {
         const tempDir = path.join(this.themesDir, '.temp_' + Date.now());
         fs.ensureDirSync(tempDir);
 
@@ -45,7 +45,7 @@ class ThemeManager {
             const installPath = path.join(this.themesDir, themeName);
             
             if (fs.existsSync(installPath)) {
-                const overwrite = await this._askConfirm(`主题 ${themeName} 已存在，是否覆盖？ (y/N): `);
+                const overwrite = await this._askConfirm(`主题 ${themeName} 已存在，是否覆盖？ (y/N): `, existingRl);
                 if (overwrite.toLowerCase() !== 'y') {
                     console.log('安装已取消');
                     fs.removeSync(tempDir);
@@ -108,14 +108,17 @@ class ThemeManager {
     /**
      * 询问确认
      */
-    _askConfirm(prompt) {
+    _askConfirm(prompt, existingRl) {
+        // existingRl 由调用方（交互菜单）复用同一 readline 接口传入，
+        // 避免与主菜单的 readline 同时挂在同一 process.stdin 导致输入被读两次。
+        const ownRl = !existingRl;
+        const rl = existingRl || require('readline').createInterface({
+            input: process.stdin,
+            output: process.stdout
+        });
         return new Promise((resolve) => {
-            const rl = require('readline').createInterface({
-                input: process.stdin,
-                output: process.stdout
-            });
             rl.question(prompt, (answer) => {
-                rl.close();
+                if (ownRl) rl.close();
                 resolve(answer);
             });
         });
@@ -161,7 +164,7 @@ class ThemeManager {
     /**
      * 切换主题（带警告）
      */
-    async switch(name) {
+    async switch(name, existingRl) {
         const themePath = path.join(this.themesDir, name);
         if (!fs.existsSync(themePath)) {
             throw new Error(`主题 ${name} 不存在`);
@@ -174,7 +177,7 @@ class ThemeManager {
         console.warn('⚠️ 请确保您信任此主题包的来源。');
         console.warn('⚠️ =================================================');
         
-        const confirm = await this._askConfirm('是否继续切换主题？ (y/N): ');
+        const confirm = await this._askConfirm('是否继续切换主题？ (y/N): ', existingRl);
         if (confirm.toLowerCase() !== 'y') {
             console.log('切换已取消');
             return;
