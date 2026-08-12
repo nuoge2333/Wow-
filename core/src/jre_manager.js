@@ -267,8 +267,8 @@ class JreManager {
             return javaPath;
         }
 
-        // 尝试自动检测系统 Java
-        const systemJava = utils.detectJava();
+        // 尝试自动检测系统 Java（传入期望版本，优先匹配 mise/rtx 等版本管理器下的本地 Java）
+        const systemJava = utils.detectJava(targetVersion);
         if (systemJava) {
             return systemJava;
         }

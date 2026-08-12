@@ -8,7 +8,8 @@
 
 | 版本 | 状态 | 发布时间 |
 |------|------|------|
-| **3.3.15** | 当前版本 |2026-08-12|
+| **3.3.16** | 当前版本 |2026-08-12|
+| **3.3.15** | 上一版本 |2026-08-12|
 | **3.3.14** | 上一版本 |2026-08-12|
 | **3.3.13** | 上一版本 |2026-08-11|
 | **3.3.12** | 上一版本 |2026-08-11|
@@ -35,6 +36,24 @@
 | **3.0.0** | 上一版本 |2026-07-23|
 | **2.0.0** | 内部迭代 |2026-02-27|
 | **1.0.0** | 内部迭代 |2026-02-07|
+
+---
+
+## [3.3.16] — 2026-08-12
+
+### ✨ 修复：安装器/启动在 mise/rtx 等版本管理器下找不到 Java 的问题
+
+> 现象（简幻欢环境）：菜单「下载/安装实例」选 forge 1.20.1，原版核心预下载成功，但运行 `java -jar forge-installer.jar` 时报 `mise ERROR No version is set for shim: java`，安装器退出码 1，安装失败；主菜单也显示 `Java 路径: (未检测到)`。
+
+根因：`java` 在 简幻欢等环境里是 `mise` 的 shim，未设置全局版本时 `java -version` 直接报错退出。而原安装器的 `_resolveJava` 在 `detectJava()` 失败时只回退到**裸 `java` 命令**，于是被 mise 拒绝；`utils.detectJava()` 也只认能跑通 `java -version` 的 java，识别不到 mise 本地已安装的多个 Java（zulu-8/11/16/17/19/21）。
+
+修复：
+
+- **`utils.detectJava(preferredVersion?)`** 增强：裸 `java` 不可用时，依次尝试用 `mise where java@<v>` / `rtx where java@<v>`（v 优先 `preferredVersion`，再 `21/17/11/8`）解析本地已安装 Java；仍不行则扫描 `MISE_DATA_DIR` / `XDG_DATA_HOME` / `~/.local/share/mise|rtx/installs/java` 目录。这样直接复用环境已有的 Java，无需重新下载。
+- **`jre_manager.getJavaExecutable`** 把期望版本传给 `detectJava`，版本管理器场景下优先匹配对应大版本（如 1.20.1→17）的本地 Java。
+- **`installer._resolveJava(mc)`** 改为异步，统一走 `JreManager.ensureJavaForMinecraft(mc)`（与 `server.js` 启动逻辑一致）：用户显式配置 → 已下载 JRE → 系统 Java（含 mise/rtx）→ 自动下载 Temurin JRE。在 mise 环境下会直接复用本地 Java（无下载），彻底避免 `No version is set for shim: java`。
+
+> 注：日志里 `选择类型 (1-9): 22`、`Minecraft 版本: 11..2200..11` 是**简幻欢 Web 控制台把每个按键重复显示两次**的显示副作用（实际输入为 `2` / `1.20.1`，wow~ 行为正确），并非输入解析 bug。
 
 ---
 

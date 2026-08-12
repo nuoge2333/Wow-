@@ -15,6 +15,7 @@ const AdmZip = require('adm-zip');
 const ProgressBar = require('progress');
 const utils = require('./utils');
 const config = require('./config');
+const JreManager = require('./jre_manager');
 
 // 模组加载器安装器下载的镜像源（按优先级尝试）：
 // 1) 配置默认镜像（通常 bmclapi2.bangbang93.com）
@@ -140,6 +141,7 @@ class Installer {
         this.config = config;
         this.mirror = this.config.getConfig('download.mirror', BMCLAPI2);
         this.serverDir = utils.getServerDir();
+        this.jreManager = new JreManager();
     }
 
     /**
@@ -327,8 +329,8 @@ class Installer {
             console.log(`该 ${type} 安装器无 serverJarPath 声明，跳过原版核心预下载（由其自行处理）`);
         }
 
-        // 解析 java
-        const java = this._resolveJava();
+        // 解析 java（与 server 启动一致：版本管理器环境下也能拿到真实 Java）
+        const java = await this._resolveJava(mc);
         const args = [].concat(['-jar', installerName], source.installArgs(mc));
         console.log(`运行安装器: ${java} ${args.join(' ')}`);
         console.log(`   （工作目录: ${installDir}）`);
@@ -539,12 +541,25 @@ class Installer {
     }
 
     /**
-     * 解析可用的 java 可执行文件
+     * 解析可用的 java 可执行文件（异步）。
+     * 与 server 启动逻辑保持一致：优先用户显式配置 → JreManager（已下载 JRE / 系统 Java / 自动下载 Temurin JRE）
+     * → 兜底系统 java → 裸 'java'。这样在 mise/rtx 等版本管理器导致裸 'java' 不可用（如 简幻欢）时，
+     * 安装器也能拿到真实可执行的 Java 路径，而不会因 "No version is set for shim: java" 直接失败。
+     * @param {string} [mc] Minecraft 版本，用于选择对应 Java 大版本
      */
-    _resolveJava() {
+    async _resolveJava(mc) {
         const cfg = this.config.getConfig('server.java');
         if (cfg && fs.existsSync(cfg)) return cfg;
-        const sys = utils.detectJava();
+        const required = (this.jreManager && this.jreManager.getRequiredJavaVersion)
+            ? this.jreManager.getRequiredJavaVersion(mc || '1.20.1')
+            : '17';
+        try {
+            const javaPath = await this.jreManager.ensureJavaForMinecraft(mc || '1.20.1');
+            if (javaPath) return javaPath;
+        } catch (e) {
+            console.warn(`⚠️ 自动解析/下载 Java 失败，回退系统 java: ${e.message}`);
+        }
+        const sys = utils.detectJava(required);
         if (sys) return sys;
         return 'java';
     }

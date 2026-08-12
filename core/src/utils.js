@@ -19,27 +19,84 @@ function getOS() {
 }
 
 /**
- * 检测 Java 是否可用，返回可执行文件路径或 null
+ * 取命令的完整路径（which）
  */
-function detectJava() {
+function _whichJava(cmd) {
+    try {
+        const whichResult = execSync(`which ${cmd}`, { stdio: 'pipe' });
+        return whichResult.toString().trim();
+    } catch {
+        return cmd; // 如果无法获取完整路径，返回命令名
+    }
+}
+
+/**
+ * 当裸 `java` 不可用（典型：mise / rtx 等版本管理器下未设置全局版本，
+ * 运行 `java -version` 会报 "No version is set for shim: java"）时，
+ * 尝试用版本管理器解析本地已安装的 Java，避免回退到不可用的裸命令或被迫重新下载。
+ * @param {string|null} preferredVersion 期望的特征版本（如 '17'），优先匹配，找不到再逐级兜底
+ */
+function _detectVersionManagerJava(preferredVersion) {
+    const candidates = [];
+    if (preferredVersion) candidates.push(preferredVersion);
+    candidates.push('21', '17', '11', '8'); // Minecraft 1.21+ / 1.17-1.20 / 1.13-1.16 / 1.12.2 及以下
+    // 版本管理器二进制（mise 与旧名 rtx 都尝试）
+    const vms = ['mise', 'rtx'];
+    for (const vm of vms) {
+        for (const v of candidates) {
+            try {
+                const p = execSync(`${vm} where java@${v} 2>/dev/null`, { stdio: 'pipe', timeout: 3000 })
+                    .toString().trim();
+                if (p && fs.existsSync(p)) return p;
+            } catch (e) { /* 该版本未安装或无此命令，继续 */ }
+        }
+    }
+    // 兜底：直接扫描版本管理器的 installs 目录
+    const homes = [
+        process.env.MISE_DATA_DIR,
+        process.env.XDG_DATA_HOME,
+        path.join(os.homedir(), '.local', 'share')
+    ];
+    const roots = [];
+    for (const h of homes) {
+        if (!h) continue;
+        roots.push(path.join(h, 'mise', 'installs', 'java'));
+        roots.push(path.join(h, 'rtx', 'installs', 'java'));
+    }
+    const seen = new Set();
+    for (const root of roots) {
+        if (!root || seen.has(root) || !fs.existsSync(root)) continue;
+        seen.add(root);
+        try {
+            for (const d of fs.readdirSync(root)) {
+                const bin = path.join(root, d, 'bin', 'java');
+                if (fs.existsSync(bin)) return bin;
+            }
+        } catch (e) { /* ignore */ }
+    }
+    return null;
+}
+
+/**
+ * 检测 Java 是否可用，返回可执行文件路径或 null
+ * @param {string|null} [preferredVersion] 期望的特征版本（如 '17'），用于版本管理器场景优先匹配
+ */
+function detectJava(preferredVersion = null) {
     const javaCmds = ['java', 'java.exe'];
     for (const cmd of javaCmds) {
         try {
             const result = execSync(`${cmd} -version 2>&1`, { stdio: 'pipe', timeout: 3000 });
             const output = result.toString();
             if (output.includes('version')) {
-                // 找到 java，尝试获取完整路径
-                try {
-                    const whichResult = execSync(`which ${cmd}`, { stdio: 'pipe' });
-                    return whichResult.toString().trim();
-                } catch {
-                    return cmd; // 如果无法获取完整路径，返回命令名
-                }
+                return _whichJava(cmd);
             }
         } catch (e) {
             // 继续尝试下一个
         }
     }
+    // 裸 java 不可用（mise/rtx 未设置全局版本等），尝试用版本管理器解析本地已安装 Java
+    const vmJava = _detectVersionManagerJava(preferredVersion);
+    if (vmJava) return vmJava;
     return null;
 }
 
