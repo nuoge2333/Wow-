@@ -577,6 +577,15 @@ function isPortListening(port, host = '127.0.0.1', timeoutMs = 1500) {
     });
 }
 
+// 提取房间号：陶瓦 HTTP API 在 hosting / host-ok 状态返回 room 为**顶层字符串**
+// （如 {"state":"host-ok","room":"ABCD-EFGH"}），并非 { room: { code: ... } } 的嵌套对象。
+// 这里兼容两种写法，避免 s.room.code 永远为 undefined 导致开房一直超时。
+function extractRoomCode(s) {
+    if (!s || !s.room) return null;
+    if (typeof s.room === 'string') return s.room;
+    return s.room.code || s.room.room_code || null;
+}
+
 async function waitHostOk(port, mcPort = getServerPort(), timeoutMs = 30000) {
     const deadline = Date.now() + timeoutMs;
     let last = null;
@@ -584,8 +593,9 @@ async function waitHostOk(port, mcPort = getServerPort(), timeoutMs = 30000) {
         try {
             const s = await apiState(port);
             last = s;
-            if (s && s.state === 'host-ok' && s.room && s.room.code) {
-                return s.room.code;
+            const roomCode = extractRoomCode(s);
+            if (s && s.state === 'host-ok' && roomCode) {
+                return roomCode;
             }
             if (s && s.state === 'exception') {
                 const typeMap = {
@@ -695,7 +705,7 @@ async function getStatus() {
     try { meta = await apiMeta(st.port); } catch (e) {}
     return {
         running: true,
-        roomCode: st.roomCode || (state && state.room && state.room.code) || null,
+        roomCode: st.roomCode || extractRoomCode(state) || null,
         port: st.port,
         pid: st.pid,
         state: state ? state.state : null,

@@ -279,21 +279,42 @@ class ServerManager {
      */
     _getServerJar() {
         const serverDir = this.serverDir;
-        // 优先使用安装器写入的 server.jar 配置（Fabric/Quilt 安装后会同时存在原版 server.jar，
-        // 必须以启动器jar为准，否则会误选原版核心）
+        // 1) 优先使用配置里记录的核心（Fabric/Quilt 安装后会同时存在原版 server.jar，
+        //    必须以启动器 jar 为准，否则会误选原版核心）
         const cfgJar = this.config.getConfig('server.jar');
         if (cfgJar && fs.existsSync(path.join(serverDir, cfgJar))) {
             return cfgJar;
         }
         const files = fs.readdirSync(serverDir);
-        const jarFiles = files.filter(f => f.endsWith('.jar') && !f.includes('authlib-injector'));
+        // 排除安装器（*-installer.jar 不是可运行的服务器核心，误选会导致 "Invalid or corrupt jarfile"）
+        // 以及外置登录用的 authlib-injector
+        const jarFiles = files.filter(f => {
+            const lf = f.toLowerCase();
+            return lf.endsWith('.jar') && !lf.includes('authlib-injector') && !lf.includes('installer');
+        });
         if (jarFiles.length === 0) {
             throw new Error('未找到服务器核心文件 (.jar)');
         }
-        if (jarFiles.length > 1) {
-            const serverJar = jarFiles.find(f => f.toLowerCase().includes('server'));
-            if (serverJar) return serverJar;
+        if (jarFiles.length === 1) {
+            return jarFiles[0];
         }
+        // 多个候选：按配置的服务端类型（server.type）精确匹配，避免盲选
+        const type = (this.config.getConfig('server.type') || '').toLowerCase();
+        const prefer = {
+            quilt: /quilt-server-launch\.jar$/,
+            fabric: /fabric-server-launch\.jar$/,
+            forge: /forge-.+-server\.jar$/,
+            neoforge: /neoforge-.+-server\.jar$/
+        }[type];
+        if (prefer) {
+            const hit = jarFiles.find(f => prefer.test(f));
+            if (hit) return hit;
+        }
+        // 兜底：优先选含 'server' 的启动器 jar
+        const byServer = jarFiles.find(f => f.toLowerCase().includes('server'));
+        if (byServer) return byServer;
+        // 仍无法确定：告警后取首个（保持原有尽力而为行为）
+        console.warn(`⚠️ 检测到多个核心 jar（${jarFiles.join(', ')}），已默认选用 ${jarFiles[0]}。如需指定，请在 wow.yaml 设置 server.jar。`);
         return jarFiles[0];
     }
 

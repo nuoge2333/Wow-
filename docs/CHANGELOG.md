@@ -8,7 +8,8 @@
 
 | 版本 | 状态 | 发布时间 |
 |------|------|------|
-| **3.3.17** | 当前版本 |2026-08-12|
+| **3.3.18** | 当前版本 |2026-08-14|
+| **3.3.17** | 上一版本 |2026-08-12|
 | **3.3.16** | 上一版本 |2026-08-12|
 | **3.3.15** | 上一版本 |2026-08-12|
 | **3.3.14** | 上一版本 |2026-08-12|
@@ -37,6 +38,43 @@
 | **3.0.0** | 上一版本 |2026-07-23|
 | **2.0.0** | 内部迭代 |2026-02-27|
 | **1.0.0** | 内部迭代 |2026-02-07|
+
+---
+
+## [3.3.18] — 2026-08-14
+
+### 🐛 修复：陶瓦开房在 `host-ok` 后一直超时（房间号读不到）
+
+> 现象（Termux/Android aarch64、公网服务器等）：服务端已启动、端口已监听、陶瓦返回 `host-ok`，但 `wow lan host` 最终报「等待开房完成超时（最后状态: host-ok）」，拿不到房间号。
+
+根因：陶瓦 HTTP API 在开房状态（`hosting` / `host-ok`）返回的是**顶层字符串**房间号：
+
+```json
+{ "state": "host-ok", "room": "ABCD-EFGH" }
+```
+
+而 `terracotta.js` 的 `waitHostOk()` 判断写成 `s.state === 'host-ok' && s.room && s.room.code` —— 把 `room` 当成了 `{ code: ... }` 的嵌套对象。当 `s.room` 是字符串时，`s.room.code` 永远为 `undefined`，成功条件恒假，轮询到 30s 抛超时。这与「host-ok 已返回却超时」的现象 100% 吻合（这不是超时时长问题，延长也没用）。`getStatus()` 里 `state.room && state.room.code` 同理也拿不到房间号。
+
+修复：
+
+- 新增 `extractRoomCode(s)`：优先按字符串读取 `s.room`，并兼容 `s.room.code` / `s.room.room_code` 旧写法。
+- `waitHostOk()` 与 `getStatus()` 统一改用 `extractRoomCode()`，房间号现在能正确拿到，开房成功后正常打印并返回。
+
+### 🐛 修复：Quilt/Fabric 开服报 `Missing game jar (.../server.jar)`
+
+> 现象：`wow install quilt 1.20.1` 成功生成 `quilt-server-launch.jar`，但 `wow server start` 报 `The Minecraft server .JAR is missing (/workspace/.../server.jar)`，启动器退出码 1。
+
+根因：安装器把预拉的原版核心存为 `minecraft_server.<mc>.jar`，但 Quilt/Fabric 启动器生成的 `*-server-launcher.properties` 写死 `serverJar=server.jar`，二者命名不一致，启动器找不到游戏核心。
+
+修复：安装完成后新增 `_patchLauncherServerJar()`，把 `*-server-launcher.properties` 里的 `serverJar` 指向真实文件名（`minecraft_server.<mc>.jar`），并在支持的环境下再建一个 `server.jar` 软链/副本做最大兼容。无需改动、也不重复占用约 46MB 原版核心。
+
+### 🐛 修复：`_getServerJar()` 盲选目录里第一个 `.jar`
+
+> 现象：服务端目录里若混有别的 `.jar`（如遗留的 `forge-*-installer.jar`），会被当成核心启动，报 `Invalid or corrupt jarfile`。
+
+根因：`_getServerJar()` 在配置 `server.jar` 缺失时，直接 `readdirSync` 取目录里第一个 `.jar`，不区分安装器与可运行核心，也不参考 `server.type`。
+
+修复：候选过滤排除 `*-installer.jar`（安装器不可直接运行）；多候选时按 `server.type`（quilt/fabric/forge/neoforge）精确匹配启动器 jar，仍无法确定才尽力而为并给出告警，避免误选。
 
 ---
 

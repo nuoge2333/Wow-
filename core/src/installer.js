@@ -358,6 +358,11 @@ class Installer {
         // Forge/NeoForge 上方已按 serverJarPath 预置，这里兜底确保根目录也有完整副本。
         await this._ensureVanillaAtRoot(installDir, mc, type);
 
+        // Quilt/Fabric 启动器生成的 *-server-launcher.properties 默认写 serverJar=server.jar，
+        // 但上方预拉的原版核心命名为 minecraft_server.<mc>.jar，导致开服时报缺少 server.jar。
+        // 这里把属性里的 serverJar 指向真实文件名，使其能找到游戏核心（不改名、不重复占 46MB）。
+        await this._patchLauncherServerJar(installDir, mc);
+
         await this._copyToPool(type, mc, serverJarAbs);
 
         // 清理安装器 jar（可选，保留也无妨；这里删除避免混淆）
@@ -431,6 +436,54 @@ class Installer {
             console.log(`✅ 根目录原版核心已就绪: minecraft_server.${mc}.jar (${Math.round(sz / 1024 / 1024)}MB)`);
         } catch (e) {
             console.warn(`⚠️ 预拉根目录原版核心失败，${type} 运行时启动器将自行从 mojang 下载: ${e.message}`);
+        }
+    }
+
+    /**
+     * 修正 Quilt / Fabric 启动器的 *-server-launcher.properties：
+     * 其默认 serverJar=server.jar，但本工具预拉的原版核心命名为 minecraft_server.<mc>.jar，
+     * 二者不一致会导致开服时启动器报「The Minecraft server .JAR is missing (.../server.jar)」。
+     * 这里把属性里的 serverJar 指向真实文件名（前提是该文件确实存在，避免指向不存在的路径）。
+     * @param {string} installDir 安装目录（启动器工作目录）
+     * @param {string} mc Minecraft 版本
+     */
+    async _patchLauncherServerJar(installDir, mc) {
+        const vanillaName = `minecraft_server.${mc}.jar`;
+        const vanillaPath = path.join(installDir, vanillaName);
+        if (!fs.existsSync(vanillaPath)) return; // 原版核心未就绪，交给启动器自行下载
+        let patched = 0;
+        try {
+            const files = fs.readdirSync(installDir);
+            for (const f of files) {
+                if (!f.endsWith('-server-launcher.properties')) continue;
+                const full = path.join(installDir, f);
+                const text = fs.readFileSync(full, 'utf8');
+                if (!/^\s*serverJar\s*=/m.test(text)) continue;
+                const updated = text.replace(/^\s*serverJar\s*=.*$/m, `serverJar=${vanillaName}`);
+                if (updated !== text) {
+                    fs.writeFileSync(full, updated, 'utf8');
+                    patched++;
+                    console.log(`🔧 已修正启动器属性 ${f} 的 serverJar -> ${vanillaName}`);
+                }
+            }
+        } catch (e) {
+            console.warn(`⚠️ 修正启动器属性失败（不影响安装）: ${e.message}`);
+        }
+        if (patched > 0) {
+            // 同时保留 server.jar 软链/副本，最大化兼容：部分旧版启动器只读 server.jar
+            try {
+                const legacy = path.join(installDir, 'server.jar');
+                if (!fs.existsSync(legacy)) {
+                    if (typeof fs.symlinkSync === 'function') {
+                        try { fs.symlinkSync(vanillaName, legacy); console.log('🔗 已建立 server.jar 软链 -> ' + vanillaName); }
+                        catch (e) { /* 软链失败（如 Windows）则复制 */ fs.copySync(vanillaPath, legacy); console.log('📄 已复制 server.jar（兼容旧版启动器）'); }
+                    } else {
+                        fs.copySync(vanillaPath, legacy);
+                    }
+                }
+            } catch (e) {
+                console.warn(`⚠️ 建立 server.jar 兼容文件失败（不影响安装）: ${e.message}`);
+            }
         }
     }
 
