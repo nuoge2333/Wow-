@@ -14,9 +14,11 @@ wow~ V3.3.0 起内置对接 **[陶瓦（Terracotta）](https://github.com/burnin
 
 1. 你先启动 Minecraft 服务端（`wow server start` 或 Web 面板启动）。
 2. wow~ 启动陶瓦二进制（以 `--hmcl` 模式，二进制会把动态分配的本地 API 端口写入文件供 wow~ 读取）。
-3. wow~ 调用陶瓦 `GET /state/scanning`，陶瓦**自动扫描本机正在运行的 Minecraft 服务端端口**并建立穿透通道。
+3. wow~ 调用陶瓦 `GET /state/scanning`，陶瓦进入「监听局域网发现广播」状态，等待收到本机 Minecraft 服务端的局域网广播后建立穿透通道。
 4. 开房成功后，陶瓦返回**房间号（room code）**——这就是好友加入的凭证。
 5. 好友在启动器中选择「加入陶瓦房间」并输入该房间号即可联机。
+
+> 🔧 **V3.4.0 修正（重要）**：陶瓦**并不是**去扫描进程或端口来发现 MC 端口，而是监听 **Minecraft 局域网发现多播广播**——IPv4 `224.0.2.60:4445`、IPv6 `[FF75:230::60]:4445`，载荷为 `[MOTD]<描述>[/MOTD][AD]<端口>[/AD]`。问题在于：**Minecraft 专用服务端（`server.jar`）从不发送这种广播**（只有游戏*客户端*「对局域网开放存档」才会广播），所以旧版本里陶瓦永远拿不到端口、卡在 `host-scanning`，导致 `wow lan host` 超时。V3.4.0 起由 **wow 代发**该多播广播（见 `core/src/lan_beacon.js`，每 1500ms 向各本地地址 + `0.0.0.0` 发送一次，端口取自 `server-port`），陶瓦即可正常发现并完成开房。
 
 > 房间号本身就是加入凭证，陶瓦没有独立的「密码」参数；如不填写固定房间号，陶瓦会自动生成一个。
 
@@ -110,7 +112,7 @@ Powered by Terracotta | 陶瓦联机 — https://github.com/burningtnt/Terracott
 
 - **首次开房很慢 / 卡在下载**：会从 Gitee 镜像下载陶瓦二进制（Linux x64 约 9.7 MB）。若网络到 Gitee 不通，可在 `lan.binary_url` 填写 GitHub 直链，例如：
   `https://github.com/burningtnt/Terracotta/releases/download/v0.4.2/terracotta-0.4.2-linux-x86_64-pkg.tar.gz`
-- **开房失败 / 一直 scanning**：确认 Minecraft 服务端已启动并监听 `server-port`（自动读取自 `server.properties`，默认 25565），且本机网络可访问陶瓦公共节点。
+- **开房失败 / 一直 scanning**：确认 Minecraft 服务端已启动并监听 `server-port`（自动读取自 `server.properties`，默认 25565）。V3.4.0 之前该问题几乎必然发生——陶瓦靠监听 MC 局域网发现广播来发现端口，而**专用服务端从不发送该广播**，wow 側會 30s 超时。V3.4.0 已通过 wow 代发广播修复（实现见 `core/src/lan_beacon.js`）；若仍卡在 `host-scanning`，请检查多播是否被本机防火墙/虚拟网卡拦截（广播目标 `224.0.2.60:4445`）。
 - **想固定房间号**：在 `lan.room_code` 填写，或在 `wow lan host -r <房间号>` 指定；若格式不被陶瓦接受，陶瓦会自动重新生成一个（不会报错）。
 - **关不掉房间**：`wow lan stop` 会先通过陶瓦 API 优雅退出，失败时回退为终止进程；也可直接结束陶瓦进程（运行时状态记录在 `core/.lan.json`）。
 - **平台支持**：自动下载支持 **Windows / macOS / Linux** 的 x64 与 arm64（Linux 为 musl 静态二进制，免 glibc 依赖，可直接在 Termux 运行）。**Android** 端（arm64v8a / armv7 / x86_64 / x86）会**优先尝试**下载 `terracotta-<ver>-android-<arch>.so`，但该 `.so` 是 **JNI 共享库**、不可作为命令行进程启动，因此 wow~ 会自动**回退到 `linux/arm64` 的 musl 静态二进制**（可在 Termux 中直接运行），无需手动切换。

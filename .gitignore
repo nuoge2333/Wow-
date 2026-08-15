@@ -22,6 +22,8 @@ logs/
 *.log
 temp/
 *.tmp
+core/.web.pid
+core/.web.port
 
 # ====================
 # 编辑器 / 系统

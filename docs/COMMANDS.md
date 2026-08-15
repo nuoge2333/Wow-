@@ -4,15 +4,19 @@
 
 ---
 
-> 💡 **开服控制台可直接输入 wow 指令（V3.3.5+）**
-> 在 `wow server start` 的交互终端里，除了 MC 服务端管理员指令（如 `/stop`、`op Steve`），还可以直接输入本文件中的 **wow 服务端指令**（无需另开终端），例如：
-> ```
-> lan host          # 开房让好友联机
-> server status     # 查看服务器状态
-> scheme list       # 列出方案
-> help              # 查看帮助
-> ```
-> **不可用**：会修改运行中的方案文件的指令（`scheme create`、各种 `edit`/`install`/`switch` 等）、交互菜单 `M`、`server start/restart`、`web start`、`logs tail` —— 这些会提示「请另开终端执行」。其余无法识别的输入一律当作 MC 指令转发给服务端。
+> 💡 **开服控制台三视图切换（V3.4.0+）**
+> 在 `wow server start` 的交互终端里，除了 MC 服务端管理员指令（如 `/stop`、`op Steve`），还可以直接输入 **wow 服务端指令**与**陶瓦联机指令**。终端内置三个控制台视图，默认停留在 Minecraft 服务端控制台：
+>
+> | 视图 | 切换指令 | 说明 |
+> |------|----------|------|
+> | 🎮 Minecraft 服务端控制台 | `:mc`（或 `:minecraft` `:1` `:服务端`） | 收发 MC 服务端指令 |
+> | 🧩 wow 指令控制台 | `:wow`（或 `:2`） | 执行 wow 服务端指令 |
+> | 🏠 陶瓦联机控制台 | `:lan`（或 `:terracotta` `:taowa` `:3` `:陶瓦`） | 开房 / 查房间 / 关房，显示陶瓦 HTTP API 返回 |
+>
+> - 输入切换指令会**清屏并显示该视图最后 10 条日志**。
+> - 输入「不属于当前视图」的指令会提示「不支持」并引导切到对应控制台（例：在 Minecraft 视图输入 `lan host` → 提示先输入 `:lan`）。
+> - 元指令：`:log` 重新显示当前视图最后 10 条日志，`:help` 显示控制台帮助。
+> - **不可用**：会修改运行中的方案文件的指令（`scheme create`、各种 `edit`/`install`/`switch` 等）、交互菜单 `M`、`server start/restart`、`web start`、`logs tail` —— 这些会提示「请另开终端执行」。其余无法识别的输入一律当作 MC 指令转发给服务端。
 
 ---
 
@@ -49,6 +53,8 @@ wow server start [options]
 wow server start --memory 4G
 wow server start --memory 6G --jvm-args "-XX:+UseG1GC"
 ```
+
+**交互终端（V3.4.0+）**：启动后进入三视图控制台，默认在 Minecraft 服务端控制台。可随时用 `:mc` / `:wow` / `:lan` 切换（切换即清屏 + 显示该视图最后 10 条日志），输入非本视图指令会提示切换。详见上方「开服控制台三视图切换」说明。
 
 ---
 

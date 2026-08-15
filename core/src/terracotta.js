@@ -62,9 +62,17 @@ const net = require('net');
 
 const utils = require('./utils');
 const config = require('./config');
+const { LanBeacon } = require('./lan_beacon');
 
 // 运行时状态文件（端口 / pid / 房间号 / 二进制路径等），跨进程共享
 const STATE_FILE = path.join(__dirname, '../.lan.json');
+// 陶瓦 HTTP API 调用流水（JSON Lines）。V3.4.0 的「陶瓦控制台」视图从这里
+// 读取最后若干条 API 返回；同时也便于排查开房卡住时陶瓦到底回了什么。
+// 落盘而非只存内存，是因为 `lan host` 常以子进程运行，父进程（开服控制台）
+// 需要跨进程看到这些记录。
+const API_LOG_FILE = path.join(__dirname, '../.lan-api.log');
+// API 流水保留条数上限（超出后裁剪，避免无限增长）
+const API_LOG_MAX_LINES = 200;
 // 陶瓦二进制与临时文件所在目录
 const LAN_DIR = path.join(__dirname, '../lan');
 // 传给陶瓦 --hmcl 的端口文件（陶瓦会把 {"port": N} 写入此处）
@@ -370,14 +378,74 @@ function locateBinary(dir, asset) {
 // ==================== 本地 HTTP API 客户端 ====================
 
 /**
- * 构建指向陶瓦本地 HTTP API 的 axios 实例
+ * 追加一条陶瓦 HTTP API 流水记录（JSON Lines）。
+ * 供「陶瓦控制台」视图显示最近的 API 返回；写入失败静默忽略（不能影响开房）。
+ */
+function appendApiLog(entry) {
+    try {
+        const line = JSON.stringify(Object.assign({ t: new Date().toISOString() }, entry));
+        fs.appendFileSync(API_LOG_FILE, line + '\n', 'utf8');
+        // 简易裁剪：超过上限的 1.5 倍时重写为最后 API_LOG_MAX_LINES 行
+        const stat = fs.statSync(API_LOG_FILE);
+        if (stat.size > 256 * 1024) {
+            const lines = fs.readFileSync(API_LOG_FILE, 'utf8').split('\n').filter(Boolean);
+            fs.writeFileSync(API_LOG_FILE, lines.slice(-API_LOG_MAX_LINES).join('\n') + '\n', 'utf8');
+        }
+    } catch (e) {
+        // 忽略
+    }
+}
+
+/**
+ * 读取最近 n 条陶瓦 HTTP API 流水（最旧在前）。供控制台「陶瓦」视图使用。
+ * @returns {Array<object>}
+ */
+function readApiLog(n = 10) {
+    try {
+        if (!fs.existsSync(API_LOG_FILE)) return [];
+        const lines = fs.readFileSync(API_LOG_FILE, 'utf8').split('\n').filter(Boolean);
+        return lines.slice(-n).map(l => {
+            try { return JSON.parse(l); } catch (e) { return { t: '', raw: l }; }
+        });
+    } catch (e) {
+        return [];
+    }
+}
+
+/**
+ * 构建指向陶瓦本地 HTTP API 的 axios 实例。
+ * 所有请求与响应都会记入 API 流水（API_LOG_FILE），便于控制台查看与排障。
  */
 function apiClient(port) {
-    return axios.create({
+    const inst = axios.create({
         baseURL: `http://127.0.0.1:${port}`,
         timeout: 5000,
         // 陶瓦返回的是紧凑 JSON，axios 默认即可解析
     });
+    inst.interceptors.response.use(
+        res => {
+            appendApiLog({
+                method: (res.config.method || 'get').toUpperCase(),
+                url: res.config.url,
+                params: res.config.params || undefined,
+                status: res.status,
+                body: res.data
+            });
+            return res;
+        },
+        err => {
+            const cfg = err.config || {};
+            appendApiLog({
+                method: (cfg.method || 'get').toUpperCase(),
+                url: cfg.url,
+                params: cfg.params || undefined,
+                status: err.response ? err.response.status : null,
+                error: err.message
+            });
+            return Promise.reject(err);
+        }
+    );
+    return inst;
 }
 
 /**
@@ -394,6 +462,24 @@ async function apiMeta(port) {
 async function apiState(port) {
     const r = await apiClient(port).get('/state');
     return r.data;
+}
+
+/**
+ * 复位陶瓦状态机为空闲：GET /state/ide
+ *
+ * 这一步在开房前是**必须**的：陶瓦的 set_scanning 开头有
+ * `if !matches!(state, AppState::Waiting) { return; }`，
+ * 也就是说当陶瓦当前不在 waiting（例如上一次开房卡在 host-scanning、
+ * 或已经 host-ok）时，再调 /state/scanning 会被**静默忽略**，
+ * 既不报错也不生效，表现为「开房毫无反应然后超时」。
+ */
+async function apiIde(port) {
+    try {
+        await apiClient(port).get('/state/ide');
+        return true;
+    } catch (e) {
+        return false;
+    }
 }
 
 /**
@@ -586,9 +672,30 @@ function extractRoomCode(s) {
     return s.room.code || s.room.room_code || null;
 }
 
-async function waitHostOk(port, mcPort = getServerPort(), timeoutMs = 30000) {
-    const deadline = Date.now() + timeoutMs;
+/**
+ * 等待开房完成。
+ *
+ * V3.4.0 改进：
+ *  - 总超时由 30s 放宽到 60s（连接公共节点在移动网络下可能较慢）；
+ *  - 每 3 秒打印一次当前状态与已等待时长，不再「黑屏干等」；
+ *  - 停在 host-scanning 超过 SCAN_HINT_MS 时给出针对性诊断
+ *    （该阶段唯一的推进条件是陶瓦收到 Minecraft 局域网广播）。
+ *
+ * @param {number} port      陶瓦本地 API 端口
+ * @param {number} mcPort    Minecraft 服务端端口（用于错误提示）
+ * @param {number} timeoutMs 总超时
+ * @param {object} [beacon]  正在运行的 LanBeacon（用于诊断时判断广播是否真的发出去了）
+ */
+async function waitHostOk(port, mcPort = getServerPort(), timeoutMs = 60000, beacon = null) {
+    const started = Date.now();
+    const deadline = started + timeoutMs;
+    // 停在 host-scanning 超过该时长即输出诊断提示（广播正常时通常 1~3s 就会推进）
+    const SCAN_HINT_MS = 10000;
     let last = null;
+    let lastPrinted = '';
+    let lastPrintAt = 0;
+    let scanHinted = false;
+
     while (Date.now() < deadline) {
         try {
             const s = await apiState(port);
@@ -604,12 +711,52 @@ async function waitHostOk(port, mcPort = getServerPort(), timeoutMs = 30000) {
                 };
                 throw new Error(`开房失败（陶瓦异常 type=${s.type} ${typeMap[s.type] || ''}）。请确认本地 Minecraft 服务端已启动并监听 ${mcPort} 端口，且网络可访问陶瓦公共节点。`);
             }
+
+            // 进度显示：状态变化时立即打印，否则每 3 秒打印一次
+            const elapsed = Math.round((Date.now() - started) / 1000);
+            const cur = s && s.state ? s.state : '未知';
+            if (cur !== lastPrinted || Date.now() - lastPrintAt >= 3000) {
+                console.log(`   ⏳ 陶瓦状态: ${cur}（已等待 ${elapsed}s）`);
+                lastPrinted = cur;
+                lastPrintAt = Date.now();
+            }
+
+            // host-scanning 迟迟不推进 → 给出根因导向的诊断
+            if (!scanHinted && cur === 'host-scanning' && Date.now() - started >= SCAN_HINT_MS) {
+                scanHinted = true;
+                console.log('');
+                console.log('   🔎 仍停在 host-scanning。该阶段唯一的推进条件是：陶瓦收到 Minecraft');
+                console.log('      的局域网发现广播（多播 224.0.2.60:4445，内含服务端端口）。');
+                if (beacon && beacon.started) {
+                    console.log(`      wow 已在代发该广播（端口 ${beacon.port}，已发送 ${beacon.sentCount} 次，`);
+                    console.log(`      投递接口 ${beacon.targets.join(', ') || '无'}）。`);
+                    if (beacon.lastError) {
+                        console.log(`      ⚠️ 广播发送报错: ${beacon.lastError.message}`);
+                    }
+                    console.log('      若仍无进展，通常是系统/容器/防火墙拦截了 UDP 多播：');
+                    console.log('      · Android(Termux)：部分机型或省电策略会限制多播，尝试关闭省电限制、连接 Wi-Fi（非流量）');
+                    console.log('      · Docker/容器：需使用 --network host，桥接网络下多播无法互通');
+                    console.log('      · 防火墙：放行 UDP 4445 与多播地址 224.0.2.60');
+                } else {
+                    console.log('      ⚠️ wow 的局域网广播未成功启动，陶瓦将无法发现服务端端口。');
+                }
+                console.log('');
+            }
         } catch (e) {
             if (e.message && e.message.startsWith('开房失败')) throw e;
         }
         await sleep(500);
     }
-    throw new Error(`等待开房完成超时（最后状态: ${last ? last.state : '未知'}）。请确认本地 Minecraft 服务端已启动并监听 ${mcPort} 端口（server.properties 的 server-port）。`);
+
+    const st = last ? last.state : '未知';
+    let extra = `请确认本地 Minecraft 服务端已启动并监听 ${mcPort} 端口（server.properties 的 server-port）。`;
+    if (st === 'host-scanning') {
+        extra = `陶瓦始终未收到 Minecraft 局域网广播（多播 224.0.2.60:4445），因此无法得知服务端端口。\n` +
+            `   wow 已代发该广播${beacon ? `（已发送 ${beacon.sentCount} 次）` : ''}，若仍失败通常是系统/容器/防火墙拦截了 UDP 多播：\n` +
+            `   · Docker 需 --network host；Android 需关闭省电限制并连 Wi-Fi；防火墙需放行 UDP 4445。\n` +
+            `   也请确认服务端确实监听在 ${mcPort} 端口。`;
+    }
+    throw new Error(`等待开房完成超时（最后状态: ${st}）。${extra}`);
 }
 
 // ==================== 对外业务接口 ====================
@@ -662,13 +809,39 @@ async function hostRoom(opts = {}) {
             break;
         }
     }
-    await apiScanning(port, opts.roomCode || config.getConfig('lan.room_code', ''));
-    const roomCode = await waitHostOk(port, mcPort);
-    writeState({ roomCode, running: true });
-    console.log(`\n✅ 开房成功！房间号: ${roomCode}`);
-    console.log(`   把房间号发给好友，对方在 PCL / HMCL / BakaXL / FCL 中选择「加入陶瓦房间」并输入该房间号即可联机。`);
-    console.log(`   ${TERRA_COPYRIGHT}`);
-    return { roomCode, port };
+    // ── V3.4.0 关键修复：代发 Minecraft 局域网广播 ──────────────────────────
+    // 陶瓦只能通过监听 Minecraft 的局域网发现多播（224.0.2.60:4445，载荷
+    // [MOTD]..[/MOTD][AD]端口[/AD]）来得知服务端端口，而 Minecraft **专用服务端
+    // 从不发送该广播**（只有客户端「对局域网开放」才发）。因此在 V3.4.0 之前，
+    // 陶瓦的 host-scanning 阶段永远不会推进（陶瓦侧是无超时的死循环），
+    // 表现为 wow 侧「等待开房完成超时（最后状态: host-scanning）」。
+    // 这里由 wow 代替服务端持续广播，陶瓦即可立刻扫到端口并继续开房。
+    const beacon = new LanBeacon({
+        port: mcPort,
+        motd: config.getConfig('lan.beacon_motd', 'wow~ Minecraft Server')
+    });
+    const beaconOk = await beacon.start();
+    if (!beaconOk) {
+        console.warn(`⚠️ 未能启动 Minecraft 局域网广播${beacon.lastError ? `（${beacon.lastError.message}）` : ''}。`);
+        console.warn(`   陶瓦依赖该广播发现服务端端口，开房可能会停在 host-scanning。`);
+    }
+
+    try {
+        // 复位为 waiting：陶瓦的 set_scanning 在非 waiting 状态下会静默忽略，
+        // 若上一次开房卡在 host-scanning / host-ok，不复位就会「开房没反应」。
+        await apiIde(port);
+        await apiScanning(port, opts.roomCode || config.getConfig('lan.room_code', ''));
+        const roomCode = await waitHostOk(port, mcPort, 60000, beacon);
+        writeState({ roomCode, running: true });
+        console.log(`\n✅ 开房成功！房间号: ${roomCode}`);
+        console.log(`   把房间号发给好友，对方在 PCL / HMCL / BakaXL / FCL 中选择「加入陶瓦房间」并输入该房间号即可联机。`);
+        console.log(`   ${TERRA_COPYRIGHT}`);
+        return { roomCode, port };
+    } finally {
+        // 陶瓦拿到端口后即进入 host-starting 并释放 scanner，广播不再需要；
+        // 失败时也必须停止，避免残留 socket 与定时器。
+        beacon.stop();
+    }
 }
 
 /**
@@ -747,6 +920,9 @@ module.exports = {
     getStatus,
     getRoomCode,
     isRunning,
+    getServerPort,
+    readApiLog,
+    API_LOG_FILE,
     TERRA_VERSION_DEFAULT,
     TERRA_MIRROR_DEFAULT
 };

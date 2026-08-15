@@ -8,7 +8,8 @@
 
 | 版本 | 状态 | 发布时间 |
 |------|------|------|
-| **3.3.18** | 当前版本 |2026-08-14|
+| **3.4.0** | 当前版本 |2026-08-15|
+| **3.3.18** | 上一版本 |2026-08-14|
 | **3.3.17** | 上一版本 |2026-08-12|
 | **3.3.16** | 上一版本 |2026-08-12|
 | **3.3.15** | 上一版本 |2026-08-12|
@@ -38,6 +39,46 @@
 | **3.0.0** | 上一版本 |2026-07-23|
 | **2.0.0** | 内部迭代 |2026-02-27|
 | **1.0.0** | 内部迭代 |2026-02-07|
+
+---
+
+## [3.4.0] — 2026-08-15
+
+### ✨ 新功能：开服控制台三视图切换（Minecraft / wow / 陶瓦）
+
+> 需求：开服后的交互终端支持在三个控制台视图之间切换；输入「不属于当前控制台」的指令时，提示「不支持」并引导切到对应控制台；切换后**清屏并显示该控制台最后 10 条日志**（陶瓦视图显示的是陶瓦本地 HTTP API 的返回内容）。
+
+`wow server start` 的交互终端现在内置三个控制台视图，默认停留在 **Minecraft 服务端控制台**：
+
+| 视图 | 切换指令 | 作用 |
+|------|----------|------|
+| 🎮 Minecraft 服务端控制台 | `:mc`（或 `:minecraft` `:1` `:服务端`） | 直接收发 MC 服务端指令（如 `op Steve`、`say hi`、`stop`） |
+| 🧩 wow 指令控制台 | `:wow`（或 `:2`） | 执行 wow 服务端指令（如 `server status`、`scheme list`、`logs analyze`） |
+| 🏠 陶瓦联机控制台 | `:lan`（或 `:terracotta` `:taowa` `:3` `:陶瓦`） | 开房 / 查房间 / 关房，并实时显示陶瓦 HTTP API 返回 |
+
+行为要点：
+
+- **切换即清屏 + 尾 10 条**：输入切换指令后清屏，打印标题栏，并显示该视图最近 10 条日志。Minecraft 视图读 `logs/latest.log`；wow 视图读 `logs/wow-console.log`；陶瓦视图读陶瓦 API 调用流水（`.lan-api.log`）。
+- **指令隔离 + 友好引导**：在 Minecraft 视图输入 `lan host`、在 wow 视图输入 `list`、在陶瓦视图输入 `scheme list` 等「错视图」指令时，会提示「不支持：该指令属于某某控制台，请先输入 `:xx` 切换」，而不会误执行或静默吞掉。
+- **陶瓦视图便捷指令**：在陶瓦视图里 `host` / `status` / `stop` 会自动补 `lan ` 前缀，等价于 `lan host|status|stop`。
+- 元指令：`:log` 重新显示当前视图最后 10 条日志，`:help` 显示控制台帮助。
+- 服务端原始 stdout/stderr 始终落盘到 `logs/wow-stdout.log`（逻辑分离见下方修复），但**只有停留在 Minecraft 视图时才回显到终端**，避免切到 wow / 陶瓦视图后被服务端日志刷屏。
+
+### 🐛 修复：陶瓦开房 `lan host` 卡在 `host-scanning` 超时（自 V3.3.0 起的设计性缺陷）
+
+> 现象（Termux/Android、公网服务器、macOS 均可能触发）：`wow lan host` 在 `host-scanning` 阶段卡住，wow 侧 30s 超时退出，拿不到房间号。
+
+根因（扒取陶瓦 Rust 源码 `scanning.rs` / `fakeserver.rs` / `api.rs` 定位）：陶瓦**不是**扫描进程或端口来发现 MC 端口，而是**监听 Minecraft 局域网发现多播广播**——IPv4 `224.0.2.60:4445`、IPv6 `[FF75:230::60]:4445`，载荷格式 `[MOTD]<描述>[/MOTD][AD]<端口>[/AD]`。而 **Minecraft 专用服务端（`server.jar`）从不发送 LAN 多播广播**——只有游戏*客户端*「对局域网开放存档」才会广播。因此陶瓦永远拿不到端口，永久停在 `host-scanning`，wow 侧最终超时。这与平台无关，Termux 只是诱因之一。
+
+修复：新增 `core/src/lan_beacon.js`，由 wow **代发** Minecraft 局域网多播广播——每个真实本地 IPv4 地址（排除 loopback 与 `10.144.144.x` 虚拟网段）+ `0.0.0.0` 各建立一个独立 socket（复刻陶瓦 `fakeserver.rs` 的「一个地址一个 socket」设计，规避 `send()` 异步导致多播出口错乱的陷阱），每 1500ms 发送一次 `[MOTD]wow~ Minecraft Server[/MOTD][AD]<server-port>[/AD]`。`hostRoom()` 在调 `GET /state/scanning` 前：`apiIde()` 复位陶瓦为 `waiting`（避免非 waiting 状态下扫描被静默忽略），并启动 `LanBeacon`，直到 `host-ok` 后再 `beacon.stop()`。`waitHostOk()` 超时从 30s 放宽到 60s，且停在 `host-scanning` 超 10s 时给出针对性诊断（广播是否真发出、多播是否被拦截）。实测对照：无广播时陶瓦 8s 仍 `host-scanning`；启动 wow 广播器后 0.9s 即 `host-ok`。
+
+### 🐛 修复：MC `latest.log` 被 wow 双写 / 截断 / 重复
+
+> 现象：开服后 `logs/latest.log` 出现重复行、`Done (...)` 出现 3 次、行首被截断交错。
+
+根因：Minecraft 的 log4j 在启动时会**重建** `latest.log`，而 wow 的服务端输出写入流仍持有旧 fd 并按原偏移继续追加，导致同一份日志被写两遍、行首截断、内容交错。
+
+修复：服务端进程的原始 stdout/stderr 改为单独落盘到 `logs/wow-stdout.log`（交互模式 `createWriteStream`、非交互模式 `openSync` 均改写该文件，`flags:'w'`），不再写 `latest.log`。`latest.log` 现在只由 Minecraft 自身写入，干净无重复。验证：实开服一次后 `latest.log` 的 `Done (` 行数由 3 降为 1，`wow-stdout.log` 正常捕获服务端输出。
 
 ---
 

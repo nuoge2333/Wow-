@@ -108,19 +108,79 @@ function classifyConsoleInput(rawLine) {
     return { action: 'deny', reason: '该指令在开服控制台中不可用（可能需修改运行中的方案文件），请另开终端执行' };
 }
 
+// ==================== V3.4.0 控制台视图（wow / Minecraft / 陶瓦）====================
+// 开服控制台不再是「一个终端混着三种东西」，而是三个可切换的控制台视图：
+//   mc  —— Minecraft 服务端控制台：输入转发给服务端，显示服务端日志
+//   wow —— wow 指令控制台：输入作为 wow 指令执行，显示 wow 指令输出
+//   lan —— 陶瓦联机控制台：显示陶瓦 HTTP API 的返回，只接受 lan 子命令
+// 切换后会清屏并显示该控制台的最后 10 条日志，避免三种输出互相干扰。
+
+const CONSOLE_MODES = {
+    mc: { key: 'mc', name: 'Minecraft 服务端控制台', icon: '🎮', switchCmd: ':mc' },
+    wow: { key: 'wow', name: 'wow 指令控制台', icon: '🧩', switchCmd: ':wow' },
+    lan: { key: 'lan', name: '陶瓦联机控制台', icon: '🏠', switchCmd: ':lan' }
+};
+
+// 切换指令别名 → 模式
+const MODE_ALIASES = {
+    ':mc': 'mc', ':minecraft': 'mc', ':1': 'mc', ':服务端': 'mc',
+    ':wow': 'wow', ':2': 'wow',
+    ':lan': 'lan', ':terracotta': 'lan', ':taowa': 'lan', ':3': 'lan', ':陶瓦': 'lan'
+};
+
+// 切换后显示的日志条数（用户需求：最后十条）
+const CONSOLE_TAIL_LINES = 10;
+
 /**
- * 以子进程方式执行一条 wow 指令，输出直接继承当前终端。
- * 子进程退出后返回，不阻塞 MC 服务端（MC 是独立进程）。
+ * 读取文本文件最后 n 行（不存在或读取失败返回空数组）。
+ * 只读取文件尾部若干字节，避免整份日志载入内存（latest.log 可能很大）。
  */
-function runWowSubcommand(args) {
+function tailLines(file, n = CONSOLE_TAIL_LINES, maxBytes = 256 * 1024) {
+    try {
+        if (!fs.existsSync(file)) return [];
+        const size = fs.statSync(file).size;
+        if (size === 0) return [];
+        const start = Math.max(0, size - maxBytes);
+        const len = size - start;
+        const buf = Buffer.alloc(len);
+        const fd = fs.openSync(file, 'r');
+        try { fs.readSync(fd, buf, 0, len, start); } finally { fs.closeSync(fd); }
+        const lines = buf.toString('utf8').split(/\r?\n/).filter(l => l.trim() !== '');
+        return lines.slice(-n);
+    } catch (e) {
+        return [];
+    }
+}
+
+/**
+ * 以子进程方式执行一条 wow 指令。
+ * V3.4.0：输出改为管道并「tee」——既实时打到终端，也追加到 wow 控制台日志，
+ * 以便切换回 wow 控制台时能显示最后 10 条 wow 日志。
+ * @param {string[]} args    wow 子命令参数
+ * @param {string} [logFile] wow 控制台日志文件（可选）
+ */
+function runWowSubcommand(args, logFile) {
     return new Promise((resolve, reject) => {
         const child = spawn(process.execPath, [path.join(__dirname, 'cli.js'), ...args], {
-            stdio: ['ignore', 'inherit', 'inherit'],
+            stdio: ['ignore', 'pipe', 'pipe'],
             windowsHide: true
         });
+        const tee = (chunk, isErr) => {
+            if (isErr) process.stderr.write(chunk);
+            else process.stdout.write(chunk);
+            if (logFile) {
+                try { fs.appendFileSync(logFile, chunk); } catch (e) {}
+            }
+        };
+        if (child.stdout) child.stdout.on('data', c => tee(c, false));
+        if (child.stderr) child.stderr.on('data', c => tee(c, true));
         child.on('error', reject);
         child.on('exit', code => {
-            if (code && code !== 0) console.warn(`[wow] 子命令退出码: ${code}`);
+            if (code && code !== 0) {
+                const msg = `[wow] 子命令退出码: ${code}\n`;
+                process.stderr.write(msg);
+                if (logFile) { try { fs.appendFileSync(logFile, msg); } catch (e) {} }
+            }
             resolve();
         });
     });
@@ -131,11 +191,192 @@ class ServerManager {
         this.serverDir = utils.getServerDir();
         this.pidFile = path.join(this.serverDir, 'server.pid');
         this.logFile = path.join(this.serverDir, 'logs', 'latest.log');
+        // V3.4.0：wow 指令控制台的日志（供切回 wow 控制台时显示最后 10 条）
+        this.wowLogFile = path.join(this.serverDir, 'logs', 'wow-console.log');
+        // V3.4.0：服务端进程原始 stdout/stderr 的存档。
+        // 不能再往 logs/latest.log 里写：Minecraft 自己的 log4j 启动时会重建
+        // latest.log，而 wow 的写入流仍持有旧 fd 并按原偏移继续追加，
+        // 结果是同一份日志被写两遍、行首被截断、内容交错（V3.4.0 修复）。
+        // 这里单独存档，主要用于排查 log4j 初始化之前的早期崩溃。
+        this.stdoutLogFile = path.join(this.serverDir, 'logs', 'wow-stdout.log');
         this.process = null;
         this.jreManager = new JreManager();
         this.config = config;
         this.authlibJar = null;
+        // V3.4.0 控制台视图：'mc' | 'wow' | 'lan'，默认停在 Minecraft 服务端控制台
+        this._mode = 'mc';
+        this._lanTimer = null;
+        this._lanLastSig = '';
         this._ensureAuthlibJar();
+    }
+
+    // ==================== V3.4.0 控制台视图切换 ====================
+
+    /** 向 wow 控制台日志追加一行（失败静默） */
+    _appendWowLog(text) {
+        try {
+            fs.ensureDirSync(path.dirname(this.wowLogFile));
+            fs.appendFileSync(this.wowLogFile, text.endsWith('\n') ? text : text + '\n', 'utf8');
+        } catch (e) {}
+    }
+
+    /** 打印当前控制台的标题栏与操作提示 */
+    _printConsoleBanner(mode) {
+        const m = CONSOLE_MODES[mode];
+        const others = Object.keys(CONSOLE_MODES)
+            .filter(k => k !== mode)
+            .map(k => `${CONSOLE_MODES[k].switchCmd} → ${CONSOLE_MODES[k].name}`)
+            .join('　');
+        console.log('═'.repeat(64));
+        console.log(`  ${m.icon} ${m.name}`);
+        console.log('─'.repeat(64));
+        console.log(`  切换: ${others}`);
+        console.log(`  其他: :log 重新显示日志　:help 查看帮助`);
+        console.log('═'.repeat(64));
+    }
+
+    /**
+     * 显示当前控制台最近 CONSOLE_TAIL_LINES 条日志。
+     * - mc  : Minecraft 服务端 latest.log
+     * - wow : wow 指令控制台日志
+     * - lan : 陶瓦 HTTP API 的返回流水（用户需求：陶瓦显示 HTTP API 返回）
+     */
+    async _printConsoleTail(mode) {
+        console.log(`  ── 最近 ${CONSOLE_TAIL_LINES} 条日志 ──`);
+        if (mode === 'lan') {
+            let entries = [];
+            try {
+                const Terracotta = require('./terracotta');
+                entries = Terracotta.readApiLog(CONSOLE_TAIL_LINES);
+                if (entries.length === 0) {
+                    // 还没有任何 API 流水：若陶瓦在运行就实时查一次，让用户立刻看到返回
+                    if (Terracotta.isRunning()) {
+                        await Terracotta.getStatus().catch(() => null);
+                        entries = Terracotta.readApiLog(CONSOLE_TAIL_LINES);
+                    }
+                }
+            } catch (e) {
+                console.log(`  （读取陶瓦 API 流水失败: ${e.message}）`);
+            }
+            if (entries.length === 0) {
+                console.log('  （暂无陶瓦 HTTP API 记录。陶瓦未启动时可输入 host 开房）');
+            } else {
+                for (const e of entries) {
+                    const t = (e.t || '').replace('T', ' ').slice(0, 19);
+                    const body = e.error
+                        ? `ERROR ${e.error}`
+                        : (typeof e.body === 'object' ? JSON.stringify(e.body) : String(e.body === undefined ? '' : e.body));
+                    console.log(`  [${t}] ${e.method || 'GET'} ${e.url || ''} → ${e.status === null || e.status === undefined ? '-' : e.status} ${body}`);
+                }
+            }
+            console.log('─'.repeat(64));
+            return;
+        }
+
+        const file = mode === 'wow' ? this.wowLogFile : this.logFile;
+        const lines = tailLines(file, CONSOLE_TAIL_LINES);
+        if (lines.length === 0) {
+            console.log(mode === 'wow'
+                ? '  （暂无 wow 指令日志。可输入 server status、scheme list 等指令）'
+                : `  （暂无服务端日志：${file}）`);
+        } else {
+            lines.forEach(l => console.log('  ' + l));
+        }
+        console.log('─'.repeat(64));
+    }
+
+    /**
+     * 切换控制台视图：清屏 → 标题栏 → 最后 10 条日志。
+     * 陶瓦视图会启动一个轻量轮询，把状态变化实时显示为 HTTP API 返回。
+     */
+    async _switchConsole(mode) {
+        if (!CONSOLE_MODES[mode]) return;
+        const prev = this._mode;
+        this._mode = mode;
+        this._stopLanWatch();
+
+        try {
+            require('./interactive').clearScreen();
+        } catch (e) {
+            process.stdout.write('\x1Bc');
+        }
+        this._printConsoleBanner(mode);
+        await this._printConsoleTail(mode);
+
+        if (mode === 'mc') {
+            console.log('  输入 Minecraft 指令（如 op Steve、say hi、stop）直接发送给服务端。');
+        } else if (mode === 'wow') {
+            console.log('  输入 wow 指令（如 server status、scheme list、logs analyze）。');
+        } else {
+            console.log('  输入 host 开房 / status 查看房间 / stop 关房（等价于 lan host|status|stop）。');
+            this._startLanWatch();
+        }
+        if (prev !== mode) {
+            const label = CONSOLE_MODES[mode].name;
+            if (mode === 'wow') this._appendWowLog(`[wow] 已切换到${label}`);
+        }
+    }
+
+    /** 陶瓦视图：轮询陶瓦状态，仅在状态变化时输出一行 HTTP API 返回 */
+    _startLanWatch() {
+        this._stopLanWatch();
+        const tick = async () => {
+            if (this._mode !== 'lan') return;
+            try {
+                const Terracotta = require('./terracotta');
+                if (!Terracotta.isRunning()) return;
+                const s = await Terracotta.getStatus();
+                const sig = `${s.state}|${s.roomCode}`;
+                if (sig !== this._lanLastSig) {
+                    this._lanLastSig = sig;
+                    const ts = new Date().toISOString().replace('T', ' ').slice(0, 19);
+                    console.log(`  [${ts}] GET /state → 200 ${JSON.stringify({ state: s.state, room: s.roomCode || null })}`);
+                }
+            } catch (e) {
+                // 陶瓦未运行 / 端口失效：静默
+            }
+        };
+        this._lanTimer = setInterval(tick, 5000);
+        if (this._lanTimer.unref) this._lanTimer.unref();
+        tick();
+    }
+
+    /** 停止陶瓦视图轮询 */
+    _stopLanWatch() {
+        if (this._lanTimer) {
+            clearInterval(this._lanTimer);
+            this._lanTimer = null;
+        }
+        this._lanLastSig = '';
+    }
+
+    /** 打印「当前控制台不支持该指令」的提示，并引导切换 */
+    _printUnsupported(line, targetMode) {
+        const cur = CONSOLE_MODES[this._mode];
+        const tgt = CONSOLE_MODES[targetMode];
+        const msg = [
+            `⛔ 不支持：「${line}」不属于${cur.icon} ${cur.name}。`,
+            `   它是${tgt.icon} ${tgt.name}的指令，请先输入 ${tgt.switchCmd} 切换到该控制台，再执行。`
+        ].join('\n');
+        console.log(msg);
+        if (this._mode === 'wow') this._appendWowLog(msg);
+    }
+
+    /** 打印控制台帮助 */
+    _printConsoleHelp() {
+        console.log('');
+        console.log('📖 开服控制台帮助（V3.4.0 起支持三个控制台视图）');
+        console.log('   切换控制台（切换后会清屏并显示该控制台最后 10 条日志）：');
+        for (const k of Object.keys(CONSOLE_MODES)) {
+            const m = CONSOLE_MODES[k];
+            const mark = k === this._mode ? '← 当前' : '';
+            console.log(`     ${m.switchCmd.padEnd(6)} ${m.icon} ${m.name} ${mark}`);
+        }
+        console.log('   :log        重新显示当前控制台最后 10 条日志');
+        console.log('   :help       显示本帮助');
+        console.log('   说明：每个控制台只接受自己的指令，输入其他控制台的指令会提示切换。');
+        console.log('        陶瓦控制台显示的是陶瓦本地 HTTP API 的返回内容。');
+        console.log('');
     }
 
     /**
@@ -473,41 +714,97 @@ class ServerManager {
                 detached: false
             });
 
-            logStream = fs.createWriteStream(this.logFile, { flags: 'a' });
+            // 写入独立的 stdout 存档（不写 latest.log，避免与 MC 的 log4j 双写）
+            logStream = fs.createWriteStream(this.stdoutLogFile, { flags: 'w' });
+            // V3.4.0：服务端输出始终落盘，但只有停留在 Minecraft 控制台时才回显到终端，
+            // 否则切到 wow / 陶瓦控制台后会被服务端日志刷屏，切换就失去意义。
             this.process.stdout.on('data', (data) => {
-                process.stdout.write(data);
+                if (this._mode === 'mc') process.stdout.write(data);
                 logStream.write(data);
             });
             this.process.stderr.on('data', (data) => {
-                process.stderr.write(data);
+                if (this._mode === 'mc') process.stderr.write(data);
                 logStream.write(data);
             });
 
-            // 接管 stdin：readline 读取用户输入，区分 wow 指令与 MC 指令
+            // 接管 stdin：readline 读取用户输入，按当前控制台视图路由
             const rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: true });
             this._rl = rl;
-            console.log('💡 开服控制台：直接输入 MC 指令（如 /stop、op Steve）；也可直接输入 wow 指令（如 lan host、server status）。');
-            console.log('   ⛔ 会修改运行中的方案文件的危险指令与交互菜单(M)已禁用，需用时请另开终端。');
+            this._mode = 'mc';
+            console.log('💡 开服控制台（V3.4.0 支持三个控制台视图，切换后清屏并显示最后 10 条日志）：');
+            console.log(`   ${CONSOLE_MODES.mc.switchCmd} ${CONSOLE_MODES.mc.icon} ${CONSOLE_MODES.mc.name}（当前）　` +
+                `${CONSOLE_MODES.wow.switchCmd} ${CONSOLE_MODES.wow.icon} ${CONSOLE_MODES.wow.name}　` +
+                `${CONSOLE_MODES.lan.switchCmd} ${CONSOLE_MODES.lan.icon} ${CONSOLE_MODES.lan.name}`);
+            console.log('   输入 :help 查看帮助。⛔ 会修改运行中方案文件的危险指令与交互菜单(M)仍不可用。');
 
             rl.on('line', async (raw) => {
                 const line = (raw || '').trim();
                 if (!line) return;
-                const d = classifyConsoleInput(line);
+
+                // ── 控制台元指令：切换 / 刷新日志 / 帮助 ──
+                const lower = line.toLowerCase();
+                if (MODE_ALIASES[lower]) {
+                    await this._switchConsole(MODE_ALIASES[lower]);
+                    return;
+                }
+                if (lower === ':log' || lower === ':logs') {
+                    await this._printConsoleTail(this._mode);
+                    return;
+                }
+                if (lower === ':help' || lower === ':h' || lower === ':?') {
+                    this._printConsoleHelp();
+                    return;
+                }
+
+                // ── 陶瓦控制台：允许省略 lan 前缀（host / status / stop）──
+                let effective = line;
+                if (this._mode === 'lan' && /^(host|status|stop)(\s|$)/i.test(line)) {
+                    effective = 'lan ' + line;
+                }
+
+                const d = classifyConsoleInput(effective);
+
+                if (d.action === 'deny') {
+                    console.log(`⛔ ${d.reason}`);
+                    if (this._mode === 'wow') this._appendWowLog(`⛔ ${d.reason}`);
+                    return;
+                }
+
                 if (d.action === 'mc') {
+                    // Minecraft 指令：只能在 Minecraft 控制台执行
+                    if (this._mode !== 'mc') {
+                        this._printUnsupported(line, 'mc');
+                        return;
+                    }
                     if (this.process && this.process.stdin && this.process.stdin.writable) {
                         this.process.stdin.write(line + '\n');
                     }
-                } else if (d.action === 'run') {
-                    rl.pause();
-                    try {
-                        await runWowSubcommand(d.args);
-                    } catch (e) {
-                        console.error(`[wow] 指令执行失败: ${e.message}`);
-                    }
-                    if (!rl.closed) rl.resume();
-                } else {
-                    console.log(`⛔ ${d.reason}`);
+                    return;
                 }
+
+                // d.action === 'run'：wow 指令
+                const isLanCmd = d.args[0] === 'lan';
+                if (this._mode === 'mc') {
+                    this._printUnsupported(line, isLanCmd ? 'lan' : 'wow');
+                    return;
+                }
+                if (this._mode === 'lan' && !isLanCmd) {
+                    this._printUnsupported(line, 'wow');
+                    return;
+                }
+
+                rl.pause();
+                try {
+                    // wow 控制台的输出记入 wow 日志；陶瓦指令的 API 返回已由 terracotta 落盘
+                    const logTarget = this._mode === 'wow' ? this.wowLogFile : null;
+                    if (logTarget) this._appendWowLog(`$ wow ${d.args.join(' ')}`);
+                    await runWowSubcommand(d.args, logTarget);
+                } catch (e) {
+                    const msg = `[wow] 指令执行失败: ${e.message}`;
+                    console.error(msg);
+                    if (this._mode === 'wow') this._appendWowLog(msg);
+                }
+                if (!rl.closed) rl.resume();
             });
             rl.on('SIGINT', () => {
                 if (this.isRunning()) {
@@ -523,8 +820,9 @@ class ServerManager {
             };
             process.once('SIGINT', this._sigintHandler);
         } else {
-            // 非交互模式（Web 面板 / Docker）：重定向到日志文件
-            const logFd = fs.openSync(this.logFile, 'a');
+            // 非交互模式（Web 面板 / Docker）：重定向到 stdout 存档
+            // （同样不写 latest.log —— 那是 Minecraft log4j 自己管理的文件）
+            const logFd = fs.openSync(this.stdoutLogFile, 'w');
             logStream = fs.createWriteStream('', { fd: logFd, autoClose: true });
             this.process = spawn(cmd.javaPath, cmd.fullCommand.slice(1), {
                 cwd: this.serverDir,
@@ -555,6 +853,7 @@ class ServerManager {
                 try { this._rl.close(); } catch (e) {}
                 this._rl = null;
             }
+            this._stopLanWatch();
             if (logStream) logStream.end();
             console.log(`服务器进程退出，退出码: ${code}`);
             this._removePid();
