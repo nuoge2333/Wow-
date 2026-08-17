@@ -125,22 +125,23 @@ wow scheme create <name> [options]
 
 | 选项 | 说明 |
 |------|------|
-| `--version <version>` | Minecraft 版本 (默认: 1.20.1) |
-| `--loader <loader>` | 模组加载器: forge/fabric/neoforge/quilt |
-| `--type <type>` | 核心类型: vanilla/forge/mohist/catserver/paper... |
-| `--build <number>` | 构建号（仅 Mohist 需要） |
+| `-v, --version <version>` | Minecraft 版本 (默认: 1.20.1) |
+| `-t, --type <type>` | 核心类型/加载器: vanilla/forge/fabric/neoforge/quilt/mohist/catserver/paper，同时决定加载器（已并入原 `--loader`） |
+| `-b, --build <number>` | 构建号（仅 Mohist 等需要） |
 | `--other-type <name>` | 自定义核心名称（当 type=other 时） |
+
+> 💡 V3.4.1 起 `--loader` 已移除，加载器并入 `--type`（二者取值一致，如 `-t forge` 即 forge 核心 + forge 加载器）。
 
 **示例：**
 ```bash
 # 创建原版方案
-wow scheme create survival --version 1.20.1 --type vanilla
+wow scheme create survival -v 1.20.1 -t vanilla
 
-# 创建模组方案
-wow scheme create modded --version 1.20.1 --loader forge --type forge
+# 创建模组方案（加载器并入 --type）
+wow scheme create modded -t forge
 
 # 创建混合服方案
-wow scheme create hybrid --version 1.20.1 --loader forge --type mohist --build 346
+wow scheme create hybrid -t mohist -b 346
 ```
 
 ---

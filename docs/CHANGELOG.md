@@ -8,7 +8,8 @@
 
 | 版本 | 状态 | 发布时间 |
 |------|------|------|
-| **3.4.1** | 当前版本 |2026-08-17|
+| **3.4.2** | 当前版本 |2026-08-11|
+| **3.4.1** | 上一版本 |2026-08-17|
 | **3.4.0** | 上一版本 |2026-08-15|
 | **3.3.18** | 上一版本 |2026-08-14|
 | **3.3.17** | 上一版本 |2026-08-12|
@@ -40,6 +41,22 @@
 | **3.0.0** | 上一版本 |2026-07-23|
 | **2.0.0** | 内部迭代 |2026-02-27|
 | **1.0.0** | 内部迭代 |2026-02-07|
+
+---
+
+## [3.4.2] — 2026-08-11
+
+### ✏️ 调整：`scheme create` 命令参数重构
+
+> 背景（用户测试反馈）：文档写 `wow scheme create xxx --version 1.20.1`，但 CLI 实际注册的是 `--mc-version`，实跑报 `unknown option '--version' (Did you mean --mc-version?)`，文档与代码不一致。
+
+调整内容：
+- 版本参数由 `--mc-version` 重命名为 `-v, --version`（短简称 `--v`）。
+- 加载器参数 `--loader` 移除，并入 `-t, --type`：`--type` 的取值（vanilla/forge/fabric/neoforge/quilt/mohist/catserver/paper）同时决定核心类型与加载器，二者取值一致，不再分两个旗标。
+- 构建号参数由 `--build` 增加短简称 `-b`。
+- `cli.js` 中 `scheme create` 的 `action` 改为 `loader` 与 `type` 均取 `options.type`，不再读取 `options.loader`。
+
+效果：`wow scheme create my_survival -v 1.20.1 -t forge` 与 `wow scheme create demo -v 1.20.1 -t vanilla` 均正常创建；旧 `--mc-version` / `--loader` 显式报 `unknown option`，符合预期。配套更新 `docs/COMMANDS.md`、`docs/QUICKSTART.md`、`docs/SCHEMES.md` 全部示例与说明。
 
 ---
 

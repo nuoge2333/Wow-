@@ -30,7 +30,7 @@ const Terracotta = require('./terracotta');
 program
     .name('wow')
     .description('Minecraft 服务器管理工具 - 默认优先，可以修改')
-    .version('3.4.1', '-V');
+    .version('3.4.2', '-V');
 
 // ==================== init ====================
 
@@ -237,16 +237,16 @@ const schemeCmd = program.command('scheme').description('方案管理');
 schemeCmd
     .command('create <name>')
     .description('创建新方案')
-    .option('-v, --mc-version <version>', 'Minecraft 版本 (默认: 1.20.1)')
-    .option('--loader <loader>', '模组加载器 (forge/fabric/neoforge/quilt)')
-    .option('--type <type>', '核心类型 (vanilla/forge/mohist/catserver/paper)')
-    .option('--build <number>', '构建号（仅 Mohist 需要）')
+    .option('-v, --version <version>', 'Minecraft 版本 (默认: 1.20.1)')
+    .option('-t, --type <type>', '核心类型/加载器 (vanilla/forge/fabric/neoforge/quilt/mohist/catserver/paper)，同时决定加载器')
+    .option('-b, --build <number>', '构建号（仅 Mohist 等需要）')
     .action(async (name, options) => {
         const schemeManager = new SchemeManager();
         try {
             await schemeManager.create(name, {
-                version: options.mcVersion || '1.20.1',
-                loader: options.loader || 'forge',
+                version: options.version || '1.20.1',
+                // V3.4.1：移除独立的 --loader，加载器并入 --type（二者取值一致）
+                loader: options.type || 'vanilla',
                 type: options.type || 'vanilla',
                 build: options.build
             });

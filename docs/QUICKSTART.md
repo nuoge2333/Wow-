@@ -132,7 +132,7 @@ wow install https://example.com/plugin.jar -o ./server/plugins/
 
 ```bash
 # 创建方案
-wow scheme create my_survival --version 1.20.1 --loader forge --type forge
+wow scheme create my_survival -v 1.20.1 -t forge
 
 # 列出所有方案
 wow scheme list
@@ -215,7 +215,7 @@ wow init
 wow install paper 1.20.1
 
 # 3. 创建方案
-wow scheme create survival --version 1.20.1 --loader paper --type paper
+wow scheme create survival -v 1.20.1 -t paper
 
 # 4. 切换方案
 wow scheme switch survival
@@ -237,7 +237,7 @@ wow init
 wow install forge 1.20.1
 
 # 3. 创建方案
-wow scheme create modded --version 1.20.1 --loader forge --type forge
+wow scheme create modded -v 1.20.1 -t forge
 
 # 4. 切换方案
 wow scheme switch modded

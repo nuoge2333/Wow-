@@ -131,7 +131,7 @@ auto_scheme: true   # 默认启用
 创建方案时自动判定资源重合状态：
 
 ```bash
-wow scheme create survival --version 1.20.1 --type vanilla
+wow scheme create survival -v 1.20.1 -t vanilla
 ```
 
 **判定逻辑：**
@@ -145,14 +145,15 @@ wow scheme create survival --version 1.20.1 --type vanilla
 
 ### `scheme switch <name>`
 
-切换方案时（`auto_scheme: true`）：
+从 V3.4.1 起，服务器**直接在方案目录下运行**（`core/schemes/<方案>/`），不再把方案复制到 `server/`。切换方案时（`auto_scheme: true`）：
 
 1. 检查目标方案状态
 2. 若不是 `full`，从 pool 复制资源补齐（`pull` 逻辑）
-3. 备份并清空 `server/` 目录
-4. 复制目标方案到 `server/`
-5. 瘦身旧方案（`prune` 逻辑）
-6. 清理未被引用的 pool 资源
+3. 登记 `server.scheme`（写入 `core/wow.yaml`），无需移动/复制任何文件
+4. 瘦身旧方案（`prune` 逻辑）
+5. 清理未被引用的 pool 资源
+
+> 世界存档、配置文件等全部保留在各自方案目录内，切换方案不会丢失数据，也不会清空 `server/`。
 
 ```bash
 wow scheme switch survival
@@ -296,13 +297,13 @@ unique_resources: []
 
 ```bash
 # 1. 创建第一个方案 (所有资源未命中 pool → full)
-wow scheme create server_a --version 1.20.1 --loader forge --type forge
+wow scheme create server_a -v 1.20.1 -t forge
 wow scheme switch server_a
 wow mod install https://example.com/JEI.jar
 wow mod install https://example.com/Create.jar
 
 # 2. 创建第二个方案 (部分资源命中 pool → partial)
-wow scheme create server_b --version 1.20.1 --loader forge --type forge
+wow scheme create server_b -v 1.20.1 -t forge
 wow scheme switch server_b
 # JEI.jar 从 pool 自动复制 (无需重新下载)
 # Create.jar 从 pool 自动复制
