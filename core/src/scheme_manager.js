@@ -206,45 +206,11 @@ class SchemeManager {
             }
         }
 
-        // 2. 备份当前server目录
-        if (fs.existsSync(this.serverDir) && fs.readdirSync(this.serverDir).length > 0) {
-            const backupDir = path.join(this.serverDir, '_backup_' + Date.now());
-            console.log(`  备份当前服务器: ${backupDir}`);
-            fs.ensureDirSync(backupDir);
-            const items = fs.readdirSync(this.serverDir);
-            for (const item of items) {
-                if (item.startsWith('_backup_')) continue;
-                const src = path.join(this.serverDir, item);
-                const dest = path.join(backupDir, item);
-                if (fs.statSync(src).isDirectory()) {
-                    fs.copySync(src, dest);
-                } else {
-                    fs.copyFileSync(src, dest);
-                }
-            }
-            // 清理server目录
-            for (const item of items) {
-                if (item.startsWith('_backup_')) continue;
-                const src = path.join(this.serverDir, item);
-                fs.removeSync(src);
-            }
-        }
+        // 2. V3.4.x 起：服务器直接在方案目录内运行（见 utils.getServerDir），
+        //    不再把方案复制到 server/ 目录，因此切换方案无需备份/清空/复制 server 目录。
+        //    step 1 已确保目标方案补齐为可运行的完整实例（FULL）。
 
-        // 3. 复制方案到server目录
-        const schemePath = this._getSchemePath(name);
-        const items = fs.readdirSync(schemePath);
-        for (const item of items) {
-            if (item === 'scheme.yaml') continue;
-            const src = path.join(schemePath, item);
-            const dest = path.join(this.serverDir, item);
-            if (fs.statSync(src).isDirectory()) {
-                fs.copySync(src, dest);
-            } else {
-                fs.copyFileSync(src, dest);
-            }
-        }
-
-        // 4. 更新当前方案记录
+        // 3. 更新当前方案记录
         const oldScheme = this.currentScheme;
         this.currentScheme = name;
         config.setConfig('server.scheme', name);
@@ -252,12 +218,12 @@ class SchemeManager {
 
         console.log(`✅ 已切换到方案: ${name}`);
 
-        // 5. 如果auto_scheme启用，瘦身旧方案
+        // 4. 如果auto_scheme启用，瘦身旧方案
         if (this.autoScheme && oldScheme) {
             await this._pruneScheme(oldScheme);
         }
 
-        // 6. 自动清理pool中未被引用的资源
+        // 5. 自动清理pool中未被引用的资源
         if (this.autoScheme) {
             await this._cleanPool();
         }

@@ -682,6 +682,24 @@ class ServerManager {
             return;
         }
 
+        // V3.4.x：若激活了方案，确保方案已补齐为完整实例（FULL）再直接在其目录内启动。
+        // 因为现在服务器直接在方案目录运行（不再复制到 server/），minimal/partial 方案
+        // 缺少核心/模组文件，必须先 materialize 才能启动。
+        const activeScheme = this.config.getConfig('server.scheme', null);
+        if (activeScheme) {
+            try {
+                const SchemeManager = require('./scheme_manager');
+                const sm = new SchemeManager();
+                const meta = sm._loadSchemeMeta(activeScheme);
+                if (meta && meta.state && meta.state !== 'full') {
+                    console.log(`🔧 方案 ${activeScheme} 尚未补齐，正在从 pool 复制资源...`);
+                    await sm._materializeScheme(activeScheme);
+                }
+            } catch (e) {
+                console.warn(`⚠️ 方案补齐检查失败（将尝试直接启动）: ${e.message}`);
+            }
+        }
+
         fs.ensureDirSync(this.serverDir);
         fs.ensureDirSync(path.join(this.serverDir, 'logs'));
 

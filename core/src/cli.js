@@ -30,7 +30,7 @@ const Terracotta = require('./terracotta');
 program
     .name('wow')
     .description('Minecraft 服务器管理工具 - 默认优先，可以修改')
-    .version('3.4.0', '-V');
+    .version('3.4.1', '-V');
 
 // ==================== init ====================
 

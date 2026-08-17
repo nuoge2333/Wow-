@@ -167,9 +167,25 @@ function getJrePath() {
 
 /**
  * 获取当前激活的服务器目录
+ *
+ * V3.4.x 起改为「直接在方案目录内运行」：若当前激活了方案（server.scheme 配置指向
+ * 某个已存在的方案），则服务器直接以 core/schemes/<方案名> 为根目录启动，不再把方案
+ * 复制到 server/ 目录再跑。这样可以彻底避免「复制方案到 server 目录」带来的问题：
+ *   - 世界数据在 scheme 与 server 两套目录间来回复制、重复、易丢；
+ *   - 切换方案时 server/ 被 _backup_ 目录堆积、且原 server/ 内容被整体清空；
+ *   - 在方案目录里改了东西（配置/存档），因为实际跑的是 server/ 副本而不生效。
+ * 仅当未激活任何方案时，才回退到默认 server.dir（../server）。
  */
 function getServerDir() {
     const config = require('./config');
+    const scheme = config.getConfig('server.scheme', null);
+    if (scheme) {
+        const schemePath = resolvePath(path.join('schemes', scheme));
+        if (fs.existsSync(schemePath)) {
+            return schemePath;
+        }
+        // 配置指向的方案目录已不存在，回退到默认 server 目录
+    }
     const serverDir = config.getConfig('server.dir', '../server');
     return resolvePath(serverDir);
 }
