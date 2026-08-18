@@ -131,9 +131,14 @@ wow/
 - [配置参考](docs/CONFIG.md)
 - [Web API 参考](docs/API.md)
 - [术语解释](docs/TERMS.md)
-- [故障排除](docs/TROUBLE_*.md)
-- [安卓 (Termux) 故障排除](docs/TROUBLE_ANDROID(Termux).md)
 - [更新日志](docs/CHANGELOG.md)
+## 🛠 故障排除
+- [Windows 故障排除](docs/TROUBLE_WINDOWS.md)
+- [MacOS故障排除](docs/TROUBLE_MACOS.md)
+### Linux
+- [Debian/Ubuntu 故障排除](docs/TROUBLE_DEBIAN.md)
+- [Arch/Manjaro 故障排除](docs/TROUBLE_ARCH.md)
+- [安卓 (Termux) 故障排除](docs/TROUBLE_ANDROID(Termux).md)
 
 ---
 
