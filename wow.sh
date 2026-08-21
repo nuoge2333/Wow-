@@ -82,6 +82,22 @@ fi
 
 if [ "$TERMUX_MODE" -eq 0 ]; then
 echo "检测到系统: $OS, 架构: $ARCH"
+
+# 优先复用系统已安装的 Node.js（如简幻欢 AIO 自带 Node 22），免去下载、加快启动
+USE_SYSTEM_NODE=0
+MIN_NODE_MAJOR=18
+if command -v node >/dev/null 2>&1; then
+    SYS_NODE_VER="$(node -v 2>/dev/null | tr -d 'v')"
+    SYS_NODE_MAJOR="$(echo "$SYS_NODE_VER" | cut -d. -f1)"
+    if [ -n "$SYS_NODE_MAJOR" ] && [ "$SYS_NODE_MAJOR" -ge "$MIN_NODE_MAJOR" ] 2>/dev/null; then
+        echo "检测到系统 Node.js v$SYS_NODE_VER，优先复用，跳过便携版下载"
+        NODE_EXE="$(command -v node)"
+        NPM_CMD="$(command -v npm)"
+        USE_SYSTEM_NODE=1
+    fi
+fi
+
+if [ "$USE_SYSTEM_NODE" -ne 1 ]; then
 if [ "$INTERACTIVE" -eq 1 ]; then
     echo "是否需要下载对应平台的 Node.js 便携版？ (y/n)"
     read -r answer
@@ -188,9 +204,10 @@ if [ ! -f "$NODE_EXE" ]; then
     echo "Node.js 便携版已安装到 $NODE_DIR"
 fi
 fi
+fi
 
-# 确定 npm 路径（Termux 已在前面设置好 NPM_CMD）
-if [ "$TERMUX_MODE" -eq 0 ]; then
+# 确定 npm 路径（Termux 已在前面设置好 NPM_CMD；系统 Node 模式下已直接指向系统 npm）
+if [ "$TERMUX_MODE" -eq 0 ] && [ "${USE_SYSTEM_NODE:-0}" -ne 1 ]; then
 if [ -f "$NODE_DIR/extracted/bin/npm" ]; then
     NPM_CMD="$NODE_DIR/extracted/bin/npm"
 elif [ -f "$NODE_DIR/npm" ]; then
@@ -218,6 +235,8 @@ if [ ! -d "node_modules" ]; then
     _run_npm_install() {
         local reg="$1"
         if [ "$TERMUX_MODE" -eq 1 ]; then
+            npm install --no-audit --no-fund --registry "$reg"
+        elif [ "${USE_SYSTEM_NODE:-0}" -eq 1 ]; then
             npm install --no-audit --no-fund --registry "$reg"
         elif [ -n "$NPM_CMD" ]; then
             "$NODE_EXE" "$NPM_CMD" install --no-audit --no-fund --registry "$reg"
