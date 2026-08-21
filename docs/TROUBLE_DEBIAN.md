@@ -19,21 +19,21 @@
 
 ## 启动问题
 
-### Q: 运行 `./start.sh` 报错 "Permission denied"
+### Q: 运行 `./wow.sh` 报错 "Permission denied"
 
 **原因：** 脚本没有执行权限。
 
 **解决：**
 ```bash
-chmod +x start.sh
-./start.sh
+chmod +x wow.sh
+./wow.sh
 ```
 
 ---
 
-Q: 运行 ./start.sh 报错 "No such file or directory"
+Q: 运行 ./wow.sh 报错 "No such file or directory"
 
-原因： 可能脚本文件格式是 Windows 的 CRLF（行尾符问题），或 start.sh 不存在。
+原因： 可能脚本文件格式是 Windows 的 CRLF（行尾符问题），或 wow.sh 不存在。
 
 解决：
 
@@ -43,10 +43,10 @@ sudo apt update
 sudo apt install dos2unix
 
 # 转换格式
-dos2unix start.sh
+dos2unix wow.sh
 
 # 重新运行
-./start.sh
+./wow.sh
 ```
 
 ---
@@ -70,11 +70,11 @@ Q: 提示 "Node.js 下载失败" 或 "Network is unreachable"
 
 解决：
 
-· start.sh 已内置国内镜像源（npmmirror），可自动加速。
-· 如果仍失败，可以在 start.sh 中手动更换镜像源：
+· wow.sh 已内置国内镜像源（npmmirror），可自动加速。
+· 如果仍失败，可以在 wow.sh 中手动更换镜像源：
 
 ```bash
-# 编辑 start.sh，找到 NODE_URL 相关行，替换为：
+# 编辑 wow.sh，找到 NODE_URL 相关行，替换为：
 NODE_URL="https://npmmirror.com/mirrors/node/v$NODE_VERSION/node-v$NODE_VERSION-linux-$ARCH.tar.xz"
 ```
 
@@ -93,7 +93,7 @@ uname -m
 · x86_64 → 64 位 Intel/AMD
 · aarch64 → 64 位 ARM（树莓派 3/4/5、RK 系列等）
 
-解决： start.sh 会自动检测架构并下载对应版本。如果下载了错误版本，删除 core/node/ 目录重新运行。
+解决： wow.sh 会自动检测架构并下载对应版本。如果下载了错误版本，删除 core/node/ 目录重新运行。
 
 ---
 
@@ -439,7 +439,7 @@ cat core/logs/cli.log
 问题 命令
 安装 Java 17 sudo apt install openjdk-17-jre-headless
 安装依赖工具 sudo apt install curl wget unzip
-设置文件权限 chmod +x start.sh
+设置文件权限 chmod +x wow.sh
 查看端口占用 sudo lsof -i :25565
 查看 Java 版本 java -version
 查看系统信息 uname -a

@@ -8,7 +8,8 @@
 
 | 版本 | 状态 | 发布时间 |
 |------|------|------|
-| **3.4.2** | 当前版本 |2026-08-11|
+| **3.4.3** | 当前版本 |2026-08-21|
+| **3.4.2** | 上一版本 |2026-08-11|
 | **3.4.1** | 上一版本 |2026-08-17|
 | **3.4.0** | 上一版本 |2026-08-15|
 | **3.3.18** | 上一版本 |2026-08-14|
@@ -41,6 +42,25 @@
 | **3.0.0** | 上一版本 |2026-07-23|
 | **2.0.0** | 内部迭代 |2026-02-27|
 | **1.0.0** | 内部迭代 |2026-02-07|
+
+---
+
+## [3.4.3] — 2026-08-21
+
+### 🔧 优化：启动脚本换用更快的镜像源 + 重命名为 wow.bat / wow.sh
+
+> 背景：`start.bat`（Windows）原本 Node.js 下载只用 `nodejs.org/dist`、npm 安装用默认 `npmjs.org`，国内极慢甚至被墙；`start.sh` 虽有镜像但顺序未优化。同时用户要求把启动脚本统一改名为 `wow.bat` / `wow.sh`。
+
+镜像源优化：
+- **Windows (`wow.bat`)**：Node.js 下载新增镜像回退链（npmmirror → 腾讯云 → 清华 → 华为云 → 官方），npm 安装默认走 `https://registry.npmmirror.com`。
+- **Linux/macOS (`wow.sh`)**：把 `registry.npmmirror.com/-/binary/node` 与 `https://registry.npmmirror.com/` 提到镜像链最前（国内通常最快最稳），其余镜像作为兜底。
+
+重命名与联动：
+- `start.bat` → `wow.bat`、`start.sh` → `wow.sh`（`git mv` 保留历史）。
+- 联动更新：`update.bat` / `update.sh`（靠启动脚本名定位项目根）、`core/src/scheme_manager.js` 的 `restart-script: ./wow.sh`（服务端崩溃自重启）、README / QUICKSTART / TERMS / 各 TROUBLE 文档的使用说明。
+- 构建脚本 TOP 列表同步改为 `wow.bat` / `wow.sh`。
+
+> ⚠️ 注意：旧 `start.bat` / `start.sh` 已移除，启动命令改为 `wow.bat`（Windows 双击）或 `./wow.sh`（Linux/macOS）。
 
 ---
 

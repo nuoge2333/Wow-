@@ -38,11 +38,11 @@ cd wow
 
 ```bash
 # Windows
-start.bat
+wow.bat
 
 # Linux / macOS
-chmod +x start.sh
-./start.sh
+chmod +x wow.sh
+./wow.sh
 ```
 
 > 💡 **更新**: 运行 `./update.sh` (Linux/macOS) 或 `update.bat` (Windows) 自动升级到最新版
@@ -113,7 +113,7 @@ wow/
 ├── themes/                   # 主题包目录
 ├── wow-plugins/              # wow 插件目录
 ├── server/                   # 当前激活的服务器实例
-├── start.bat / start.sh      # 启动脚本
+├── wow.bat / wow.sh      # 启动脚本
 └── docs/                     # 文档
 ```
 

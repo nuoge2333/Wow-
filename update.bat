@@ -62,9 +62,9 @@ if errorlevel 1 (
     goto :cleanup
 )
 
-:: Find project root: locate start.bat, skip core/ subdir
+:: Find project root: locate wow.bat, skip core/ subdir
 set PROJECT_DIR=
-for /r "%TEMP_DIR%\extract" %%f in (start.bat) do (
+for /r "%TEMP_DIR%\extract" %%f in (wow.bat) do (
     set FULL=%%~dpf
     echo !FULL! | findstr /i "\\core\\" >nul
     if errorlevel 1 (
@@ -75,7 +75,7 @@ for /r "%TEMP_DIR%\extract" %%f in (start.bat) do (
 :found_project
 
 if "%PROJECT_DIR%"=="" (
-    echo Update package format error: start.bat not found.
+    echo Update package format error: wow.bat not found.
     goto :cleanup
 )
 
@@ -97,7 +97,7 @@ echo ========================================
 echo   Update complete! %LATEST_TAG%
 echo ========================================
 echo.
-echo Run start.bat to launch wow~
+echo Run wow.bat to launch wow~
 
 :cleanup
 rmdir /s /q "%TEMP_DIR%" 2>nul

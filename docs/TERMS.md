@@ -86,7 +86,7 @@
 ### Node.js
 **运行 wow 工具本身的运行时**。wow 是用 JavaScript 写的，没有 Node.js 就跑不了 wow。
 
-**在 wow 中：** 首次运行 `start.sh` 或 `start.bat` 时，会自动下载便携版 Node.js。
+**在 wow 中：** 首次运行 `wow.sh` 或 `wow.bat` 时，会自动下载便携版 Node.js。
 
 ---
 

@@ -69,11 +69,11 @@ echo "正在安装更新..."
 unzip -qo "$TEMP_ZIP" -d "$TEMP_DIR/extract"
 
 # 从解压根目录找到项目文件（zip 内可能是 ./WowV3/Wow~V3.0/ 多层嵌套）
-# 策略：递归找到包含 start.sh 的目录，那就是项目根
+# 策略：递归找到包含 wow.sh 的目录，那就是项目根
 EXTRACT_DIR="$TEMP_DIR/extract"
-PROJECT_DIR=$(find "$EXTRACT_DIR" -name "start.sh" -not -path "*/core/*" 2>/dev/null | head -1)
+PROJECT_DIR=$(find "$EXTRACT_DIR" -name "wow.sh" -not -path "*/core/*" 2>/dev/null | head -1)
 if [ -z "$PROJECT_DIR" ]; then
-    echo "❌ 更新包格式错误，未找到 start.sh"
+    echo "❌ 更新包格式错误，未找到 wow.sh"
     exit 1
 fi
 PROJECT_DIR=$(dirname "$PROJECT_DIR")
@@ -101,7 +101,7 @@ for item in "$PROJECT_DIR"/*; do
 done
 
 # 确保启动脚本可执行
-chmod +x "$SCRIPT_DIR/start.sh" 2>/dev/null
+chmod +x "$SCRIPT_DIR/wow.sh" 2>/dev/null
 chmod +x "$SCRIPT_DIR/update.sh" 2>/dev/null
 
 echo ""
@@ -109,4 +109,4 @@ echo "========================================"
 echo "  ✅ 更新完成! $LATEST_TAG"
 echo "========================================"
 echo ""
-echo "运行 ./start.sh 启动 wow~"
+echo "运行 ./wow.sh 启动 wow~"

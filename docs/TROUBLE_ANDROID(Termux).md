@@ -37,12 +37,12 @@
 
 1. 从 F-Droid 安装 Termux
 2. 在 Termux 内用 `cd` 进入 wow~ 解压目录
-3. 在 Termux 内执行 `bash start.sh`（或 `./start.sh`）
+3. 在 Termux 内执行 `bash wow.sh`（或 `./wow.sh`）
 
 ```bash
 # 在 Termux 中
 cd /storage/emulated/0/wow   # 假设解压到手机存储
-bash start.sh
+bash wow.sh
 ```
 
 ---
@@ -59,7 +59,7 @@ pkg update -y
 pkg install -y nodejs
 ```
 
-安装完成后重新运行 `bash start.sh`，脚本检测到已存在 node 会跳过自动安装。
+安装完成后重新运行 `bash wow.sh`，脚本检测到已存在 node 会跳过自动安装。
 
 ---
 
@@ -75,19 +75,19 @@ pkg install -y openjdk-17
 java -version   # 验证安装
 ```
 
-验证输出应包含 `OpenJDK` 与版本号。安装成功后重新运行 `bash start.sh` 即可。
+验证输出应包含 `OpenJDK` 与版本号。安装成功后重新运行 `bash wow.sh` 即可。
 
 ---
 
-### Q: `bash start.sh` 报错 "Permission denied"
+### Q: `bash wow.sh` 报错 "Permission denied"
 
 **原因：** 脚本没有执行权限（少见，Termux 默认允许）。
 
 **解决：**
 
 ```bash
-chmod +x start.sh
-bash start.sh
+chmod +x wow.sh
+bash wow.sh
 ```
 
 ---
@@ -150,7 +150,7 @@ cd ~
 # 用 unzip 解压到当前目录
 unzip /storage/emulated/0/Download/wow-3.2.2.zip
 cd wow
-bash start.sh
+bash wow.sh
 ```
 
 ---
@@ -205,7 +205,7 @@ pkg install -y openjdk-21
 ```bash
 pkg install -y termux-tools
 termux-wake-lock
-bash start.sh
+bash wow.sh
 ```
 
 ---
@@ -271,7 +271,7 @@ export LC_ALL=en_US.UTF-8
 | 授权存储访问 | `termux-setup-storage` |
 | 保持后台唤醒 | `termux-wake-lock` |
 | 切换国内 pkg 源 | 见 [pkg / 网络问题](#pkg--网络问题) |
-| 启动 wow~ | `bash start.sh` |
+| 启动 wow~ | `bash wow.sh` |
 | 查看 Java 版本 | `java -version` |
 | 查看系统架构 | `uname -m` |
 

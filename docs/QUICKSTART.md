@@ -20,11 +20,11 @@ cd wow
 
 ```bash
 # Windows
-start.bat
+wow.bat
 
 # Linux / macOS
-chmod +x start.sh
-./start.sh
+chmod +x wow.sh
+./wow.sh
 ```
 
 首次运行会询问是否下载 Node.js，输入 `y` 确认。

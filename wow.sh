@@ -120,10 +120,10 @@ if [ ! -f "$NODE_EXE" ]; then
         exit 1
     fi
 
-    # 多镜像依次尝试（国内优先 → 官方兜底）
+    # 多镜像依次尝试（国内优先 → 官方兜底，npmmirror 最快最稳放最前）
     NODE_MIRRORS=(
+        "https://registry.npmmirror.com/-/binary/node"
         "https://mirrors.tuna.tsinghua.edu.cn/nodejs-release"
-        "https://npmmirror.com/mirrors/node"
         "https://mirrors.cloud.tencent.com/nodejs-release"
         "https://repo.huaweicloud.com/nodejs"
         "https://nodejs.org/dist"
@@ -206,8 +206,8 @@ fi
 if [ ! -d "node_modules" ]; then
     echo "正在安装依赖..."
     NPM_REGISTRIES=(
-        "https://mirrors.tuna.tsinghua.edu.cn/npm/"
         "https://registry.npmmirror.com/"
+        "https://mirrors.tuna.tsinghua.edu.cn/npm/"
         "https://mirrors.cloud.tencent.com/npm/"
         "https://repo.huaweicloud.com/repository/npm/"
         "https://registry.npmjs.org/"

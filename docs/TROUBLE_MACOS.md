@@ -19,19 +19,19 @@
 
 ## 启动问题
 
-### Q 运行 `.start.sh` 报错 Permission denied
+### Q 运行 `.wow.sh` 报错 Permission denied
 
 原因： 脚本没有执行权限。
 
 解决：
 ```bash
-chmod +x start.sh
-.start.sh
+chmod +x wow.sh
+.wow.sh
 ```
 
 ---
 
-### Q 运行 `.start.sh` 报错 No such file or directory
+### Q 运行 `.wow.sh` 报错 No such file or directory
 
 原因： 可能脚本文件格式是 Windows 的 CRLF（行尾符问题）。
 
@@ -41,10 +41,10 @@ chmod +x start.sh
 brew install dos2unix
 
 # 转换格式
-dos2unix start.sh
+dos2unix wow.sh
 
 # 重新运行
-.start.sh
+.wow.sh
 ```
 
 ---
@@ -64,26 +64,26 @@ brew install wget
 
 ---
 
-### Q 提示 无法打开 start.sh，因为它来自身份不明的开发者
+### Q 提示 无法打开 wow.sh，因为它来自身份不明的开发者
 
 原因： macOS Gatekeeper 阻止未签名的脚本运行。
 
 解决：
 
 方法一：右键打开
-- 右键点击 `start.sh` → 选择“打开”
+- 右键点击 `wow.sh` → 选择“打开”
 - 在弹出的对话框中点击“打开”
 
 方法二：终端运行
 ```bash
 # 直接使用 bash 运行
-bash start.sh
+bash wow.sh
 ```
 
 方法三：解除隔离属性（推荐）
 ```bash
-xattr -d com.apple.quarantine start.sh
-.start.sh
+xattr -d com.apple.quarantine wow.sh
+.wow.sh
 ```
 
 ---
@@ -100,7 +100,7 @@ uname -m
 - `x86_64` → Intel
 
 解决：
-- `start.sh` 会自动检测架构并下载对应的 Node.js 版本
+- `wow.sh` 会自动检测架构并下载对应的 Node.js 版本
 - 如果下载了错误的版本，删除 `corenode` 目录重新运行
 
 ---
@@ -137,17 +137,17 @@ chmod +x node
 
 ---
 
-### Q 提示 zsh no such file or directory .start.sh
+### Q 提示 zsh no such file or directory .wow.sh
 
 原因： 当前目录不在 PATH 中，或文件名拼写错误。
 
 解决：
 ```bash
 # 使用相对路径
-.start.sh
+.wow.sh
 
 # 或使用绝对路径
-pathtowowstart.sh
+path/to/wow/wow.sh
 ```
 
 ---
@@ -433,7 +433,7 @@ usrbinpgrep -q oahd && echo Rosetta 2 已安装  echo Rosetta 2 未安装
 softwareupdate --install-rosetta
 
 # 使用 Rosetta 运行
-arch -x86_64 binbash start.sh
+arch -x86_64 binbash wow.sh
 ```
 
 ---
@@ -449,7 +449,7 @@ arch -x86_64 binbash start.sh
 rm -rf corenodedarwin
 
 # 重新运行启动脚本
-.start.sh
+.wow.sh
 ```
 
 ---
@@ -551,7 +551,7 @@ cat corelogscli.log
 wow set web.port 8080
 
 # 或使用 root 权限运行
-sudo .start.sh web start
+sudo .wow.sh web start
 ```
 
 ---
@@ -575,7 +575,7 @@ sudo .start.sh web start
  操作  macOS  Linux 
 --------------------
  包管理器  `brew`  `apt`  `pacman` 
- 启动脚本  `.start.sh`  `.start.sh` 
+ 启动脚本  `.wow.sh`  `.wow.sh` 
  系统 Java  `java -version`  `java -version` 
  端口占用查看  `sudo lsof -i port`  `lsof -i port` 
  解除隔离  `xattr -d com.apple.quarantine`  无需此操作 

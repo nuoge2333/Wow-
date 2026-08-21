@@ -949,7 +949,7 @@ settings:
   moved-too-quickly-multiplier: 10.0
   timeout-time: 60
   restart-on-crash: true
-  restart-script: ./start.sh
+  restart-script: ./wow.sh
   netty-threads: 4
   attribute:
     maxHealth:

@@ -17,19 +17,19 @@
 
 ## 启动问题
 
-### Q: 运行 `./start.sh` 报错 "Permission denied"
+### Q: 运行 `./wow.sh` 报错 "Permission denied"
 
 **原因：** 脚本没有执行权限。
 
 **解决：**
 ```bash
-chmod +x start.sh
-./start.sh
+chmod +x wow.sh
+./wow.sh
 ```
 
 ---
 
-### Q: 运行 `./start.sh` 报错 "No such file or directory"
+### Q: 运行 `./wow.sh` 报错 "No such file or directory"
 
 **原因：** 可能脚本文件格式是 Windows 的 CRLF（行尾符问题）。
 
@@ -39,10 +39,10 @@ chmod +x start.sh
 sudo pacman -S dos2unix
 
 # 转换格式
-dos2unix start.sh
+dos2unix wow.sh
 
 # 重新运行
-./start.sh
+./wow.sh
 ```
 
 ---
@@ -406,7 +406,7 @@ cat core/logs/cli.log
 |------|------|
 | 安装 Java 17 | `sudo pacman -S jre17-openjdk` |
 | 安装依赖工具 | `sudo pacman -S curl wget unzip` |
-| 设置文件权限 | `chmod +x start.sh` |
+| 设置文件权限 | `chmod +x wow.sh` |
 | 查看端口占用 | `sudo ss -tlnp \| grep 25565` |
 | 查看 Java 版本 | `java -version` |
 | 查看系统信息 | `uname -a` |

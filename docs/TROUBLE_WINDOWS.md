@@ -23,13 +23,13 @@
 
 ## 启动问题
 
-### Q: 双击 `start.bat` 闪退
+### Q: 双击 `wow.bat` 闪退
 
 **原因：** 路径包含空格或中文字符。
 
 **解决：**
 - 将 wow 解压到**不包含空格和中文**的路径，例如 `C:\wow` 或 `D:\Servers\wow`
-- 右键 `start.bat` → 编辑，在最后一行加上 `pause`，然后双击查看具体错误信息
+- 右键 `wow.bat` → 编辑，在最后一行加上 `pause`，然后双击查看具体错误信息
 
 ---
 
@@ -72,8 +72,8 @@
 **原因：** 脚本中的路径格式不正确。
 
 **解决：**
-- 确保 `core/` 目录与 `start.bat` 在同一级目录
-- 检查 `start.bat` 中 `CORE_DIR` 路径是否正确
+- 确保 `core/` 目录与 `wow.bat` 在同一级目录
+- 检查 `wow.bat` 中 `CORE_DIR` 路径是否正确
 
 ---
 
@@ -83,7 +83,7 @@
 
 **解决：**
 ```batch
-# 在 start.bat 中已包含 chcp 65001
+# 在 wow.bat 中已包含 chcp 65001
 # 如果仍然乱码，手动设置终端字体为 "Consolas" 或 "Lucida Console"
 ```
 
@@ -105,7 +105,7 @@ $OutputEncoding = [System.Text.Encoding]::UTF8
 2. 选择 "病毒和威胁防护"
 3. 点击 "管理设置"
 4. 添加排除项 → 选择 wow 所在文件夹
-5. 重新运行 start.bat
+5. 重新运行 wow.bat
 
 ---
 
@@ -253,7 +253,7 @@ wow set download.mirror https://mirror.example.com
 4. 确定
 
 **或使用管理员权限运行：**
-- 右键点击 `start.bat` → 以管理员身份运行
+- 右键点击 `wow.bat` → 以管理员身份运行
 
 ---
 
@@ -393,7 +393,7 @@ npm install
 
 | 操作 | Windows | Linux |
 |------|---------|-------|
-| 启动脚本 | `start.bat` | `start.sh` |
+| 启动脚本 | `wow.bat` | `wow.sh` |
 | 路径分隔符 | `\` | `/` |
 | 系统 Java | `java -version` | `java -version` |
 | 端口占用查看 | `netstat -ano` | `lsof -i :port` |
