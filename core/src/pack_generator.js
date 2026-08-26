@@ -21,7 +21,7 @@ class PackGenerator {
         this.modManager = new ModManager();
         this.schemeManager = new SchemeManager();
         this.serverManager = new ServerManager();
-        this.tempDir = utils.resolvePath('../../temp/packs');
+        this.tempDir = utils.resolvePath('temp/packs');
         this.serverDir = utils.getServerDir();
         fs.ensureDirSync(this.tempDir);
     }

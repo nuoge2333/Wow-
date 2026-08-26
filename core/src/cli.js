@@ -554,7 +554,7 @@ program
     .description('下载文件')
     .option('-o, --output <path>', '输出路径')
     .action(async (url, options) => {
-        const output = options.output || path.join(utils.resolvePath('../temp'), path.basename(url));
+        const output = options.output || path.join(utils.resolvePath('temp'), path.basename(url));
         console.log(`下载: ${url}`);
         console.log(`  保存到: ${output}`);
 

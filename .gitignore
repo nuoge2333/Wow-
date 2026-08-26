@@ -12,6 +12,7 @@ core/jre/
 core/node/
 core/schemes/
 core/down/
+core/temp/
 core/wow.yaml
 server/
 
@@ -20,7 +21,6 @@ server/
 # ====================
 logs/
 *.log
-temp/
 *.tmp
 core/.web.pid
 core/.web.port
