@@ -30,7 +30,7 @@ const Terracotta = require('./terracotta');
 program
     .name('wow')
     .description('Minecraft 服务器管理工具 - 默认优先，可以修改')
-    .version('3.4.3', '-V');
+    .version('3.4.7', '-V');
 
 // ==================== init ====================
 
@@ -164,7 +164,7 @@ serverCmd
 program
     .command('install <target> [version]')
     .description('安装服务端核心 或 下载任意 URL 文件')
-    .option('-b, --build <number>', '构建号（Mohist）或加载器版本（forge/fabric/neoforge/quilt）')
+    .option('-b, --build <id>', '构建标识（Mohist 为 git sha，可省略以自动取最新）/ 加载器版本（forge/fabric/neoforge/quilt）')
     .option('-o, --output <path>', '输出路径（仅 URL 下载时有效）')
     .action(async (target, version, options) => {
         const installer = new Installer();
@@ -239,7 +239,7 @@ schemeCmd
     .description('创建新方案')
     .option('-v, --version <version>', 'Minecraft 版本 (默认: 1.20.1)')
     .option('-t, --type <type>', '核心类型/加载器 (vanilla/forge/fabric/neoforge/quilt/mohist/catserver/paper)，同时决定加载器')
-    .option('-b, --build <number>', '构建号（仅 Mohist 等需要）')
+    .option('-b, --build <id>', '构建标识（Mohist 为 git sha，可省略以自动取最新）')
     .action(async (name, options) => {
         const schemeManager = new SchemeManager();
         try {

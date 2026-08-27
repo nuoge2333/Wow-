@@ -104,17 +104,34 @@ const SERVER_SOURCES = {
         url: (version, mirror) => `${mirror}/craftbukkit/${version}/latest/download`,
         fileName: (version) => `bukkit-${version}.jar`
     },
-    // 中文社区核心
+    // 中文社区核心（Mohist / 墨端）
+    // 旧下载站 dl.mohistmc.cn:41211 已于 2025 年停用（域名无 DNS 解析），
+    // 官方现统一走 mohistmc.com 的 v2 API。构建标识由「数字构建号」改为「git sha」，
+    // 因此不再硬编码构建号，下载时通过 API 解析最新构建。
     mohist: {
         type: 'mohist', kind: 'direct',
-        url: (version, build) => `https://dl.mohistmc.cn:41211/project/mohist/${version}/builds/${build || 'latest'}/download`,
-        fileName: (version, build) => `mohist-${version}-build${build || 'latest'}.jar`,
-        needsBuild: true,
-        knownBuilds: {
-            '1.12.2': '264',
-            '1.16.5': '238',
-            '1.20.1': '346'
-        }
+        apiBase: 'https://mohistmc.com/api/v2',
+        // 解析某 MC 版本的最新可用构建，返回 { id, urls:[官方源, github源] }
+        resolveBuild: async (version) => {
+            const base = 'https://mohistmc.com/api/v2';
+            const { data } = await axios.get(
+                `${base}/projects/mohist/${version}/builds/latest`,
+                { timeout: 30000, headers: { 'User-Agent': 'wow-mc-manager' } }
+            );
+            if (data && data.build && data.build.id) {
+                const id = data.build.id;
+                const urls = [];
+                if (data.build.url) urls.push(data.build.url);
+                if (data.build.originUrl) urls.push(data.build.originUrl);
+                urls.push(`${base}/projects/mohist/${version}/builds/${id}/download`);
+                return { id, urls: [...new Set(urls)] };
+            }
+            throw new Error('无法从 Mohist API 解析最新构建');
+        },
+        url: (version, buildId) => `https://mohistmc.com/api/v2/projects/mohist/${version}/builds/${buildId}/download`,
+        fileName: (version, buildId) => `mohist-${version}-${buildId}.jar`,
+        needsBuild: false,
+        supportedVersions: ['1.12.2', '1.16.5', '1.18.2', '1.19.2', '1.19.4', '1.20.1', '1.20.2']
     },
     catserver: {
         type: 'catserver', kind: 'direct',
@@ -168,7 +185,7 @@ class Installer {
             return this._getPurpurVersions();
         }
         if (type === 'mohist') {
-            return Object.keys(source.knownBuilds);
+            return source.supportedVersions || [];
         }
         if (type === 'catserver') {
             return Object.keys(SERVER_SOURCES.catserver.url({}));
@@ -212,14 +229,19 @@ class Installer {
         }
 
         let downloadUrl;
+        let fallbackUrls = [];
         if (type === 'vanilla') {
             downloadUrl = await this._getVanillaDownloadUrl(version);
         } else if (type === 'mohist') {
-            const buildNumber = build || source.knownBuilds?.[version];
-            if (!buildNumber) {
-                throw new Error(`Mohist 版本 ${version} 需要指定构建号（用 -b 参数）`);
+            // 构建标识现为 git sha；未显式指定（-b）时通过 API 解析最新构建
+            let buildId = build;
+            if (!buildId) {
+                console.log('正在查询 Mohist 最新构建...');
+                const resolved = await source.resolveBuild(version);
+                buildId = resolved.id;
+                fallbackUrls = (resolved.urls || []).filter(u => u !== source.url(version, buildId));
             }
-            downloadUrl = source.url(version, buildNumber);
+            downloadUrl = source.url(version, buildId);
         } else if (typeof source.url === 'function') {
             downloadUrl = source.url(version, this.mirror);
         } else {
@@ -235,7 +257,7 @@ class Installer {
 
         const tempPath = path.join(installDir, `${fileName}.tmp`);
         try {
-            await this._downloadFile(downloadUrl, tempPath);
+            await this._downloadWithFallbacks(downloadUrl, tempPath, fallbackUrls);
             fs.renameSync(tempPath, targetPath);
             console.log(`下载完成: ${targetPath}`);
 
@@ -246,6 +268,30 @@ class Installer {
             if (fs.existsSync(tempPath)) fs.removeSync(tempPath);
             throw new Error(`下载失败: ${e.message}`);
         }
+    }
+
+    /**
+     * 带备份源的下载：依次尝试主 URL 与各 fallback，任一成功即可；
+     * 并对「空文件」（如被 CDN 拦截返回 0 字节）做校验，避免静默写入假成功。
+     */
+    async _downloadWithFallbacks(url, destPath, fallbacks = []) {
+        const candidates = [url, ...fallbacks].filter(Boolean);
+        let lastErr = null;
+        for (const u of candidates) {
+            try {
+                await this._downloadFile(u, destPath);
+                if (fs.existsSync(destPath) && fs.statSync(destPath).size > 0) {
+                    return;
+                }
+                // 下载到 0 字节：清理后尝试下一个源
+                if (fs.existsSync(destPath)) fs.removeSync(destPath);
+                lastErr = new Error('下载内容为 0 字节（可能被 CDN 拦截）');
+            } catch (e) {
+                lastErr = e;
+                if (fs.existsSync(destPath)) fs.removeSync(destPath);
+            }
+        }
+        throw new Error(lastErr ? lastErr.message : '所有下载源均失败');
     }
 
     /**

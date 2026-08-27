@@ -6,6 +6,7 @@
  */
 
 const readline = require('readline');
+const pkg = require('../package.json');
 
 /**
  * 创建 readline 接口
@@ -73,7 +74,7 @@ async function showMainMenu(options = {}, directChoice = null) {
 
     while (true) {
         clearScreen();
-        printHeader('wow~ Minecraft 服务器管理器 V3.3.17');
+        printHeader('wow~ Minecraft 服务器管理器 V' + pkg.version);
 
         // 状态信息
         try {

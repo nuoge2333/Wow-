@@ -8,7 +8,8 @@
 
 | 版本 | 状态 | 发布时间 |
 |------|------|------|
-| **3.4.6** | 当前版本 |2026-08-27|
+| **3.4.7** | 当前版本 |2026-08-27|
+| **3.4.6** | 上一版本 |2026-08-27|
 | **3.4.5** | 上一版本 |2026-08-26|
 | **3.4.4** | 上一版本 |2026-08-21|
 | **3.4.3** | 上一版本 |2026-08-21|
@@ -45,6 +46,29 @@
 | **3.0.0** | 上一版本 |2026-07-23|
 | **2.0.0** | 内部迭代 |2026-02-27|
 | **1.0.0** | 内部迭代 |2026-02-07|
+
+---
+
+## [3.4.7] — 2026-08-27
+
+### 🐛 修复：Mohist（墨端）下载失败 `getaddrinfo ENOTFOUND dl.mohistmc.cn`
+
+> 根因：Mohist 原下载站 `dl.mohistmc.cn:41211` 已于 2025 年停用（域名已无 DNS 解析），官方统一迁移到 `mohistmc.com` 的 v2 API；且构建标识由「数字构建号（如 346）」改为「git sha」，旧硬编码构建号全部失效。
+
+#### 1. 下载源切换到官方 v2 API
+- `core/src/installer.js` 的 `mohist` 源改为：
+  - 主：`https://mohistmc.com/api/v2/projects/mohist/{版本}/builds/{gitSha}/download`
+  - 备份：`https://mohistmc.com/api/v2/sources/github/{版本}/builds/{gitSha}/download`（同源互为备份，Cloudflare 拦截时自动换源）
+- 新增 `resolveBuild(version)`：下载前先 `GET /builds/latest` 解析最新构建的 git sha，不再要求用户手填构建号（交互菜单与 `wow install mohist 1.20.1` 现在都能直接用）。
+
+#### 2. 直连下载增加「空文件」校验
+- 新增 `_downloadWithFallbacks(url, dest, fallbacks)`：依次尝试主源与备份源，任一成功即可；
+- 对下载到 **0 字节** 的情况（典型为被 CDN/Cloudflare 拦截返回空体）显式报错，避免静默写出假成功 jar。
+
+#### 3. 版本显示修正（顺带）
+- 主菜单 banner 原写死 `V3.3.17`，现改为读取 `core/package.json` 真实版本；`wow -V` 同步为 `3.4.7`。
+
+> 注：若你的服务器出口 IP 被 `mohistmc.com` 的 Cloudflare 拦截导致仍下载不动，可手动从 https://mohistmc.com/download 下载对应版本 jar，放入服务端目录后重试。
 
 ---
 
