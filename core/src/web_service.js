@@ -572,7 +572,7 @@ function execCommand(command, args = []) {
         const cliPath = path.join(__dirname, 'cli.js');
         const fullArgs = [cliPath, mainCmd, ...subCmd.split(' '), ...args];
 
-        const proc = spawn('node', fullArgs, {
+        const proc = spawn(process.execPath, fullArgs, {
             cwd: path.join(__dirname, '..')
         });
 

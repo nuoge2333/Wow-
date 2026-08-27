@@ -6,10 +6,10 @@
     <title>仪表盘 - wow</title>
     <link rel="stylesheet" href="/css/main.css">
     <style>
-        /* 仪表盘独有样式 */
+        /* 仪表盘独有样式 — 服务器状态横向布局 */
         .dashboard-grid {
             display: grid;
-            grid-template-columns: 1fr 1fr 1fr;
+            grid-template-columns: repeat(3, 1fr);
             gap: 16px;
             margin-bottom: 20px;
         }
@@ -19,6 +19,7 @@
             border-radius: 8px;
             padding: 16px 20px;
             border-left: 4px solid #4CAF50;
+            min-width: 0;
         }
         .stat-card .label {
             font-size: 13px;
@@ -160,13 +161,31 @@
         }
 
         @media (max-width: 900px) {
+            /* 平板 / 窄屏：横向滚动一行，避免纵向堆叠 */
             .dashboard-grid {
-                grid-template-columns: 1fr 1fr;
+                display: flex;
+                flex-wrap: nowrap;
+                overflow-x: auto;
+                overflow-y: hidden;
+                gap: 10px;
+                padding-bottom: 6px;
+                scrollbar-width: thin;
+                scroll-snap-type: x proximity;
+                -webkit-overflow-scrolling: touch;
+            }
+            .dashboard-grid .stat-card {
+                flex: 0 0 200px;
+                scroll-snap-align: start;
             }
         }
         @media (max-width: 600px) {
-            .dashboard-grid {
-                grid-template-columns: 1fr;
+            /* 手机端：同上但卡片更紧凑 */
+            .dashboard-grid .stat-card {
+                flex: 0 0 180px;
+                padding: 12px 14px;
+            }
+            .stat-card .value {
+                font-size: 20px;
             }
         }
     </style>

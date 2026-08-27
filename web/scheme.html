@@ -595,7 +595,7 @@
                     return;
                 }
 
-                let cmd = `scheme create ${name} --version ${version} --loader ${loader} --type ${type}`;
+                let cmd = `scheme create ${name} --version ${version} --type ${type}`;
                 if (type === 'other' && otherType) {
                     cmd += ` --other-type ${otherType}`;
                 }
