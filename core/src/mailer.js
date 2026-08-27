@@ -69,11 +69,26 @@ class Mailer {
                 from: this.smtpConfig.from || this.smtpConfig.user,
                 to: to,
                 subject: subject,
-                text: text || html.replace(/<[^>]*>/g, ''), // 简单转换
+                text: text || html.replace(/<[^>]*>/g, ''),
                 html: html
             });
+
+            // 检查是否有被拒收的收件人
+            if (info.rejected && info.rejected.length > 0) {
+                console.warn(`邮件被拒收: ${info.rejected.join(', ')}`);
+                return {
+                    success: false,
+                    error: `邮件被拒收: ${info.rejected.join(', ')}`,
+                    rejected: info.rejected
+                };
+            }
+
             console.log(`邮件已发送: ${info.messageId}`);
-            return { success: true };
+            return {
+                success: true,
+                messageId: info.messageId,
+                accepted: info.accepted
+            };
         } catch (e) {
             console.error(`邮件发送失败: ${e.message}`);
             return { success: false, error: e.message };
