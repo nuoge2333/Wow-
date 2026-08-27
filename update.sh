@@ -19,16 +19,38 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# 带超时与失败容忍的 HTTP GET：成功输出 body 到 stdout，HTTP 错误/空响应输出空。
+# 用法: http_get <url>
+http_get() {
+    curl -fsSL --connect-timeout 10 --max-time 30 "$1" 2>/dev/null
+}
+
 echo "========================================"
 echo "  wow~ 自动更新工具"
 echo "========================================"
 echo ""
 
-# 获取最新 Release 信息（网络失败仅警告并跳过更新，不阻断调用方启动）
 echo "正在检查最新版本..."
-RELEASE_INFO=$(curl -sL --connect-timeout 10 --max-time 30 "https://api.github.com/repos/$GITHUB_REPO/releases/latest")
+
+# 多镜像依次尝试（国内优先走 ghproxy，官方 API 兜底），任一返回合法 JSON(含 tag_name) 即可
+API_BASES=(
+    "https://ghproxy.net/https://api.github.com"
+    "https://ghproxy.com/https://api.github.com"
+    "https://api.github.com"
+)
+RELEASE_INFO=""
+for BASE in "${API_BASES[@]}"; do
+    echo "  尝试: $BASE/repos/$GITHUB_REPO/releases/latest"
+    INFO=$(http_get "$BASE/repos/$GITHUB_REPO/releases/latest")
+    # 校验返回的是合法 JSON 且含 tag_name，避免把错误页/空响应当成版本信息
+    if [ -n "$INFO" ] && echo "$INFO" | grep -q '"tag_name"'; then
+        RELEASE_INFO="$INFO"
+        break
+    fi
+done
+
 if [ -z "$RELEASE_INFO" ]; then
-    echo "⚠️ 无法访问 GitHub API（网络受限？），跳过自动更新"
+    echo "⚠️ 无法访问 GitHub（网络受限或镜像不可用），跳过自动更新（不影响启动）"
     exit 0
 fi
 
@@ -38,38 +60,44 @@ if echo "$RELEASE_INFO" | grep -q '"message".*"API rate limit exceeded"'; then
     exit 0
 fi
 
-# 检查是否返回了错误（如 404 / 仓库不可访问）
-if echo "$RELEASE_INFO" | grep -q '"message".*"Not Found"'; then
-    echo "⚠️ 未找到 Release 信息，跳过自动更新"
-    exit 0
+# 解析版本号和下载链接（容忍 key/value 间空格）
+LATEST_TAG=$(echo "$RELEASE_INFO" | grep '"tag_name"' | head -1 | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/')
+DOWNLOAD_URL=$(echo "$RELEASE_INFO" | grep '"browser_download_url"' | head -1 | grep '\.zip' | sed 's/.*"browser_download_url": *"\([^"]*\)".*/\1/')
+# 若无自定义 zip 资产，回退到 GitHub 自动生成的 Source code (zip)
+if [ -z "$DOWNLOAD_URL" ]; then
+    DOWNLOAD_URL="https://github.com/$GITHUB_REPO/archive/refs/tags/$LATEST_TAG.zip"
 fi
-
-# 解析版本号和下载链接
-LATEST_TAG=$(echo "$RELEASE_INFO" | grep '"tag_name"' | head -1 | sed 's/.*"tag_name": "\(.*\)".*/\1/')
-DOWNLOAD_URL=$(echo "$RELEASE_INFO" | grep '"browser_download_url"' | head -1 | grep '\.zip' | sed 's/.*"browser_download_url": "\(.*\)".*/\1/')
 
 if [ -z "$LATEST_TAG" ]; then
-    echo "⚠️ 无法解析版本信息，跳过自动更新"
-    exit 0
-fi
-
-if [ -z "$DOWNLOAD_URL" ]; then
-    echo "⚠️ 未找到下载链接，跳过自动更新"
+    echo "⚠️ 无法解析版本信息，跳过自动更新（不影响启动）"
     exit 0
 fi
 
 echo "最新版本: $LATEST_TAG"
-echo "下载地址: $DOWNLOAD_URL"
 echo ""
 
-# 下载
+# 下载（多镜像兜底：原始地址 + ghproxy 代理）
 echo "正在下载更新包..."
-if ! curl -L --connect-timeout 10 --max-time 120 "$DOWNLOAD_URL" -o "$TEMP_ZIP" 2>/dev/null; then
-    echo "⚠️ 下载失败，跳过自动更新"
+DOWNLOADED=0
+DL_CANDIDATES=(
+    "$DOWNLOAD_URL"
+    "https://ghproxy.net/$DOWNLOAD_URL"
+    "https://ghproxy.com/$DOWNLOAD_URL"
+)
+for URL in "${DL_CANDIDATES[@]}"; do
+    echo "  尝试: $URL"
+    if curl -fsSL --connect-timeout 10 --max-time 120 "$URL" -o "$TEMP_ZIP" 2>/dev/null && [ -s "$TEMP_ZIP" ]; then
+        DOWNLOADED=1
+        echo "  ✅ 下载完成"
+        break
+    else
+        rm -f "$TEMP_ZIP"
+    fi
+done
+if [ "$DOWNLOADED" -ne 1 ]; then
+    echo "⚠️ 下载失败（镜像均不可用），跳过自动更新（不影响启动）"
     exit 0
 fi
-echo "✅ 下载完成"
-echo ""
 
 # 解压到临时目录
 echo "正在安装更新..."
@@ -80,8 +108,7 @@ fi
 
 # 从解压根目录找到项目文件（zip 内可能是 ./WowV3/Wow~V3.0/ 多层嵌套）
 # 策略：递归找到包含 wow.sh 的目录，那就是项目根
-EXTRACT_DIR="$TEMP_DIR/extract"
-PROJECT_DIR=$(find "$EXTRACT_DIR" -name "wow.sh" -not -path "*/core/*" 2>/dev/null | head -1)
+PROJECT_DIR=$(find "$TEMP_DIR/extract" -name "wow.sh" -not -path "*/core/*" 2>/dev/null | head -1)
 if [ -z "$PROJECT_DIR" ]; then
     echo "⚠️ 更新包格式错误，未找到 wow.sh，跳过自动更新"
     exit 0
@@ -110,7 +137,7 @@ for item in "$PROJECT_DIR"/*; do
     fi
 done
 
-# 确保启动脚本可执行
+# 确保启动脚本可执行（含本次恢复的 start.sh）
 chmod +x "$SCRIPT_DIR/wow.sh" 2>/dev/null
 chmod +x "$SCRIPT_DIR/start.sh" 2>/dev/null
 chmod +x "$SCRIPT_DIR/update.sh" 2>/dev/null
