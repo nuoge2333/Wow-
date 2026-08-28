@@ -78,23 +78,35 @@ class JreManager {
 
     /**
      * 获取 JRE 下载 URL
+     * @param {string} version - 特征版本号（8/11/17/21）或完整版本（如 17.0.12+7）
+     * @param {string} os - windows/linux/macos
+     * @param {string} arch - x64/arm64
      */
     _getDownloadUrl(version, os, arch) {
         // 使用 Temurin API
         const osMap = JRE_SOURCES.temurin.platformMap;
         const archMap = JRE_SOURCES.temurin.archMap;
-        
+
         // 简化：只支持 x64 常用版本
         const osName = osMap[os] || 'linux';
         const archName = archMap[arch] || 'x64';
-        
-        // 版本映射到 JRE 特征版本
+
+        // 特征版本号（8/11/17/21）
         const featureVersion = this._getFeatureVersion(version);
         if (!featureVersion) return null;
 
-        // 构建 API URL
-        const url = `${JRE_SOURCES.temurin.baseUrl}/${featureVersion}/ga/${osName}/${archName}/jdk/hotspot/normal/eclipse`;
-        return url;
+        // Temurin API：
+        //   /v3/binary/latest/{feature}/ga/{os}/{arch}/jdk/hotspot/normal/eclipse
+        //     -> 307 跳到 GitHub Release 最新 GA 版的 tar.gz/zip
+        //   /v3/binary/version/{fullVersion}/ga/{os}/{arch}/jdk/hotspot/normal/eclipse
+        //     -> 跳到指定完整版本（用户可在 config.jre.version 锁定）
+        // 之前用字面 "version" + 仅特征号 会导致 404
+        const userPinned = this.config.getConfig('jre.version', null);
+        const pathSeg = userPinned
+            ? `version/${userPinned}`
+            : `latest/${featureVersion}`;
+
+        return `${JRE_SOURCES.temurin.baseUrl}/${pathSeg}/ga/${osName}/${archName}/jdk/hotspot/normal/eclipse`;
     }
 
     /**
