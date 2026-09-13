@@ -1,10 +1,14 @@
 #!/bin/bash
 # wow~ 更新脚本 (Linux/macOS)
-# 从 Gitee Releases 下载最新版本并覆盖更新（GitHub 旧仓库 nuoge2333/Wow- 作为兜底源）
+# 从 Gitee 下载最新版本并覆盖更新（GitHub 旧仓库 nuoge2333/Wow- 作为兜底源）
 # 保留 server/ pool/ jre/ schemes/ node_modules/ 等运行时目录
 #
 # 设计原则：自更新失败【不应】阻断服务启动。
 # 优先 Gitee；Gitee 不可达时自动回退 GitHub 旧仓库；两者皆不可达则仅警告并跳过（exit 0）。
+#
+# 版本解析：优先读取 releases/latest；若仓库未发布 Release（如仅推送了 tag），
+# 则回退到 tags API（过滤 backup/ 等非版本标签，取最大 semver），直接下载源站 zip，
+# 全程无需私人令牌，也无需多镜像。
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
@@ -25,6 +29,22 @@ http_get() {
     curl -fsSL --connect-timeout 10 --max-time 30 "$1" 2>/dev/null
 }
 
+# 解析最新 tag：先试 releases/latest；失败则回退 tags API（过滤非版本标签，取最大 semver）
+get_latest_tag() {
+    local base="$1" repo="$2"
+    # 1) releases/latest（若用户已发布 Release，优先采用）
+    local info; info=$(http_get "$base/repos/$repo/releases/latest")
+    if echo "$info" | grep -q '"tag_name"'; then
+        echo "$info" | grep '"tag_name"' | head -1 | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/'
+        return 0
+    fi
+    # 2) tags API：仅保留形如 vX.Y.Z 的标签，按 semver 取最大（排除 backup/ 等同步标签）
+    http_get "$base/repos/$repo/tags" \
+        | grep '"name"' | sed 's/.*"name": *"\([^"]*\)".*/\1/' \
+        | grep -E '^v?[0-9]+\.[0-9]+\.[0-9]+$' \
+        | sort -V | tail -1
+}
+
 echo "========================================"
 echo "  wow~ 自动更新工具"
 echo "========================================"
@@ -32,8 +52,8 @@ echo ""
 
 echo "正在检查最新版本..."
 
-# 依次尝试：Gitee（主）→ GitHub（兜底），任一返回含 tag_name 的合法 JSON 即采用
-RELEASE_INFO=""
+# 依次尝试：Gitee（主）→ GitHub（兜底），任一解析到合法 tag 即采用
+LATEST_TAG=""
 RELEASE_HOST=""
 for SRC in "gitee" "github"; do
     if [ "$SRC" = "gitee" ]; then
@@ -43,42 +63,30 @@ for SRC in "gitee" "github"; do
         BASE="https://api.github.com"
         REPO="$GITHUB_REPO"
     fi
-    echo "  尝试 [$SRC]: $BASE/repos/$REPO/releases/latest"
-    INFO=$(http_get "$BASE/repos/$REPO/releases/latest")
-    # 校验返回的是合法 JSON 且含 tag_name，避免把错误页/空响应当成版本信息
-    if [ -n "$INFO" ] && echo "$INFO" | grep -q '"tag_name"'; then
-        RELEASE_INFO="$INFO"
+    echo "  尝试 [$SRC]..."
+    TAG=$(get_latest_tag "$BASE" "$REPO")
+    if [ -n "$TAG" ]; then
+        LATEST_TAG="$TAG"
         RELEASE_HOST="$SRC"
         break
     fi
 done
 
-if [ -z "$RELEASE_INFO" ]; then
-    echo "⚠️ 无法访问 Gitee / GitHub（网络受限），跳过自动更新（不影响启动）"
-    exit 0
-fi
-
-# 解析版本号和下载链接（容忍 key/value 间空格）
-LATEST_TAG=$(echo "$RELEASE_INFO" | grep '"tag_name"' | head -1 | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/')
-DOWNLOAD_URL=$(echo "$RELEASE_INFO" | grep '"browser_download_url"' | head -1 | grep '\.zip' | sed 's/.*"browser_download_url": *"\([^"]*\)".*/\1/')
-# 若无自定义 zip 资产，按当前源回退到源站 zip
-if [ -z "$DOWNLOAD_URL" ]; then
-    if [ "$RELEASE_HOST" = "gitee" ]; then
-        DOWNLOAD_URL="https://gitee.com/$GITEE_REPO/repository/archive/$LATEST_TAG.zip"
-    else
-        DOWNLOAD_URL="https://github.com/$GITHUB_REPO/archive/refs/tags/$LATEST_TAG.zip"
-    fi
-fi
-
 if [ -z "$LATEST_TAG" ]; then
-    echo "⚠️ 无法解析版本信息，跳过自动更新（不影响启动）"
+    echo "⚠️ 无法访问 Gitee / GitHub（网络受限），跳过自动更新（不影响启动）"
     exit 0
 fi
 
 echo "最新版本: $LATEST_TAG (源: $RELEASE_HOST)"
 echo ""
 
-# 下载（Gitee 国内直连即可，不做多镜像代理）
+# 下载链接：直接取源站 zip（releases 资产与源站 zip 等价，且无需私人令牌）
+if [ "$RELEASE_HOST" = "gitee" ]; then
+    DOWNLOAD_URL="https://gitee.com/$GITEE_REPO/repository/archive/$LATEST_TAG.zip"
+else
+    DOWNLOAD_URL="https://github.com/$GITHUB_REPO/archive/refs/tags/$LATEST_TAG.zip"
+fi
+
 echo "正在下载更新包..."
 if curl -fsSL --connect-timeout 10 --max-time 120 "$DOWNLOAD_URL" -o "$TEMP_ZIP" 2>/dev/null && [ -s "$TEMP_ZIP" ]; then
     echo "  ✅ 下载完成"
@@ -95,7 +103,7 @@ if ! unzip -qo "$TEMP_ZIP" -d "$TEMP_DIR/extract" 2>/dev/null; then
     exit 0
 fi
 
-# 从解压根目录找到项目文件（zip 内可能是 ./wow-v3.4.10/ 多层嵌套）
+# 从解压根目录找到项目文件（zip 内可能是 ./wow-v3.4.12/ 多层嵌套）
 # 策略：递归找到包含 wow.sh 的目录，那就是项目根
 PROJECT_DIR=$(find "$TEMP_DIR/extract" -name "wow.sh" -not -path "*/core/*" 2>/dev/null | head -1)
 if [ -z "$PROJECT_DIR" ]; then

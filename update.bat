@@ -1,7 +1,9 @@
 @echo off
 setlocal enabledelayedexpansion
 :: wow~ updater (Windows)
-:: Download latest from Gitee Releases (GitHub old repo as fallback) and overwrite
+:: Download latest from Gitee (GitHub old repo as fallback) and overwrite.
+:: 版本解析：优先 releases/latest；若无 Release 则回退 tags API（过滤 backup/ 等非版本标签，取最大 semver），
+:: 直接下载源站 zip，无需私人令牌，也不保留多镜像。
 
 set SCRIPT_DIR=%~dp0
 cd /d "%SCRIPT_DIR%"
@@ -19,44 +21,45 @@ echo.
 :: Create temp dir
 mkdir "%TEMP_DIR%" 2>nul
 
-:: Get latest release info: Gitee first, GitHub fallback
-echo Checking latest version...
-set RELEASE_HOST=gitee
-powershell -Command "& { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; try { $r = Invoke-RestMethod -Uri 'https://gitee.com/api/v5/repos/nuoge233/wow/releases/latest'; Write-Output $r.tag_name; Write-Output $r.assets[0].browser_download_url } catch { Write-Output 'ERROR' } }" > "%TEMP_DIR%\release.txt" 2>nul
+:: Resolve latest tag: releases/latest -> tags API (max semver, filter non-version tags)
+powershell -Command ^
+  "$ErrorActionPreference='SilentlyContinue';" ^
+  "function Get-LatestTag($base,$repo){" ^
+  "  try { $r=Invoke-RestMethod -Uri \"$base/repos/$repo/releases/latest\"; if($r.tag_name){return $r.tag_name} } catch {}" ^
+  "  try { $tags=Invoke-RestMethod -Uri \"$base/repos/$repo/tags\";" ^
+  "    $vs=$tags | Where-Object { $_.name -match '^v?\d+\.\d+\.\d+$' } | ForEach-Object { $_.name };" ^
+  "    return ($vs | Sort-Object { [version]($_.TrimStart('v')) } | Select-Object -Last 1) } catch {}" ^
+  "  return $null" ^
+  "}" ^
+  "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12;" ^
+  "$hosts = @(@('gitee','https://gitee.com/api/v5','nuoge233/wow'), @('github','https://api.github.com','nuoge2333/Wow-'));" ^
+  "foreach($h in $hosts){ $t=Get-LatestTag $h[1] $h[2]; if($t){ Write-Output $h[0]; Write-Output $t; break } }" ^
+  > "%TEMP_DIR%\resolve.txt" 2>nul
 
-set /p LATEST_TAG=<"%TEMP_DIR%\release.txt"
-if "%LATEST_TAG%"=="ERROR" (
-    echo Gitee unavailable, trying GitHub...
-    set RELEASE_HOST=github
-    powershell -Command "& { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; try { $r = Invoke-RestMethod -Uri 'https://api.github.com/repos/nuoge2333/Wow-/releases/latest'; Write-Output $r.tag_name; Write-Output $r.assets[0].browser_download_url } catch { Write-Output 'ERROR' } }" > "%TEMP_DIR%\release.txt" 2>nul
-    set /p LATEST_TAG=<"%TEMP_DIR%\release.txt"
+set RELEASE_HOST=
+set LATEST_TAG=
+set /a IDX=0
+for /f "usebackq delims=" %%a in ("%TEMP_DIR%\resolve.txt") do (
+    if !IDX!==0 ( set RELEASE_HOST=%%a ) else ( set LATEST_TAG=%%a )
+    set /a IDX+=1
 )
 
-if "%LATEST_TAG%"=="ERROR" (
+if "%LATEST_TAG%"=="" (
     echo Cannot access Gitee/GitHub API. Check your network.
     goto :cleanup
 )
 
-:: Read download url (2nd line)
-for /f "usebackq skip=1 delims=" %%a in ("%TEMP_DIR%\release.txt") do (
-    set DOWNLOAD_URL=%%a
-    goto :got_url
-)
-:got_url
-
 echo Latest: %LATEST_TAG% (source: %RELEASE_HOST%)
-echo URL: %DOWNLOAD_URL%
 echo.
 
-:: Fallback to source zip if no custom asset
-if "%DOWNLOAD_URL%"=="" (
-    if "%RELEASE_HOST%"=="gitee" (
-        set DOWNLOAD_URL=https://gitee.com/nuoge233/wow/repository/archive/%LATEST_TAG%.zip
-    ) else (
-        set DOWNLOAD_URL=https://github.com/nuoge2333/Wow-/archive/refs/tags/%LATEST_TAG%.zip
-    )
-    echo Fallback URL: %DOWNLOAD_URL%
+:: Build download URL from source archive (works without a published Release)
+if "%RELEASE_HOST%"=="gitee" (
+    set DOWNLOAD_URL=https://gitee.com/%GITEE_REPO%/repository/archive/%LATEST_TAG%.zip
+) else (
+    set DOWNLOAD_URL=https://github.com/%GITHUB_REPO%/archive/refs/tags/%LATEST_TAG%.zip
 )
+echo URL: %DOWNLOAD_URL%
+echo.
 
 :: Download
 echo Downloading update package...
