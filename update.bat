@@ -1,11 +1,13 @@
 @echo off
 setlocal enabledelayedexpansion
 :: wow~ updater (Windows)
-:: Download latest from GitHub Releases and overwrite
+:: Download latest from Gitee Releases (GitHub old repo as fallback) and overwrite
 
 set SCRIPT_DIR=%~dp0
 cd /d "%SCRIPT_DIR%"
 
+set GITEE_REPO=nuoge233/wow
+set GITHUB_REPO=nuoge2333/Wow-
 set TEMP_DIR=%TEMP%\wow_update_%RANDOM%
 set TEMP_ZIP=%TEMP_DIR%\update.zip
 
@@ -17,31 +19,44 @@ echo.
 :: Create temp dir
 mkdir "%TEMP_DIR%" 2>nul
 
-:: Get latest release info
+:: Get latest release info: Gitee first, GitHub fallback
 echo Checking latest version...
-powershell -Command "& { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; try { $r = Invoke-RestMethod -Uri 'https://api.github.com/repos/nuoge2333/Wow-/releases/latest'; Write-Output $r.tag_name; Write-Output $r.assets[0].browser_download_url } catch { Write-Output 'ERROR' } }" > "%TEMP_DIR%\release.txt" 2>nul
+set RELEASE_HOST=gitee
+powershell -Command "& { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; try { $r = Invoke-RestMethod -Uri 'https://gitee.com/api/v5/repos/nuoge233/wow/releases/latest'; Write-Output $r.tag_name; Write-Output $r.assets[0].browser_download_url } catch { Write-Output 'ERROR' } }" > "%TEMP_DIR%\release.txt" 2>nul
 
-if not exist "%TEMP_DIR%\release.txt" (
-    echo Cannot access GitHub API. Check your network.
+set /p LATEST_TAG=<"%TEMP_DIR%\release.txt"
+if "%LATEST_TAG%"=="ERROR" (
+    echo Gitee unavailable, trying GitHub...
+    set RELEASE_HOST=github
+    powershell -Command "& { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; try { $r = Invoke-RestMethod -Uri 'https://api.github.com/repos/nuoge2333/Wow-/releases/latest'; Write-Output $r.tag_name; Write-Output $r.assets[0].browser_download_url } catch { Write-Output 'ERROR' } }" > "%TEMP_DIR%\release.txt" 2>nul
+    set /p LATEST_TAG=<"%TEMP_DIR%\release.txt"
+)
+
+if "%LATEST_TAG%"=="ERROR" (
+    echo Cannot access Gitee/GitHub API. Check your network.
     goto :cleanup
 )
 
-:: Read tag and download url
-set /p LATEST_TAG=<"%TEMP_DIR%\release.txt"
+:: Read download url (2nd line)
 for /f "usebackq skip=1 delims=" %%a in ("%TEMP_DIR%\release.txt") do (
     set DOWNLOAD_URL=%%a
     goto :got_url
 )
 :got_url
 
-if "%LATEST_TAG%"=="ERROR" (
-    echo Failed to get version info.
-    goto :cleanup
-)
-
-echo Latest: %LATEST_TAG%
+echo Latest: %LATEST_TAG% (source: %RELEASE_HOST%)
 echo URL: %DOWNLOAD_URL%
 echo.
+
+:: Fallback to source zip if no custom asset
+if "%DOWNLOAD_URL%"=="" (
+    if "%RELEASE_HOST%"=="gitee" (
+        set DOWNLOAD_URL=https://gitee.com/nuoge233/wow/repository/archive/%LATEST_TAG%.zip
+    ) else (
+        set DOWNLOAD_URL=https://github.com/nuoge2333/Wow-/archive/refs/tags/%LATEST_TAG%.zip
+    )
+    echo Fallback URL: %DOWNLOAD_URL%
+)
 
 :: Download
 echo Downloading update package...
@@ -94,7 +109,7 @@ for %%i in ("%PROJECT_DIR%*") do (
 
 echo.
 echo ========================================
-echo   Update complete! %LATEST_TAG%
+echo   Update complete! %LATEST_TAG% (source: %RELEASE_HOST%)
 echo ========================================
 echo.
 echo Run wow.bat to launch wow~

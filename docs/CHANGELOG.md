@@ -8,7 +8,8 @@
 
 | 版本 | 状态 | 发布时间 |
 |------|------|------|
-| **3.4.10** | 当前版本 |2026-08-28|
+| **3.4.11** | 当前版本 |2026-09-13|
+| **3.4.10** | 上一版本 |2026-08-28|
 | **3.4.9** | 上一版本 |2026-08-28|
 | **3.4.8** | 上一版本 |2026-08-27|
 | **3.4.7** | 上一版本 |2026-08-27|
@@ -49,6 +50,18 @@
 | **3.0.0** | 上一版本 |2026-07-23|
 | **2.0.0** | 内部迭代 |2026-02-27|
 | **1.0.0** | 内部迭代 |2026-02-07|
+
+---
+
+## [3.4.11] — 2026-09-13
+
+### 🔄 变更：自更新源迁移到 Gitee（GitHub 旧仓库作兜底）
+
+> 仓库地址由 GitHub `nuoge2333/Wow-` 迁移到 Gitee `nuoge233/wow`。自更新脚本优先从 Gitee 拉取，Gitee 不可达时自动回退 GitHub 旧仓库，去掉原来的 ghproxy 多镜像代理。
+
+- `update.sh`：主源 `https://gitee.com/api/v5/repos/nuoge233/wow/releases/latest`，兜底 `https://api.github.com/repos/nuoge2333/Wow-/releases/latest`；源站 zip 回退按当前源分别走 `gitee.com/.../repository/archive/{tag}.zip` 与 `github.com/.../archive/refs/tags/{tag}.zip`；
+- `update.bat`：同样 Gitee 优先、GitHub 兜底；
+- `README.MD`：Issue 与官方发布页链接改为 Gitee。
 
 ---
 
