@@ -27,8 +27,10 @@ powershell -Command ^
   "function Get-LatestTag($base,$repo){" ^
   "  try { $r=Invoke-RestMethod -Uri \"$base/repos/$repo/releases/latest\"; if($r.tag_name){return $r.tag_name} } catch {}" ^
   "  try { $tags=Invoke-RestMethod -Uri \"$base/repos/$repo/tags\";" ^
-  "    $vs=$tags | Where-Object { $_.name -match '^v?\d+\.\d+\.\d+$' } | ForEach-Object { $_.name };" ^
-  "    return ($vs | Sort-Object { [version]($_.TrimStart('v')) } | Select-Object -Last 1) } catch {}" ^
+  "    $vs=$tags | Where-Object { $_.name -match '^v?\d+\.\d+\.\d+(-[0-9]+\.[0-9]+)?$' } | ForEach-Object {" ^
+  "      $n=$_.name.TrimStart('v');" ^
+  "      if($n -match '^(\d+)\.(\d+)\.(\d+)'){ [PSCustomObject]@{name=$_.name; k=([int]$Matches[1]*1000000+[int]$Matches[2]*1000+[int]$Matches[3])} } };" ^
+  "    return (($vs | Sort-Object k | Select-Object -Last 1).name) } catch {}" ^
   "  return $null" ^
   "}" ^
   "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12;" ^

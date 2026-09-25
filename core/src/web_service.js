@@ -16,6 +16,8 @@ const config = require('./config');
 const utils = require('./utils');
 const ServerManager = require('./server');
 const Terracotta = require('./terracotta');
+// V3.5.0：事件日志
+const { logger } = require('./log');
 
 // 用于存储 WebSocket 客户端连接
 let wsClients = [];
@@ -441,6 +443,7 @@ function startWeb(options = {}) {
         console.log(`Web 服务已启动: http://${host}:${port}`);
         console.log(`  主题: ${theme}`);
         console.log(`  静态目录: ${webDir}`);
+        logger.impt(`Web 管理面板已启动 | 地址 http://${host}:${port} | 主题 ${theme}`);
 
         // 写��� PID 文件和端口文件（跨进程状态）
         try {
@@ -472,6 +475,7 @@ function startWeb(options = {}) {
  */
 function stopWeb() {
     // 方式 1：通过 PID 文件停止（跨进程兼容）
+    logger.impt('正在停止 Web 管理面板...');
     if (fs.existsSync(WEB_PID_FILE)) {
         try {
             const pid = parseInt(fs.readFileSync(WEB_PID_FILE, 'utf8').trim());
@@ -555,13 +559,18 @@ function webStatus() {
     }
 
     console.log('Web 服务未运行');
+    logger.info('查询 Web 管理面板状态：未运行');
     return { running: false };
 }
 
 /**
  * 执行命令（内部函数）
+ * V3.5.0：Web 页面（/api/exec 与 WebSocket command）发起的指令统一在此落盘记录。
  */
 function execCommand(command, args = []) {
+    const argStr = (args && args.length) ? ' ' + args.join(' ') : '';
+    const fullCmd = `wow ${command}${argStr}`.trim();
+    logger.impt(`Web 页面执行指令: ${fullCmd}`);
     return new Promise((resolve, reject) => {
         const cmdParts = command.split(' ');
         const mainCmd = cmdParts[0];
@@ -589,9 +598,13 @@ function execCommand(command, args = []) {
 
         proc.on('close', (code) => {
             if (code === 0) {
-                resolve(output || '命令执行完成');
+                const out = output || '命令执行完成';
+                logger.command(fullCmd, true, out.slice(0, 200));
+                resolve(out);
             } else {
-                reject(new Error(error || `命令执行失败，退出码: ${code}`));
+                const err = error || `命令执行失败，退出码: ${code}`;
+                logger.command(fullCmd, false, err.slice(0, 200));
+                reject(new Error(err));
             }
         });
 

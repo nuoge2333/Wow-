@@ -10,6 +10,8 @@ const path = require('path');
 const fs = require('fs-extra');
 const config = require('./config');
 const utils = require('./utils');
+// V3.5.0：事件日志
+const { logger } = require('./log');
 
 class Mailer {
     constructor() {
@@ -76,6 +78,7 @@ class Mailer {
             // 检查是否有被拒收的收件人
             if (info.rejected && info.rejected.length > 0) {
                 console.warn(`邮件被拒收: ${info.rejected.join(', ')}`);
+                logger.warn(`邮件被拒收: ${to} (${info.rejected.join(', ')})`);
                 return {
                     success: false,
                     error: `邮件被拒收: ${info.rejected.join(', ')}`,
@@ -84,6 +87,7 @@ class Mailer {
             }
 
             console.log(`邮件已发送: ${info.messageId}`);
+            logger.info(`邮件已发送: ${to} (${info.messageId})`);
             return {
                 success: true,
                 messageId: info.messageId,
@@ -91,6 +95,7 @@ class Mailer {
             };
         } catch (e) {
             console.error(`邮件发送失败: ${e.message}`);
+            logger.erro(`邮件发送失败: ${to} -> ${e.message}`);
             return { success: false, error: e.message };
         }
     }
@@ -134,9 +139,10 @@ class Mailer {
      */
     async sendCrashReport(crashInfo, logContent) {
         if (!this.sendOnCrash || !this.adminEmail) {
+            logger.warn('崩溃报告未发送：邮件未配置或未启用崩溃报告');
             return { success: false, error: '邮件未配置或未启用崩溃报告' };
         }
-
+        logger.impt(`准备发送崩溃报告: ${crashInfo.type || '未知'} | ${crashInfo.time || crashInfo.timestamp || '未知时间'}`);
         // 兼容 CLI 传参格式：timestamp -> time, message -> error
         const time = crashInfo.time || crashInfo.timestamp || '未知时间';
         const version = crashInfo.version || '未知';

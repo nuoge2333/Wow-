@@ -7,6 +7,8 @@
 
 const readline = require('readline');
 const pkg = require('../package.json');
+// V3.5.0：事件日志
+const { logger } = require('./log');
 
 /**
  * 创建 readline 接口
@@ -147,9 +149,12 @@ async function showMainMenu(options = {}, directChoice = null) {
         // 纯数字导航：1-15 直接分发到对应菜单（数值比较，避免字符串比较误判）
         const num = parseInt(choice, 10);
         if (!isNaN(num) && num >= 1 && num <= 15) {
+            const label = menuItems[num - 1] ? menuItems[num - 1][1] : '';
+            logger.impt(`菜单操作: ${num} ${label}`);
             await dispatchMenu(String(num), options, rl);
             await ask(rl, '\n按回车键返回主菜单...');
         } else {
+            logger.warn(`无效菜单选择: ${choice}`);
             console.log('无效的选择。本菜单仅支持数字选择；如需使用命令（如 server start / web start），请直接查阅 README.MD 中的命令说明。');
             await ask(rl, '按回车键继续...');
         }

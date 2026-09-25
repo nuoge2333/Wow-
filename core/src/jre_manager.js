@@ -11,6 +11,8 @@ const axios = require('axios');
 const { spawn } = require('child_process');
 const ProgressBar = require('progress');
 const utils = require('./utils');
+// V3.5.0：事件日志
+const { logger } = require('./log');
 
 // JRE 下载源配置
 const JRE_SOURCES = {
@@ -145,6 +147,7 @@ class JreManager {
 
         // 下载
         console.log(`正在下载 JRE ${version} (${this.os}-${this.arch})...`);
+        logger.impt(`下载 JRE: ${version} (${this.os}-${this.arch})`);
         const downloadUrl = this._getDownloadUrl(featureVersion, this.os, this.arch);
         if (!downloadUrl) {
             throw new Error(`无法获取 JRE ${version} 的下载链接`);
@@ -156,20 +159,22 @@ class JreManager {
         try {
             // 下载 JRE 包
             const archivePath = await this._downloadFile(downloadUrl, tempDir, `jre-${featureVersion}`);
-            
+
             // 解压
             await this._extractArchive(archivePath, versionDir);
-            
+
             // 清理临时文件
             fs.removeSync(tempDir);
-            
+
             // 记录已下载
             this.downloadedVersions.push(featureVersion);
-            
+
             console.log(`JRE ${version} 安装完成: ${javaPath}`);
+            logger.info(`JRE 安装完成: ${version} -> ${javaPath}`);
             return javaPath;
         } catch (e) {
             fs.removeSync(tempDir);
+            logger.erro(`JRE 下载失败: ${version} -> ${e.message}`);
             throw new Error(`JRE ${version} 下载失败: ${e.message}`);
         }
     }

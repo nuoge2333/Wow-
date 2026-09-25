@@ -16,6 +16,8 @@ const ProgressBar = require('progress');
 const utils = require('./utils');
 const config = require('./config');
 const JreManager = require('./jre_manager');
+// V3.5.0：事件日志
+const { logger } = require('./log');
 
 // 模组加载器安装器下载的镜像源（按优先级尝试）：
 // 1) 配置默认镜像（通常 bmclapi2.bangbang93.com）
@@ -211,8 +213,17 @@ class Installer {
         const installDir = targetDir || this.serverDir;
         fs.ensureDirSync(installDir);
 
+        logger.impt(`安装服务端核心: ${type} ${version}${build ? ' (构建 ' + build + ')' : ''}`);
+
         if (source.kind === 'installer') {
-            return await this._installModLoader(type, version, build, installDir);
+            try {
+                const p = await this._installModLoader(type, version, build, installDir);
+                logger.info(`安装完成(加载器): ${type} ${version}`);
+                return p;
+            } catch (e) {
+                logger.erro(`安装失败(加载器): ${type} ${version} -> ${e.message}`);
+                throw e;
+            }
         }
 
         // ---- 直连下载型 ----
@@ -263,9 +274,11 @@ class Installer {
 
             this._recordConfig(type, version);
             await this._copyToPool(type, version, targetPath);
+            logger.info(`安装完成: ${type} ${version} -> ${targetPath}`);
             return targetPath;
         } catch (e) {
             if (fs.existsSync(tempPath)) fs.removeSync(tempPath);
+            logger.erro(`安装失败: ${type} ${version} -> ${e.message}`);
             throw new Error(`下载失败: ${e.message}`);
         }
     }
@@ -873,6 +886,7 @@ class Installer {
 
         console.log(`下载文件: ${url}`);
         console.log(`  保存到: ${destPath}`);
+        logger.impt(`下载文件: ${url} -> ${destPath}`);
 
         try {
             const response = await axios({
@@ -903,8 +917,10 @@ class Installer {
             });
 
             console.log(`✅ 下载完成: ${destPath}`);
+            logger.info(`下载完成: ${destPath}`);
             return destPath;
         } catch (e) {
+            logger.erro(`下载失败: ${url} -> ${e.message}`);
             throw new Error(`下载失败: ${e.message}`);
         }
     }

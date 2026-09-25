@@ -14,6 +14,8 @@ const utils = require('./utils');
 const config = require('./config');
 const JreManager = require('./jre_manager');
 const axios = require('axios');
+// V3.5.0：事件日志
+const { logger } = require('./log');
 
 // ==================== 开服控制台：wow 指令拦截 ====================
 // 在 `wow server start` 的交互终端中，用户输入既可发给 MC 服务端（如 /stop、op），
@@ -218,6 +220,25 @@ class ServerManager {
             fs.ensureDirSync(path.dirname(this.wowLogFile));
             fs.appendFileSync(this.wowLogFile, text.endsWith('\n') ? text : text + '\n', 'utf8');
         } catch (e) {}
+    }
+
+    /**
+     * V3.5.0：扫描一段 Minecraft 输出，将含错误特征的内容记入事件日志（ERRO）。
+     * 仅抽取错误特征行，避免把整份 MC 日志刷进 wow 事件日志。
+     */
+    _logMcChunk(data) {
+        try {
+            const text = data.toString();
+            if (!text) return;
+            const lines = text.split(/\r?\n/);
+            for (const raw of lines) {
+                const line = raw.trim();
+                if (!line) continue;
+                if (/\[(ERROR|SEVERE|FATAL)\]|Exception in thread|Exception:|Caused by:|Error:|java\.lang\.|Unhandled|crash|无法|失败/i.test(line)) {
+                    logger.erro(`[MC] ${line.slice(0, 300)}`);
+                }
+            }
+        } catch (e) { /* 忽略 */ }
     }
 
     /** 打印当前控制台的标题栏与操作提示 */
@@ -679,6 +700,7 @@ class ServerManager {
     async start(memory = '2G', extraJvmArgs = '') {
         if (this.isRunning()) {
             console.log('服务器已在运行中');
+            logger.info('启动服务器：服务器已在运行中');
             return;
         }
 
@@ -715,6 +737,7 @@ class ServerManager {
         } catch (e) {
             console.error('未找到服务器核心，请先用 install 命令安装');
             console.error('wow install <类型> <版本>');
+            logger.erro('启动服务器失败：未找到服务器核心文件');
             return;
         }
 
@@ -739,10 +762,12 @@ class ServerManager {
             this.process.stdout.on('data', (data) => {
                 if (this._mode === 'mc') process.stdout.write(data);
                 logStream.write(data);
+                this._logMcChunk(data);
             });
             this.process.stderr.on('data', (data) => {
                 if (this._mode === 'mc') process.stderr.write(data);
                 logStream.write(data);
+                this._logMcChunk(data);
             });
 
             // 接管 stdin：readline 读取用户输入，按当前控制台视图路由
@@ -847,11 +872,15 @@ class ServerManager {
                 stdio: ['pipe', logStream, logStream],
                 detached: false
             });
+            // 非交互模式无终端回显，仍需扫描 MC 输出中的错误计入事件日志
+            this.process.stdout.on('data', (data) => this._logMcChunk(data));
+            this.process.stderr.on('data', (data) => this._logMcChunk(data));
         }
 
         this._writePid(this.process.pid);
         console.log(`服务器已启动，PID: ${this.process.pid}`);
         console.log(`日志文件: ${this.logFile}`);
+        logger.impt(`服务器已启动 | PID ${this.process.pid} | 核心 ${cmd.jarFile} | 内存 ${memory}`);
 
         // V3.3.0 联机 / 内网穿透（陶瓦 Terracotta）：若开启 auto_room，服务器启动后自动开房
         if (config.getConfig('lan.auto_room', false)) {
@@ -873,13 +902,22 @@ class ServerManager {
             }
             this._stopLanWatch();
             if (logStream) logStream.end();
-            console.log(`服务器进程退出，退出码: ${code}`);
+            if (code && code !== 0) {
+                console.log(`服务器进程退出，退出码: ${code}`);
+                logger.erro(`Minecraft 进程异常退出（退出码 ${code}），疑似崩溃`);
+                logger.markCrash();
+            } else {
+                console.log(`服务器进程退出，退出码: ${code}`);
+                logger.info('Minecraft 进程已正常退出');
+            }
             this._removePid();
             this.process = null;
         });
 
         this.process.on('error', (err) => {
             console.error(`进程错误: ${err.message}`);
+            logger.erro(`Minecraft 进程启动/运行错误: ${err.message}`);
+            logger.markCrash();
         });
 
         // 交互模式：保持前台运行，直到服务器进程退出（可实时查看日志并输入指令）
@@ -942,6 +980,7 @@ class ServerManager {
 
         if (!this.isRunning()) {
             console.log('服务器未运行');
+            logger.info('停止服务器：服务器未运行');
             return;
         }
 
@@ -949,6 +988,7 @@ class ServerManager {
 
         // 优先尝试通过 stdin 发送 stop 命令
         console.log('正在停止服务器...');
+        logger.impt('正在停止服务器（发送 stop 指令）...');
         const sent = this.sendCommand('stop');
         if (sent) {
             console.log('已发送 stop 命令，等待服务器保存并退出...');
@@ -1019,15 +1059,18 @@ class ServerManager {
                 const result = exec(`taskkill /F /PID ${pid}`, { timeout: 5000 });
                 if (result.stderr && !result.stderr.includes('SUCCESS')) {
                     console.error(`强制终止失败: ${result.stderr}`);
+                    logger.erro(`强制终止服务器失败: ${result.stderr}`);
                     return;
                 }
             } else {
                 process.kill(pid, 'SIGKILL');
             }
             console.log(`已强制终止进程 ${pid}`);
+            logger.warn(`已强制终止服务器进程 ${pid}`);
             this._removePid();
         } catch (e) {
             console.error(`强制终止失败: ${e.message}`);
+            logger.erro(`强制终止服务器失败: ${e.message}`);
         }
     }
 

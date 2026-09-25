@@ -24,13 +24,16 @@ const LogHandler = require('./log_handler');
 const Mailer = require('./mailer');
 const { startWeb, stopWeb, webStatus } = require('./web_service');
 const Terracotta = require('./terracotta');
+// V3.5.0：事件日志（记录指令发起/完成/失败、MC 报错、Web 面板操作等）
+const { logger, installGlobalErrorHook } = require('./log');
+installGlobalErrorHook();
 
 // ==================== 配置与初始化 ====================
 
 program
     .name('wow')
     .description('Minecraft 服务器管理工具 - 默认优先，可以修改')
-    .version('3.4.12', '-V');
+    .version('3.5.0-26.27', '-V');
 
 // ==================== init ====================
 
@@ -903,5 +906,26 @@ configCmd
     });
 
 // ==================== 解析执行 ====================
+
+// V3.5.0：事件日志 —— 全局记录每条指令的「发起」与「完成/失败」
+// preAction：进入任意子命令动作前，记录用户执行的指令（只记最外层一次）
+// postAction：动作正常完成后，记录指令执行成功
+let _wowCmdStartLogged = false;
+let _wowCmdResolved = false;
+let _wowCmdLine = '';
+program.hook('preAction', (thisCmd, actionCmd) => {
+    if (!_wowCmdStartLogged) {
+        _wowCmdLine = process.argv.slice(2).join(' ').trim() || '(无参数)';
+        logger.impt(`用户执行指令: wow ${_wowCmdLine}`);
+        _wowCmdStartLogged = true;
+        _wowCmdResolved = false;
+    }
+});
+program.hook('postAction', () => {
+    if (!_wowCmdResolved) {
+        logger.info(`指令执行完成: wow ${_wowCmdLine}`);
+        _wowCmdResolved = true;
+    }
+});
 
 program.parse(process.argv);
