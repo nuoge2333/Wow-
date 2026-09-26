@@ -184,9 +184,9 @@ function getServerDir() {
         if (fs.existsSync(schemePath)) {
             return schemePath;
         }
-        // 配置指向的方案目录已不存在，回退到默认 server 目录
+        // 配置指向的方案目录已不存在，回退到根 scheme 目录
     }
-    const serverDir = config.getConfig('server.dir', '../server');
+    const serverDir = config.getConfig('server.dir', '../scheme');
     return resolvePath(serverDir);
 }
 

@@ -26,7 +26,7 @@ const STATE = {
 
 class SchemeManager {
     constructor() {
-        this.schemesDir = utils.resolvePath('schemes');
+        this.schemesDir = utils.resolvePath('../scheme');
         this.poolDir = utils.getPoolPath();
         this.poolIndexPath = path.join(this.poolDir, 'index.yaml');
         this.serverDir = utils.getServerDir();

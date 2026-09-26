@@ -33,7 +33,7 @@ installGlobalErrorHook();
 program
     .name('wow')
     .description('Minecraft 服务器管理工具 - 默认优先，可以修改')
-    .version('3.5.1-26.29', '-V');
+    .version('3.5.2-26.3a', '-V');
 
 // ==================== init ====================
 
@@ -45,7 +45,7 @@ program
 
         // 创建必要目录
         const dirs = [
-            utils.resolvePath('../server'),
+            utils.resolvePath('../scheme'),
             utils.resolvePath('../themes'),
             utils.resolvePath('../themes/default'),
             utils.resolvePath('pool/cores'),
@@ -164,23 +164,34 @@ serverCmd
 // ==================== install ====================
 
 // V3.3.10：install 仍保留但不在 --help 列出（commander v11 无 .hideHelp()，用 _hidden 属性实现）。
+// V3.5.2：除 `install party` 彩蛋与 URL 下载外，核心安装（vanilla/paper/forge…）已迁移到 scheme create --type。
 program
     .command('install <target> [version]')
-    .description('安装服务端核心 或 下载任意 URL 文件')
-    .option('-b, --build <id>', '构建标识（Mohist 为 git sha，可省略以自动取最新）/ 加载器版本（forge/fabric/neoforge/quilt）')
+    .description('彩蛋 / 下载任意 URL 文件（核心安装请改用 scheme create --type）')
+    .option('-b, --build <id>', '构建标识（Mohist 为 git sha）/ 加载器版本（forge/fabric/neoforge/quilt）')
     .option('-o, --output <path>', '输出路径（仅 URL 下载时有效）')
     .action(async (target, version, options) => {
-        const installer = new Installer();
-        try {
-            if (target.startsWith('http://') || target.startsWith('https://')) {
-                const output = options.output || path.join(utils.getServerDir(), path.basename(target));
-                await installer.downloadFile(target, output);
-            } else {
-                await installer.install(target, version, options.build);
-            }
-        } catch (e) {
-            console.error(`❌ 操作失败: ${e.message}`);
+        // ============ 彩蛋入口 ============
+        if (target === 'party') {
+            const { runParty } = require('./party/party');
+            await runParty();
+            return;
         }
+        // ============ URL 下载 ============
+        if (target.startsWith('http://') || target.startsWith('https://')) {
+            const installer = new Installer();
+            const output = options.output || path.join(utils.getServerDir(), path.basename(target));
+            try {
+                await installer.downloadFile(target, output);
+            } catch (e) {
+                console.error(`❌ 下载失败: ${e.message}`);
+            }
+            return;
+        }
+        // ============ 核心安装已迁移到 scheme ============
+        console.log(`💡 核心安装已迁移到 scheme 命令，请改用：`);
+        console.log(`   scheme create <名称> --type ${target} --version ${version || '<MC版本>'}`);
+        console.log(`   例如：scheme create myserver --type ${target} --version ${version || '1.20.1'}`);
     })._hidden = true;
 
 // ==================== mod ====================
@@ -928,4 +939,60 @@ program.hook('postAction', () => {
     }
 });
 
-program.parse(process.argv);
+// V3.5.2：无参数运行（如 ./wow.sh）进入交互式 REPL
+// 逐行读取指令，用户无需输入 wow 前缀（如 server start），exit / quit 退出
+async function startRepl() {
+    const readline = require('readline');
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout, prompt: 'wow> ' });
+    console.log('Wow~ 已进入交互模式（输入指令，无需 wow 前缀；exit / quit 退出）');
+    logger.impt('进入交互式 REPL 模式');
+    rl.prompt();
+    rl.on('line', async (line) => {
+        const input = line.trim();
+        if (!input) { rl.prompt(); return; }
+        if (input === 'exit' || input === 'quit') { rl.close(); return; }
+        const args = input.split(/\s+/);
+        // 顶层命令预校验：未知命令直接给出干净提示，避免 commander 默认报错文案
+        // help / -h / --help 为 commander 内置，不在 program.commands 列表中，需单独放行
+        const isHelp = args[0] === 'help' || args.includes('-h') || args.includes('--help');
+        const known = isHelp || program.commands.some(c =>
+            c.name() === args[0] ||
+            (typeof c.alias === 'function' && c.alias() && c.alias() === args[0]) ||
+            (typeof c.aliases === 'function' && c.aliases().includes(args[0]))
+        );
+        if (!known) {
+            console.error(`❌ 未知指令: ${input}（输入 help 查看可用指令）`);
+            rl.prompt();
+            return;
+        }
+        // 重置指令日志标记，使每次交互指令都能被事件日志系统记录
+        _wowCmdStartLogged = false;
+        _wowCmdResolved = false;
+        _wowCmdLine = '';
+        // 同步 process.argv，保证 preAction/postAction 钩子记录到真实指令
+        process.argv = ['node', 'cli.js', ...args];
+        try {
+            program.exitOverride();
+            await program.parseAsync(['node', 'cli.js', ...args]);
+        } catch (err) {
+            if (err && (err.code === 'commander.helpDisplayed' || err.code === 'commander.help')) {
+                // 帮助已打印，忽略
+            } else if (err && err.message) {
+                console.error(err.message);
+            }
+        }
+        rl.prompt();
+    });
+    rl.on('SIGINT', () => { rl.close(); });
+    rl.on('close', () => {
+        logger.info('退出交互式 REPL 模式');
+        console.log('再见~');
+        process.exit(0);
+    });
+}
+
+if (process.argv.length <= 2) {
+    startRepl();
+} else {
+    program.parse(process.argv);
+}

@@ -13,7 +13,7 @@ const CONFIG_FILE = path.join(__dirname, '../wow.yaml');
 const DEFAULT_CONFIG = {
     language: 'zh_CN',
     server: {
-        dir: '../server',          // 相对于 core/ 的路径
+        dir: '../scheme',          // 相对于 core/ 的路径（V3.5.2：删 server/，服务器运行于方案目录）
         jar: null,
         java: null,
         jvm_args: ['-Xmx2G', '-Xms2G', '-XX:+UseG1GC']
@@ -28,7 +28,7 @@ const DEFAULT_CONFIG = {
         sources: ['curseforge', 'modrinth']
     },
     backup: {
-        dir: '../server/backups',
+        dir: '../scheme/backups',
         auto: false,
         max: 5
     },

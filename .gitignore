@@ -10,11 +10,10 @@ package-lock.json
 core/pool/
 core/jre/
 core/node/
-core/schemes/
+scheme/
 core/down/
 core/temp/
 core/wow.yaml
-server/
 
 # ====================
 # 日志与临时文件

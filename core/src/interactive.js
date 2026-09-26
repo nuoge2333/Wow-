@@ -250,7 +250,7 @@ async function dispatchMenu(choice, options, rl) {
                 console.log('  0. 返回');
                 const subChoice = await ask(rl, '\n请选择 (0-7): ');
 
-                const serverDir = utils ? utils.getServerDir() : '../server';
+                const serverDir = utils ? utils.getServerDir() : '../scheme';
                 const configEditor = require('./config_editor');
 
                 switch (subChoice) {
@@ -370,7 +370,7 @@ async function dispatchMenu(choice, options, rl) {
                 // 修改服务器配置 (server.properties)
                 printHeader('修改服务器配置 (server.properties)');
                 const ServerProperties = require('./config').ServerProperties;
-                const serverDir = utils ? utils.getServerDir() : '../server';
+                const serverDir = utils ? utils.getServerDir() : '../scheme';
                 const props = new ServerProperties(serverDir);
 
                 console.log('\n  1. 查看所有属性');
