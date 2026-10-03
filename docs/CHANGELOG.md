@@ -8,7 +8,8 @@
 
 | 版本 | 状态 | 发布时间 |
 |------|------|------|
-| **3.5.2-26.3a** | 当前版本 |2026-09-26|
+| **3.5.3-26.3b** | 当前版本 |2026-10-04|
+| **3.5.2-26.3a** | 上一版本 |2026-09-26|
 | **3.5.1-26.29** | 上一版本 |2026-09-26|
 | **3.5.0-26.27** | 上一版本 |2026-09-26|
 | **3.4.12** | 上一版本 |2026-09-13|
@@ -54,6 +55,29 @@
 | **3.0.0** | 上一版本 |2026-07-23|
 | **2.0.0** | 内部迭代 |2026-02-27|
 | **1.0.0** | 内部迭代 |2026-02-07|
+
+---
+
+## [3.5.3-26.3b] — 2026-10-04
+
+### 安全整改（响应代码审查）
+> 基于一份第三方安全/工程质量审查报告，对高危与易改中危问题落地整改。**安全优先，不为新手便利牺牲服务器安全。**
+
+- **🔴 Web `/api/exec` 与 WebSocket 命令加拒绝清单（V3.5.3）**：新增 `core/src/command_policy.js`，导出 `isWebCommandAllowed()`。Web 端禁止 `scheme delete/create/switch/edit/pull/prune/register/export/import`、`mod remove/sync/toggle`、`pack install`、`web start`、`logs tail`、`init`、以及 `install <远程 http(s) 地址>` 与 `config` 写入形态；其余 wow 命令（含面板正常使用的 `server start`、`mod install`、`theme install/switch/delete`、`plugin *`、`set *`、`pack generate`、`install <本地文件>` 等）放行。覆盖审查点名的 `scheme delete`/`mod remove` 等灾难性操作，同时不打断面板功能。
+- **🔴 生产环境不再回显登录验证码（devCode）**：未配置 SMTP 时，仅当 `web.dev_mode=true` 或 `NODE_ENV=development` 才随响应返回验证码；否则返回 `403` 并提示「请先在终端配置 SMTP 或设置离线密码（web.auth_password）后再登录」。堵住「未配 SMTP 即可直接拿到验证码登录」的绕过。
+- **🔴 新增离线密码登录**：`web.auth_password` 配置项（scrypt 哈希存储，明文首次使用即哈希持久化），作为不配 SMTP 时的合法替代登录方式；登录接口新增密码分支。
+- **🔴 `update.sh` 加完整性 / 哈希校验**：下载后先做 `unzip -tq` 完整性测试，失败即拒绝覆盖；并尝试从同源获取 `SHA256SUMS` 清单校验 zip 哈希，不符则拒绝覆盖（供应链 RCE 面收敛）。建议发版时随 tag 附带 `SHA256SUMS`。
+- **🟡 `utils.js` 改用 `execFileSync` / `spawnSync`**：移除 `execSync` 模板字符串插值（原 `which ${cmd}` 等），消除潜在命令注入模式。
+- **🟡 WebSocket CORS 收紧**：`cors.origin` 由 `'*'` 改为可配置 `web.cors_origins`（默认空=仅同源）；跨域部署时显式设置白名单。
+- **🟡 密钥支持环境变量**：`web.auth_token` 优先读 `WOW_WEB_AUTH_TOKEN`；SMTP 凭据 `user`/`pass` 支持 `WOW_MAIL_SMTP_USER` / `WOW_MAIL_SMTP_PASS`，避免明文落 `wow.yaml`。
+
+### 配置新增（兼容旧配置，默认关闭/空）
+- `web.dev_mode: false`
+- `web.auth_password: null`
+- `web.cors_origins: []`
+
+### 版本号
+- `3.5.3` 语义版本（大.中.小）｜`26` = 2026 后两位｜`3b` = 十六进制**第 59 个**发行包（`0x3b` = 59）
 
 ---
 

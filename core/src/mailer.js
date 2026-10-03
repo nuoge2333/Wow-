@@ -15,7 +15,12 @@ const { logger } = require('./log');
 
 class Mailer {
     constructor() {
-        this.smtpConfig = config.getConfig('mail.smtp', {});
+        // V3.5.3：SMTP 凭据允许用环境变量承载（WOW_MAIL_SMTP_USER / WOW_MAIL_SMTP_PASS），避免明文落 wow.yaml
+        const smtp = config.getConfig('mail.smtp', {}) || {};
+        const resolved = Object.assign({}, smtp);
+        if (process.env.WOW_MAIL_SMTP_USER) resolved.user = process.env.WOW_MAIL_SMTP_USER;
+        if (process.env.WOW_MAIL_SMTP_PASS) resolved.pass = process.env.WOW_MAIL_SMTP_PASS;
+        this.smtpConfig = resolved;
         this.adminEmail = config.getConfig('mail.admin_email', null);
         this.sendOnCrash = config.getConfig('mail.send_on_crash', true);
         this.sendLogsInterval = config.getConfig('mail.send_logs_interval', 0); // 小时

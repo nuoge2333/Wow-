@@ -18,6 +18,8 @@ const ServerManager = require('./server');
 const Terracotta = require('./terracotta');
 // V3.5.0：事件日志
 const { logger } = require('./log');
+// V3.5.3：Web 端命令安全策略（拒绝清单）
+const { isWebCommandAllowed } = require('./command_policy');
 
 // 用于存储 WebSocket 客户端连接
 let wsClients = [];
@@ -38,12 +40,33 @@ const verificationCodes = new Map();
 
 // JWT 密钥
 function getJwtSecret() {
+    // V3.5.3：优先使用环境变量，避免密钥明文落盘
+    const envSecret = process.env.WOW_WEB_AUTH_TOKEN;
+    if (envSecret) return envSecret;
     const configured = config.getConfig('web.auth_token');
     if (configured) return configured;
     // 自动生成并持久化
     const autoSecret = crypto.randomBytes(32).toString('hex');
     config.setConfig('web.auth_token', autoSecret);
     return autoSecret;
+}
+
+// V3.5.3：离线密码（不配 SMTP 时的替代登录）。存 scrypt 哈希，避免明文落盘。
+const SCRYPT_PREFIX = 'scrypt$';
+function hashPassword(plain) {
+    const salt = crypto.randomBytes(16);
+    const derived = crypto.scryptSync(String(plain), salt, 64);
+    return SCRYPT_PREFIX + salt.toString('hex') + '$' + derived.toString('hex');
+}
+function verifyPassword(plain, stored) {
+    if (!stored || typeof stored !== 'string' || !stored.startsWith(SCRYPT_PREFIX)) return false;
+    const [, saltHex, hashHex] = stored.split('$');
+    if (!saltHex || !hashHex) return false;
+    const salt = Buffer.from(saltHex, 'hex');
+    const derived = crypto.scryptSync(String(plain), salt, 64);
+    const expected = Buffer.from(hashHex, 'hex');
+    if (derived.length !== expected.length) return false;
+    return crypto.timingSafeEqual(derived, expected);
 }
 
 /**
@@ -179,9 +202,20 @@ function startWeb(options = {}) {
             if (mailer.isConfigured()) {
                 res.json({ success: true, message: '验证码已发送到您的邮箱' });
             } else {
-                // SMTP 未配置，在控制台输出（开发模式），仍返回成功
-                console.log(`\n📧 [开发模式] 验证码 -> ${email}: ${code}\n`);
-                res.json({ success: true, message: '验证码已生成（SMTP 未配置，请查看控制台）', devCode: code });
+                // V3.5.3：生产环境严禁回显验证码（避免登录绕过）
+                const devMode = config.getConfig('web.dev_mode', false) === true ||
+                    process.env.NODE_ENV === 'development';
+                if (devMode) {
+                    // 仅开发模式：在控制台输出并随响应返回，方便本地调试
+                    console.log(`\n📧 [开发模式] 验证码 -> ${email}: ${code}\n`);
+                    res.json({ success: true, message: '验证码已生成（SMTP 未配置，开发模式）', devCode: code });
+                } else {
+                    // 生产环境未配 SMTP：不回显验证码，提示配置 SMTP 或离线密码
+                    res.status(403).json({
+                        success: false,
+                        error: '请先在终端配置 SMTP 或设置离线密码（web.auth_password）后再登录'
+                    });
+                }
             }
         } catch (e) {
             res.status(500).json({ success: false, error: e.message });
@@ -191,8 +225,41 @@ function startWeb(options = {}) {
     /**
      * 验证码登录
      */
+    /**
+     * 签发 JWT（验证码登录与离线密码登录共用）
+     */
+    function issueToken(res, email) {
+        const secret = getJwtSecret();
+        const sessionTimeout = config.getConfig('web.session_timeout', 86400);
+        const token = jwt.sign(
+            { email: String(email || 'admin@local').toLowerCase(), iat: Math.floor(Date.now() / 1000) },
+            secret,
+            { expiresIn: sessionTimeout }
+        );
+        return res.json({ success: true, token });
+    }
+
     app.post('/api/auth/login', (req, res) => {
-        const { email, code } = req.body;
+        const { email, code, password } = req.body;
+
+        // V3.5.3：离线密码登录（未配 SMTP 时的替代方式）
+        let offlineHash = config.getConfig('web.auth_password', null);
+        if (offlineHash) {
+            // 首次使用若是明文，则哈希后持久化，避免明文落盘
+            if (!offlineHash.startsWith(SCRYPT_PREFIX)) {
+                offlineHash = hashPassword(offlineHash);
+                config.setConfig('web.auth_password', offlineHash);
+            }
+            if (password) {
+                if (verifyPassword(password, offlineHash)) {
+                    logger.impt(`Web 离线密码登录成功: ${email || 'admin@local'}`);
+                    return issueToken(res, email || 'admin@local');
+                }
+                return res.status(401).json({ success: false, error: '离线密码错误' });
+            }
+        }
+
+        // 验证码登录
         if (!email || !code) {
             return res.status(400).json({ success: false, error: '缺少邮箱或验证码' });
         }
@@ -211,17 +278,8 @@ function startWeb(options = {}) {
             return res.status(401).json({ success: false, error: '验证码错误' });
         }
 
-        // 验证通过，生成 JWT
         verificationCodes.delete(email.toLowerCase());
-        const secret = getJwtSecret();
-        const sessionTimeout = config.getConfig('web.session_timeout', 86400);
-        const token = jwt.sign(
-            { email: email.toLowerCase(), iat: Math.floor(Date.now() / 1000) },
-            secret,
-            { expiresIn: sessionTimeout }
-        );
-
-        res.json({ success: true, token });
+        return issueToken(res, email);
     });
 
     /**
@@ -250,15 +308,16 @@ function startWeb(options = {}) {
     app.post('/api/exec', async (req, res) => {
         const { command, args = [] } = req.body;
 
-        if (!command) {
-            return res.status(400).json({ error: '缺少 command 字段' });
-        }
-
-        // 只检查命令是否为空，不限制具体命令
         if (!command || command.trim().length === 0) {
             return res.status(400).json({ error: '命令不能为空' });
         }
-        // 安全检查：只阻止明显的系统命令（如 rm -rf /），但这类命令在 wow CLI 中本身就不存在
+
+        // V3.5.3：Web 端命令安全策略（拒绝清单）——拦截灾难性/不可逆操作
+        const policy = isWebCommandAllowed(command);
+        if (!policy.allowed) {
+            logger.warn(`Web 指令被拒绝: ${command} | ${policy.reason}`);
+            return res.status(403).json({ error: policy.reason });
+        }
 
         try {
             // 执行命令
@@ -399,9 +458,11 @@ function startWeb(options = {}) {
     // ===== WebSocket 支持 =====
 
     // 使用 socket.io 提供 WebSocket 支持
+    // V3.5.3：CORS 默认仅同源；跨域部署时在 web.cors_origins 配置白名单
+    const corsOrigins = config.getConfig('web.cors_origins', []) || [];
     const io = require('socket.io')(server, {
         cors: {
-            origin: '*',
+            origin: corsOrigins.length ? corsOrigins : false,
             methods: ['GET', 'POST']
         }
     });
@@ -426,6 +487,14 @@ function startWeb(options = {}) {
         socket.on('command', async (data) => {
             const { command, args } = data;
             if (!command) return;
+
+            // V3.5.3：与 /api/exec 共用同一套命令安全策略
+            const policy = isWebCommandAllowed(command);
+            if (!policy.allowed) {
+                logger.warn(`WebSocket 指令被拒绝: ${command} | ${policy.reason}`);
+                socket.emit('command_result', { command, success: false, error: policy.reason });
+                return;
+            }
 
             try {
                 const result = await execCommand(command, args || []);

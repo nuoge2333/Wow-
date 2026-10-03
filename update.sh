@@ -101,6 +101,37 @@ else
     exit 0
 fi
 
+# V3.5.3：下载后先做 zip 完整性测试（防截断/损坏）
+if ! unzip -tq "$TEMP_ZIP" >/dev/null 2>&1; then
+    rm -f "$TEMP_ZIP"
+    echo "⚠️ 更新包完整性校验失败，跳过自动更新（可能为损坏或被篡改的下载）"
+    exit 0
+fi
+
+# V3.5.3：可选哈希校验——若官方随发版提供 SHA256SUMS 清单则校验 zip 哈希
+CHECKSUMS_URL=""
+if [ "$RELEASE_HOST" = "gitee" ]; then
+    CHECKSUMS_URL="https://gitee.com/$GITEE_REPO/releases/download/$LATEST_TAG/SHA256SUMS"
+else
+    CHECKSUMS_URL="https://github.com/$GITHUB_REPO/releases/download/$LATEST_TAG/SHA256SUMS"
+fi
+if curl -fsSL --connect-timeout 10 --max-time 30 "$CHECKSUMS_URL" -o "$TEMP_DIR/SHA256SUMS" 2>/dev/null && [ -s "$TEMP_DIR/SHA256SUMS" ]; then
+    if command -v sha256sum >/dev/null 2>&1; then
+        ACTUAL=$(sha256sum "$TEMP_ZIP" | awk '{print $1}')
+        if grep -qi "$ACTUAL" "$TEMP_DIR/SHA256SUMS"; then
+            echo "  ✅ 哈希校验通过"
+        else
+            rm -f "$TEMP_ZIP"
+            echo "⚠️ 更新包哈希与官方清单不符，拒绝覆盖（疑似被篡改），跳过自动更新"
+            exit 0
+        fi
+    else
+        echo "  ℹ️ 系统缺少 sha256sum，跳过哈希校验（仅已通过完整性测试）"
+    fi
+else
+    echo "  ℹ️ 未找到官方 SHA256SUMS 清单，仅做完整性测试（建议发版时附带 SHA256SUMS）"
+fi
+
 # 解压到临时目录
 echo "正在安装更新..."
 if ! unzip -qo "$TEMP_ZIP" -d "$TEMP_DIR/extract" 2>/dev/null; then

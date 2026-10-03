@@ -6,7 +6,8 @@
 const fs = require('fs-extra');
 const path = require('path');
 const os = require('os');
-const { execSync } = require('child_process');
+// V3.5.3：改用 execFileSync/spawnSync 消除模板字符串插值，避免一旦参数来源可变即产生命令注入
+const { execFileSync, spawnSync } = require('child_process');
 
 /**
  * 获取当前操作系统类型
@@ -23,7 +24,7 @@ function getOS() {
  */
 function _whichJava(cmd) {
     try {
-        const whichResult = execSync(`which ${cmd}`, { stdio: 'pipe' });
+        const whichResult = execFileSync('which', [cmd], { stdio: 'pipe' });
         return whichResult.toString().trim();
     } catch {
         return cmd; // 如果无法获取完整路径，返回命令名
@@ -45,9 +46,9 @@ function _detectVersionManagerJava(preferredVersion) {
     for (const vm of vms) {
         for (const v of candidates) {
             try {
-                const p = execSync(`${vm} where java@${v} 2>/dev/null`, { stdio: 'pipe', timeout: 3000 })
-                    .toString().trim();
-                if (p && fs.existsSync(p)) return p;
+                const p = spawnSync(vm, ['where', `java@${v}`], { timeout: 3000 });
+                const out = p && p.stdout ? p.stdout.toString().trim() : '';
+                if (out && fs.existsSync(out)) return out;
             } catch (e) { /* 该版本未安装或无此命令，继续 */ }
         }
     }
@@ -85,8 +86,9 @@ function detectJava(preferredVersion = null) {
     const javaCmds = ['java', 'java.exe'];
     for (const cmd of javaCmds) {
         try {
-            const result = execSync(`${cmd} -version 2>&1`, { stdio: 'pipe', timeout: 3000 });
-            const output = result.toString();
+            // java -version 把版本信息写到 stderr，用 spawnSync 合并 stdout/stderr 读取
+            const r = spawnSync(cmd, ['-version'], { timeout: 3000 });
+            const output = (r.stdout ? r.stdout.toString() : '') + (r.stderr ? r.stderr.toString() : '');
             if (output.includes('version')) {
                 return _whichJava(cmd);
             }
@@ -195,7 +197,7 @@ function getServerDir() {
  */
 function commandExists(cmd) {
     try {
-        const result = execSync(`which ${cmd}`, { stdio: 'pipe' });
+        const result = execFileSync('which', [cmd], { stdio: 'pipe' });
         return result.toString().trim().length > 0;
     } catch {
         return false;

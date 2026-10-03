@@ -37,7 +37,10 @@ const DEFAULT_CONFIG = {
         host: '127.0.0.1',
         auth_token: null,
         run_startup: true,
-        theme: 'default'
+        theme: 'default',
+        dev_mode: false,        // V3.5.3：为 true 时未配 SMTP 仍回显登录验证码（仅开发用）
+        auth_password: null,    // V3.5.3：离线密码（不配 SMTP 时的替代登录，存 scrypt 哈希）
+        cors_origins: []       // V3.5.3：允许的跨源域名白名单；空数组=仅同源
     },
     mail: {
         smtp: {

@@ -33,7 +33,7 @@ installGlobalErrorHook();
 program
     .name('wow')
     .description('Minecraft 服务器管理工具 - 默认优先，可以修改')
-    .version('3.5.2-26.3a', '-V');
+    .version('3.5.3-26.3b', '-V');
 
 // ==================== init ====================
 
