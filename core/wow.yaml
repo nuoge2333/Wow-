@@ -1,6 +1,6 @@
 language: zh_CN
 server:
-  dir: ../server
+  dir: ../scheme
   jar: null
   java: null
   jvm_args:
@@ -17,7 +17,7 @@ mod:
     - curseforge
     - modrinth
 backup:
-  dir: ../server/backups
+  dir: ../scheme/backups
   auto: false
   max: 5
 web:

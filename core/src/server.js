@@ -735,9 +735,19 @@ class ServerManager {
         try {
             this._getServerJar();
         } catch (e) {
-            console.error('未找到服务器核心，请先用 install 命令安装');
-            console.error('wow install <类型> <版本>');
-            logger.erro('启动服务器失败：未找到服务器核心文件');
+            // V3.5.2 起核心安装统一走 scheme create，不再存在 install <类型> <版本> 命令
+            const activeScheme = this.config.getConfig('server.scheme', null);
+            console.error('未找到服务器核心（.jar）');
+            if (activeScheme) {
+                console.error(`当前方案「${activeScheme}」目录内没有可运行的核心`);
+                console.error(`目录: ${this.serverDir}`);
+                console.error(`方案可能未补齐，可尝试: scheme switch ${activeScheme}`);
+            } else {
+                console.error('当前未激活任何方案');
+                console.error('请先创建并切换方案: scheme create <名称> --type <类型> --version <MC版本>');
+                console.error('例如: scheme create myserver --type vanilla --version 1.20.1');
+            }
+            logger.erro(`启动服务器失败：未找到服务器核心文件（方案=${activeScheme || '无'}，目录=${this.serverDir}）`);
             return;
         }
 

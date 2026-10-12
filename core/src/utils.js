@@ -171,18 +171,25 @@ function getJrePath() {
  * 获取当前激活的服务器目录
  *
  * V3.4.x 起改为「直接在方案目录内运行」：若当前激活了方案（server.scheme 配置指向
- * 某个已存在的方案），则服务器直接以 core/schemes/<方案名> 为根目录启动，不再把方案
- * 复制到 server/ 目录再跑。这样可以彻底避免「复制方案到 server 目录」带来的问题：
+ * 某个已存在的方案），则服务器直接以 <项目根>/scheme/<方案名> 为根目录启动，不再把
+ * 方案复制到 server/ 目录再跑。这样可以彻底避免「复制方案到 server 目录」带来的问题：
  *   - 世界数据在 scheme 与 server 两套目录间来回复制、重复、易丢；
  *   - 切换方案时 server/ 被 _backup_ 目录堆积、且原 server/ 内容被整体清空；
  *   - 在方案目录里改了东西（配置/存档），因为实际跑的是 server/ 副本而不生效。
- * 仅当未激活任何方案时，才回退到默认 server.dir（../server）。
+ * 仅当未激活任何方案时，才回退到默认 server.dir（../scheme）。
+ *
+ * V3.5.2 起方案目录由 core/schemes/ 迁移到项目根 scheme/，
+ * 这里必须与 SchemeManager.schemesDir 保持同一路径，否则切换方案后仍会回退到根目录，
+ * 导致「切了方案但 server start 找不到核心」。
  */
 function getServerDir() {
     const config = require('./config');
     const scheme = config.getConfig('server.scheme', null);
     if (scheme) {
-        const schemePath = resolvePath(path.join('schemes', scheme));
+        // 与 SchemeManager.schemesDir 保持同一路径（根 scheme/）。
+        // 这里不用 SchemeManager，避免 scheme_manager -> utils -> scheme_manager 循环依赖；
+        // 该相对路径与 scheme_manager.js 的 resolvePath('../scheme') 等价。
+        const schemePath = resolvePath(path.join('../scheme', scheme));
         if (fs.existsSync(schemePath)) {
             return schemePath;
         }

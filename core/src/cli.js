@@ -33,7 +33,7 @@ installGlobalErrorHook();
 program
     .name('wow')
     .description('Minecraft 服务器管理工具 - 默认优先，可以修改')
-    .version('3.5.3-26.3b', '-V');
+    .version('3.5.4-26.3c', '-V');
 
 // ==================== init ====================
 
@@ -52,8 +52,7 @@ program
             utils.resolvePath('pool/mods'),
             utils.resolvePath('pool/plugins'),
             utils.resolvePath('pool/loader'),
-            utils.resolvePath('jre'),
-            utils.resolvePath('schemes')
+            utils.resolvePath('jre')
         ];
         for (const d of dirs) {
             fs.ensureDirSync(d);
@@ -290,11 +289,25 @@ schemeCmd
     .command('switch <name>')
     .description('切换到指定方案')
     .action(async (name) => {
+        // V3.5.4：防止把 help/-h 等误当方案名（REPL 下 `scheme switch help` 会走到这里）
+        if (name === 'help' || name === '-h' || name === '--help') {
+            console.log('用法: scheme switch <名称>');
+            console.log('查看可用方案: scheme list');
+            return;
+        }
         const schemeManager = new SchemeManager();
         try {
             await schemeManager.switch(name);
         } catch (e) {
             console.error(`❌ 切换失败: ${e.message}`);
+            try {
+                const list = schemeManager.list();
+                if (list && list.length) {
+                    console.log(`可用方案: ${list.map(s => s.name).join(', ')}`);
+                } else {
+                    console.log('当前没有任何方案，请先执行: scheme create <名称> --type <类型> --version <MC版本>');
+                }
+            } catch { /* 列方案失败时忽略 */ }
         }
     });
 

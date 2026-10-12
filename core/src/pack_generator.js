@@ -65,7 +65,8 @@ class PackGenerator {
             } else {
                 const selected = await this._selectWorld(worlds, existingRl);
                 if (selected) {
-                    worldSource = path.join(this.serverDir, '..', '..', 'server', 'worlds', selected);
+                    // V3.5.2 起方案目录已迁至项目根 scheme/，存档直接在方案目录的 world/ 下
+                    worldSource = path.join(this.serverDir, 'world');
                     if (!fs.existsSync(worldSource)) {
                         worldSource = null;
                         console.log('⚠️ 存档不存在，将创建新世界');
