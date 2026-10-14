@@ -45,7 +45,7 @@ get_latest_tag() {
     http_get "$base/repos/$repo/tags" \
         | grep -oE '"name"[[:space:]]*:[[:space:]]*"[^"]*"' \
         | sed 's/.*"\([^"]*\)".*/\1/' \
-        | grep -E '^v?[0-9]+\.[0-9]+\.[0-9]+(-[0-9]+\.[0-9]+)?$' \
+        | grep -E '^v?[0-9]+\.[0-9]+\.[0-9]+(-[0-9]+\.[0-9a-fA-F]+)?$' \
         | sed -E 's/^(v?)([0-9]+)\.([0-9]+)\.([0-9]+).*$/\2 \3 \4 &/' \
         | sort -k1,1n -k2,2n -k3,3n | tail -1 | awk '{print $NF}'
 }
@@ -84,6 +84,21 @@ fi
 
 echo "最新版本: $LATEST_TAG (源: $RELEASE_HOST)"
 echo ""
+
+# 版本比对：本地已是最新则直接跳过，避免每次启动都重复下载并覆盖自身
+CURRENT_TAG=""
+if [ -f "$SCRIPT_DIR/core/package.json" ]; then
+    CURRENT_TAG=$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$SCRIPT_DIR/core/package.json" | head -1)
+fi
+if [ -n "$CURRENT_TAG" ]; then
+    # 统一去掉前导 v 后比较
+    if [ "${LATEST_TAG#v}" = "${CURRENT_TAG#v}" ]; then
+        echo "✅ 当前已是最新版本 ($CURRENT_TAG)，无需更新"
+        exit 0
+    fi
+    echo "本地版本: $CURRENT_TAG → 将更新到 $LATEST_TAG"
+    echo ""
+fi
 
 # 下载链接：直接取源站 zip（releases 资产与源站 zip 等价，且无需私人令牌）
 if [ "$RELEASE_HOST" = "gitee" ]; then
@@ -148,13 +163,16 @@ if [ -z "$PROJECT_DIR" ]; then
 fi
 PROJECT_DIR=$(dirname "$PROJECT_DIR")
 
-# 覆盖更新（跳过运行时目录）
+# 覆盖更新（跳过运行时 / 用户数据目录）
 echo "正在覆盖文件..."
 for item in "$PROJECT_DIR"/*; do
     name=$(basename "$item")
-    # 跳过运行时目录
+    # 跳过运行时与用户数据目录：
+    #   scheme  = V3.5.2 起的服务器运行目录（含用户方案/存档，绝不可覆盖）
+    #   logs    = 运行日志
+    #   update.sh = 正在执行的自更新脚本本体，覆盖会导致运行中的字节流被改写而报错
     case "$name" in
-        server|node_modules|.git|.gitignore)
+        scheme|node_modules|.git|.gitignore|logs|update.sh)
             continue
             ;;
     esac
