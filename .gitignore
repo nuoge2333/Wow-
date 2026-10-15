@@ -10,6 +10,7 @@ package-lock.json
 core/pool/
 core/jre/
 core/node/
+core/lan/
 scheme/
 core/down/
 core/temp/

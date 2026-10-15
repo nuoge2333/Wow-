@@ -81,15 +81,27 @@ class SchemeManager {
         fs.ensureDirSync(path.join(schemePath, 'plugins'));
 
         // 2. 安装/获取服务端核心
+        // V3.5.6：核心安装失败时必须回滚已创建的目录，否则会留下一个没有
+        // scheme.yaml、没有核心 jar 的残缺方案，在 scheme list 中显示为「已损坏」。
         let corePath;
         let coreHash;
-        if (fromPack) {
-            // 从整合包复制核心
-            corePath = await this._installCoreFromPack(fromPack, schemePath);
-        } else {
-            corePath = await this.installer.install(type, version, build, schemePath);
+        try {
+            if (fromPack) {
+                // 从整合包复制核心
+                corePath = await this._installCoreFromPack(fromPack, schemePath);
+            } else {
+                corePath = await this.installer.install(type, version, build, schemePath);
+            }
+            coreHash = await this._computeHash(corePath);
+        } catch (e) {
+            try {
+                if (fs.existsSync(schemePath)) fs.removeSync(schemePath);
+                console.log(`⚠️ 核心安装失败，已回滚方案目录: ${schemePath}`);
+            } catch (cleanErr) {
+                console.log(`⚠️ 回滚方案目录失败，请手动删除: ${schemePath}（${cleanErr.message}）`);
+            }
+            throw new Error(`创建方案 ${name} 失败: ${e.message}`);
         }
-        coreHash = await this._computeHash(corePath);
 
         // 3. 检查核心是否在pool中
         const coreInPool = this._isResourceInPool(coreHash);

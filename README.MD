@@ -56,8 +56,12 @@ wow init
 ### 4. 安装服务器
 
 ```bash
+# 推荐方式：创建方案（自动下载核心并激活）
+wow scheme create myserver --type paper --version 1.20.1
+
+# 或只下载核心到当前方案目录
 wow install vanilla 1.20.1
-# 或安装 Mohist (需要构建号)
+# Mohist 需指定构建号
 wow install mohist 1.20.1 -b 346
 ```
 
@@ -104,18 +108,23 @@ wow web start
 ```
 wow/
 ├── core/                     # 核心代码
-│   ├── src/                  # 源代码 (13 个模块)
-│   ├── pool/                 # 资源池 (核心/模组/插件)
-│   ├── schemes/              # 方案目录
-│   ├── web/                  # Web 前端
+│   ├── src/                  # 源代码
+│   ├── pool/                 # 资源池 (核心/模组/插件，跨方案共享)
+│   ├── lan/                  # 陶瓦联机二进制 (首次使用时自动下载)
 │   ├── wow.yaml              # 配置文件
 │   └── package.json          # 依赖
+├── scheme/                   # 方案目录（每个方案一个子目录，即服务器运行目录）
+│   └── <方案名>/             # 含核心 jar、mods/、plugins/、world/、server.properties、scheme.yaml
+├── web/                      # Web 面板前端（实际生效的前端资源）
 ├── themes/                   # 主题包目录
 ├── wow-plugins/              # wow 插件目录
-├── server/                   # 当前激活的服务器实例
-├── wow.bat / wow.sh      # 启动脚本
+├── wow.bat / wow.sh          # 启动脚本
+├── update.bat / update.sh    # 更新脚本
 └── docs/                     # 文档
 ```
+
+> **说明**：V3.5.2 起方案目录由 `core/schemes/` 迁移至根目录 `scheme/`，
+> 且不再复制到 `server/`——服务器直接在各方案目录内运行。
 
 ---
 

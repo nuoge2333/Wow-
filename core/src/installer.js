@@ -86,9 +86,13 @@ const SERVER_SOURCES = {
         installerJarName: (mc, loader) => `quilt-installer-${loader}.jar`,
         resolveLoader: 'quilt'
     },
+    // Paper（V3.5.6 修复）
+    // 旧接口 ${mirror}/paper/<ver>/latest/download 全部 404：
+    // BMCLAPI 仅镜像 Forge / MC 官方资源，不提供 Paper 分发；
+    // PaperMC 自身也已从 api.papermc.io/v2 迁移到 fill.papermc.io/v3。
+    // kind: 'papermc' → 走 _resolvePaperBuild() 解析真实下载直链。
     paper: {
-        type: 'paper', kind: 'direct',
-        url: (version, mirror) => `${mirror}/paper/${version}/latest/download`,
+        type: 'paper', kind: 'papermc',
         fileName: (version) => `paper-${version}.jar`
     },
     purpur: {
@@ -96,15 +100,18 @@ const SERVER_SOURCES = {
         url: (version) => `https://api.purpurmc.org/v2/purpur/${version}/latest/download`,
         fileName: (version) => `purpur-${version}.jar`
     },
+    // Spigot / CraftBukkit（V3.5.6 修复）
+    // 二者官方不提供预编译 jar，必须用 BuildTools 现场构建（需 JDK + 联网 + 数分钟）。
+    // 旧 URL ${mirror}/spigot/... 同样 404，此处改为给出明确指引而非静默失败。
     spigot: {
-        type: 'spigot', kind: 'direct',
-        url: (version, mirror) => `${mirror}/spigot/${version}/latest/download`,
-        fileName: (version) => `spigot-${version}.jar`
+        type: 'spigot', kind: 'unsupported',
+        reason: 'Spigot 官方不提供预编译服务端，需用 BuildTools 现场构建。',
+        suggestion: '推荐改用 Paper（完全兼容 Spigot 插件，性能更好）：wow install paper <版本>'
     },
     bukkit: {
-        type: 'bukkit', kind: 'direct',
-        url: (version, mirror) => `${mirror}/craftbukkit/${version}/latest/download`,
-        fileName: (version) => `bukkit-${version}.jar`
+        type: 'bukkit', kind: 'unsupported',
+        reason: 'CraftBukkit 官方不提供预编译服务端，需用 BuildTools 现场构建。',
+        suggestion: '推荐改用 Paper（完全兼容 Bukkit 插件）：wow install paper <版本>'
     },
     // 中文社区核心（Mohist / 墨端）
     // 旧下载站 dl.mohistmc.cn:41211 已于 2025 年停用（域名无 DNS 解析），
@@ -148,9 +155,12 @@ const SERVER_SOURCES = {
         fileName: (version) => `catserver-${version}.jar`
     },
     // 其他
+    // Leaves（V3.5.6 修复）：旧 ${mirror}/leaves/... 已 404，改走 GitHub Releases 解析。
     leaves: {
-        type: 'leaves', kind: 'direct',
-        url: (version, mirror) => `${mirror}/leaves/${version}/latest/download`,
+        type: 'leaves', kind: 'github-release',
+        repo: 'LeavesMC/Leaves',
+        // 在 release 资产中挑与该 MC 版本匹配的 jar
+        assetPattern: (version) => new RegExp(`leaves.*${version.replace(/\./g, '\\.')}.*\\.jar$`, 'i'),
         fileName: (version) => `leaves-${version}.jar`
     }
 };
@@ -227,6 +237,11 @@ class Installer {
         }
 
         // ---- 直连下载型 ----
+        // 先拦截明确不支持的类型，避免在计算 fileName 时抛出无关错误
+        if (source.kind === 'unsupported') {
+            throw new Error(`${source.reason}\n  → ${source.suggestion}`);
+        }
+
         const fileName = source.fileName(version, build || source.knownBuilds?.[version]);
         const targetPath = path.join(installDir, fileName);
 
@@ -253,6 +268,13 @@ class Installer {
                 fallbackUrls = (resolved.urls || []).filter(u => u !== source.url(version, buildId));
             }
             downloadUrl = source.url(version, buildId);
+        } else if (source.kind === 'papermc') {
+            // V3.5.6：PaperMC 迁移至 fill.papermc.io/v3，需先解析 build 再取直链
+            console.log('正在查询 PaperMC 最新构建...');
+            downloadUrl = await this._resolvePaperBuild(version);
+        } else if (source.kind === 'github-release') {
+            console.log('正在查询 GitHub Releases...');
+            downloadUrl = await this._resolveGithubReleaseAsset(source, version);
         } else if (typeof source.url === 'function') {
             downloadUrl = source.url(version, this.mirror);
         } else {
@@ -772,6 +794,72 @@ class Installer {
         }
         const detailResponse = await axios.get(versionInfo.url, { timeout: 10000 });
         return detailResponse.data.downloads.server.url;
+    }
+
+    /**
+     * 解析 PaperMC 最新构建的下载直链（V3.5.6）
+     * PaperMC 已从 api.papermc.io/v2 迁移到 fill.papermc.io/v3：
+     *   GET /v3/projects/paper/versions/<ver>/builds/latest
+     *   → { downloads: { "server:default": { url, name } } }
+     * @param {string} version MC 版本
+     * @returns {Promise<string>} jar 直链
+     */
+    async _resolvePaperBuild(version) {
+        const api = `https://fill.papermc.io/v3/projects/paper/versions/${encodeURIComponent(version)}/builds/latest`;
+        let data;
+        try {
+            const resp = await axios.get(api, {
+                timeout: 30000,
+                headers: { 'User-Agent': 'wow-mc-manager/3.5.6' }
+            });
+            data = resp.data;
+        } catch (e) {
+            if (e.response && e.response.status === 404) {
+                throw new Error(`PaperMC 没有 ${version} 版本（或该版本尚无构建）`);
+            }
+            throw new Error(`查询 PaperMC 构建失败: ${e.message}`);
+        }
+
+        const downloads = (data && data.downloads) || {};
+        // 优先取 server:default（非 mojang 重映射版，体积略大但更通用）
+        const entry = downloads['server:default'] || downloads['server:mojang'] ||
+            Object.values(downloads)[0];
+        if (!entry || !entry.url) {
+            throw new Error('PaperMC 返回的构建信息中未找到下载直链');
+        }
+        console.log(`   PaperMC 构建: ${entry.name || data.id || 'latest'}`);
+        return entry.url;
+    }
+
+    /**
+     * 从 GitHub Releases 解析匹配 MC 版本的资产直链（V3.5.6）
+     * @param {object} source SERVER_SOURCES 中的源定义（需含 repo、assetPattern）
+     * @param {string} version MC 版本
+     * @returns {Promise<string>} 资产直链
+     */
+    async _resolveGithubReleaseAsset(source, version) {
+        const api = `https://api.github.com/repos/${source.repo}/releases`;
+        let releases;
+        try {
+            const resp = await axios.get(api, {
+                timeout: 30000,
+                headers: { 'User-Agent': 'wow-mc-manager/3.5.6', 'Accept': 'application/vnd.github+json' }
+            });
+            releases = resp.data;
+        } catch (e) {
+            throw new Error(`查询 GitHub Releases 失败: ${e.message}`);
+        }
+        if (!Array.isArray(releases) || !releases.length) {
+            throw new Error(`${source.repo} 没有发布任何 Release`);
+        }
+
+        const pattern = source.assetPattern(version);
+        for (const rel of releases) {
+            for (const asset of (rel.assets || [])) {
+                if (pattern.test(asset.name)) return asset.browser_download_url;
+            }
+        }
+        throw new Error(`${source.repo} 的 Release 中未找到匹配 ${version} 的构建资产（该版本可能尚未发布）`);
     }
 
     // ==================== 其它辅助 ====================

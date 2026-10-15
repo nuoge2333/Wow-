@@ -145,7 +145,7 @@ wow scheme create survival -v 1.20.1 -t vanilla
 
 ### `scheme switch <name>`
 
-从 V3.4.1 起，服务器**直接在方案目录下运行**（`core/schemes/<方案>/`），不再把方案复制到 `server/`。切换方案时（`auto_scheme: true`）：
+从 V3.4.1 起，服务器**直接在方案目录下运行**；V3.5.2 起方案目录由 `core/schemes/` 迁移到项目根 `scheme/<方案>/`，且不再把方案复制到 `server/`（该目录已移除）。切换方案时（`auto_scheme: true`）：
 
 1. 检查目标方案状态
 2. 若不是 `full`，从 pool 复制资源补齐（`pull` 逻辑）
@@ -153,7 +153,7 @@ wow scheme create survival -v 1.20.1 -t vanilla
 4. 瘦身旧方案（`prune` 逻辑）
 5. 清理未被引用的 pool 资源
 
-> 世界存档、配置文件等全部保留在各自方案目录内，切换方案不会丢失数据，也不会清空 `server/`。
+> 世界存档、配置文件等全部保留在各自方案目录内，切换方案不会丢失数据，也不会影响其它方案。
 
 ```bash
 wow scheme switch survival
@@ -245,9 +245,9 @@ wow pool prune
 ## 方案目录结构
 
 ```
-core/schemes/{scheme_name}/
+scheme/{scheme_name}/
 ├── scheme.yaml              # 方案元数据 (状态、资源引用)
-├── server.jar               # 核心文件 (或指向 pool)
+├── <核心>.jar                # 核心文件 (如 paper-1.20.1.jar，或共享自 pool)
 ├── mods/                    # 模组文件 (或指向 pool)
 │   └── JEI.jar
 ├── plugins/                 # 插件文件 (或指向 pool)

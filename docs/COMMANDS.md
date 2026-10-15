@@ -105,7 +105,7 @@ wow server status
 ```
 服务器状态: 运行中
   PID: 12345
-  日志: /path/to/server/logs/latest.log
+  日志: /path/to/scheme/<方案名>/logs/latest.log
   最近玩家活动: [INFO] Steve joined the game
 ```
 
@@ -673,14 +673,22 @@ wow down <url> [options]
 
 ### `install <target> [version]`
 
-安装服务端核心 或 下载任意 URL 文件。
+> **V3.5.4 起**：服务端核心安装已统一改为 `scheme create`，`install` 仅保留
+> 通用文件下载与隐藏彩蛋 `install party`。
 
 ```bash
-# 安装核心
-wow install vanilla 1.20.1
+# 下载任意 URL 文件到指定目录
+wow install https://example.com/plugin.jar -o pool/plugins/
 
-# 下载任意 URL
-wow install https://example.com/plugin.jar -o ./server/plugins/
+# 隐藏彩蛋
+wow install party
+```
+
+安装服务端核心请使用：
+
+```bash
+wow scheme create <方案名> -t <核心类型> -v <MC版本>
+# 例：wow scheme create survival -t paper -v 1.20.1
 ```
 
 ---

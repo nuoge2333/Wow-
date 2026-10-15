@@ -8,7 +8,8 @@
 
 | 版本 | 状态 | 发布时间 |
 |------|------|------|
-| **3.5.5-26.3d** | 当前版本 |2026-10-14|
+| **3.5.6-26.3e** | 当前版本 |2026-10-15|
+| **3.5.5-26.3d** | 上一版本 |2026-10-14|
 | **3.5.4-26.3c** | 上一版本 |2026-10-12|
 | **3.5.3-26.3b** | 上一版本 |2026-10-04|
 | **3.5.2-26.3a** | 上一版本 |2026-09-26|
@@ -57,6 +58,78 @@
 | **3.0.0** | 上一版本 |2026-07-23|
 | **2.0.0** | 内部迭代 |2026-02-27|
 | **1.0.0** | 内部迭代 |2026-02-07|
+
+---
+
+## [3.5.6-26.3e] — 2026-10-15
+
+> 主题：**Web 面板 API 补齐 + 核心下载源修复**。
+> 修复「文件管理 / 模组下载 / 陶瓦开房等页面报错」与「`scheme create` 无法创建 paper 方案」。
+
+### 🐛 修复：Web 面板大面积 API 404
+
+前端页面调用的 10 个接口在后端根本不存在，点击即报错。本次全部补齐：
+
+| 页面 | 缺失接口 | 处理 |
+|------|----------|------|
+| 文件管理 | `GET /api/files`、`GET /api/download`、`POST /api/upload` | 新建 `core/src/file_manager.js` 实现 |
+| 模组下载 | `GET /api/mod/search`、`GET /api/mod/info`、`GET /api/download/status` | 新建 `core/src/mod_search.js` + `core/src/download_queue.js` |
+| 方案管理 | `GET /api/pool/stats` | 实现池资源引用统计 |
+| 设置 | `GET /api/plugins` | 接入 `PluginManager.list()` |
+| 工具箱 | `GET /api/logs/analysis` | 读取最近分析报告，无报告优雅降级 |
+| 仪表盘 | `GET /api/metrics` | 读取 `/proc` 的 CPU / 内存 / 运行时长 |
+
+### 🔒 新增：文件管理（路径安全）
+
+- 三重防御拒绝路径穿越：段级拒绝 `..` → `path.resolve` 后前缀校验 → `fs.realpathSync` 阻断符号链接逃逸
+- 拒绝绝对路径、盘符路径、UNC 网络路径（`//server/share`）
+- 上传文件名净化，拒绝控制字符与 Windows 保留字符 `<>:"|?*`，但保留子目录层级
+- 单次上传上限 512MB，防内存耗尽
+- 配套单元测试 `core/test/file_manager.test.js`，**21 项全通过**
+
+> 路径范围：**严格限制在当前方案的运行目录内**（`scheme/<方案名>/`）。
+
+### 🐛 修复：`lan.html` 报错（陶瓦开房）
+
+`lan.html` 使用 `window.wow.apiRequest`，但页面**未引入 `web/js/main.js`**，导致 `window.wow` 为 `undefined`，任何点击都抛异常。已补上脚本引用。
+
+> 经实测，陶瓦**后端完全正常**：二进制下载成功（11.8MB），开房返回房间号，状态机 `host-scanning → host-ok`，关房正常。开房前的端口自检（要求先 `wow server start`）是**预期的保护行为**。
+
+### 🐛 修复：`scheme create --type paper` 下载失败
+
+**根因**：核心下载 URL 拼装错误。
+
+- 旧写法 `${mirror}/paper/<ver>/latest/download` 一律 404 —— BMCLAPI 仅镜像 Forge 与 MC 官方资源，**不提供 Paper 分发**
+- 且 PaperMC 自身也已从 `api.papermc.io/v2`（现返回 410 Gone）迁移到 `fill.papermc.io/v3`
+
+**修复**：
+- `paper` 改走 `fill.papermc.io/v3` 两段式解析（先取 latest build，再取直链），实测成功下载 43MB 核心
+- `spigot` / `bukkit` 官方无预编译包，改为**明确提示**并建议改用 Paper，不再抛含糊的网络错误
+- `leaves` 改走 GitHub Releases 资产解析
+- `purpur` 保持可用（实测 200）
+- 新增 `kind: 'unsupported'` / `'papermc'` / `'github-release'` 三种下载策略
+
+### 🐛 修复：方案创建失败后残留残缺目录
+
+核心安装抛错时，方案目录（含 `world/`、`config/`、`mods/` 等）已创建但未清理，`scheme list` 中会显示一个没有 `scheme.yaml` 的「损坏方案」。
+
+已加入**回滚**：`scheme create` 的核心安装步骤失败时自动删除整个方案目录。实测验证残留为 `false`。
+
+### 🧹 清理
+
+- 删除 `core/web/`（13 个文件）——这是 V3.5.2 迁移前的遗留前端副本，无任何代码引用，且缺少 `lan.html`
+- 删除空目录 `server/`
+- `.gitignore` 补充 `core/lan/`（陶瓦二进制，11MB，不应入库）
+
+### 📄 文档
+
+修正多处**滞后于代码**的说明：
+
+- `README.MD`：项目结构图（`core/schemes/` → `scheme/`，移除 `server/`）；安装步骤改为主推 `scheme create`
+- `docs/QUICKSTART.md`：核心列表的全部 `wow install <core>` 示例改为 `scheme create -t <core>`；为未实现的核心（Bukkit / Spigot / Folia / Sponge / Arclight）加注「暂不支持」；修正重复的工作流步骤
+- `docs/SCHEMES.md`：方案目录路径 `core/schemes/` → `scheme/`
+- `docs/COMMANDS.md`：`install` 命令说明改为「核心安装已移至 `scheme create`」
+- `docs/API.md`：补齐本次新增的全部接口文档与错误码（`403` / `413` / `502`）
 
 ---
 

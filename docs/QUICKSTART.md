@@ -38,7 +38,7 @@ wow init
 ```
 
 该命令会：
-- 创建必要的目录结构 (`core/pool/`, `core/schemes/`, `themes/`, `wow-plugins/`)
+- 创建必要的目录结构 (`core/pool/`, `scheme/`, `themes/`, `wow-plugins/`)
 - 检测 Java 安装（未检测到时，会在启动服务器时自动下载）
 - 生成默认配置文件 `core/wow.yaml`
 - 生成默认主题 `themes/default/`
@@ -64,36 +64,36 @@ wow 支持四大类服务端核心，根据你的需求选择：
 
 | 核心 | 说明 | 安装命令示例 |
 |------|------|-------------|
-| **Vanilla** | Mojang 官方原版服务端 | `wow install vanilla 1.20.1` |
+| **Vanilla** | Mojang 官方原版服务端 | `wow scheme create myserver -t vanilla -v 1.20.1` |
 
 #### 模组服 (Mod)
 
 | 核心 | 加载器 | 说明 | 安装命令示例 |
 |------|--------|------|-------------|
-| **Forge** | Forge | 最成熟的模组加载器，模组数量最多 | `wow install forge 1.20.1` |
-| **Fabric** | Fabric | 轻量级模组加载器，更新快 | `wow install fabric 1.20.1` |
-| **NeoForge** | NeoForge | Forge 的分支，1.20.1+ 兼容 Forge 模组 | `wow install neoforge 1.20.1` |
-| **Quilt** | Quilt | Fabric 的分支，兼容 Fabric 模组 | `wow install quilt 1.20.1` |
+| **Forge** | Forge | 最成熟的模组加载器，模组数量最多 | `wow scheme create myserver -t forge -v 1.20.1` |
+| **Fabric** | Fabric | 轻量级模组加载器，更新快 | `wow scheme create myserver -t fabric -v 1.20.1` |
+| **NeoForge** | NeoForge | Forge 的分支，1.20.1+ 兼容 Forge 模组 | `wow scheme create myserver -t neoforge -v 1.20.1` |
+| **Quilt** | Quilt | Fabric 的分支，兼容 Fabric 模组 | `wow scheme create myserver -t quilt -v 1.20.1` |
 
 #### 插件服 (Plugin)
 
 | 核心 | 说明 | 安装命令示例 |
 |------|------|-------------|
-| **Bukkit** | 最早的插件服务端 | `wow install bukkit 1.20.1` |
-| **Spigot** | Bukkit 的优化分支，性能更好 | `wow install spigot 1.20.1` |
-| **Paper** | Spigot 的进一步优化，性能最佳 | `wow install paper 1.20.1` |
-| **Purpur** | Paper 的分支，更多配置选项 | `wow install purpur 1.20.1` |
-| **Leaves** | Paper 的优化分支，专注性能 | `wow install leaves 1.20.1` |
-| **Folia** | Paper 的分支，分区并行引擎 (⚠️ 部分插件不稳定) | `wow install folia 1.20.1` |
-| **Sponge** | 独立 API 的插件服务端 | `wow install sponge 1.20.1` |
+| **Bukkit** | 最早的插件服务端（官方无预编译包，需 BuildTools） | ⚠️ 暂不支持，建议改用 Paper |
+| **Spigot** | Bukkit 的优化分支，性能更好（官方无预编译包，需 BuildTools） | ⚠️ 暂不支持，建议改用 Paper |
+| **Paper** | Spigot 的进一步优化，性能最佳 | `wow scheme create myserver -t paper -v 1.20.1` |
+| **Purpur** | Paper 的分支，更多配置选项 | `wow scheme create myserver -t purpur -v 1.20.1` |
+| **Leaves** | Paper 的优化分支，专注性能 | `wow scheme create myserver -t leaves -v 1.20.1` |
+| **Folia** | Paper 的分支，分区并行引擎 | ⚠️ 暂不支持 |
+| **Sponge** | 独立 API 的插件服务端 | ⚠️ 暂不支持 |
 
 #### 混合服 (Hybrid)
 
 | 核心 | 支持模组 | 支持插件 | 说明 | 安装命令示例 |
 |------|---------|---------|------|-------------|
-| **Mohist** | ✅ Forge | ✅ Bukkit/Spigot/Paper | 同时运行 Forge 模组和 Bukkit 插件，高版本 Paper API 可能不稳定 | `wow install mohist 1.20.1 -b 346` |
-| **CatServer** | ✅ Forge | ✅ Bukkit/Spigot | 同时运行 Forge 模组和 Bukkit/Spigot 插件 | `wow install catserver 1.12.2` |
-| **Arclight** | ✅ Forge | ✅ Bukkit/Spigot/Paper | 同时运行 Forge 模组和 Bukkit/Spigot/Paper 插件 | `wow install arclight 1.20.1` |
+| **Mohist** | ✅ Forge | ✅ Bukkit/Spigot/Paper | 同时运行 Forge 模组和 Bukkit 插件，高版本 Paper API 可能不稳定 | `wow scheme create myserver -t mohist -v 1.20.1` |
+| **CatServer** | ✅ Forge | ✅ Bukkit/Spigot | 同时运行 Forge 模组和 Bukkit/Spigot 插件 | `wow scheme create myserver -t catserver -v 1.12.2` |
+| **Arclight** | ✅ Forge | ✅ Bukkit/Spigot/Paper | 同时运行 Forge 模组和 Bukkit/Spigot/Paper 插件 | ⚠️ 暂不支持 |
 
 > **Mohist 特殊说明**：Mohist 需要指定构建号 (build)，已知构建号：
 > - 1.12.2: `264` (已停更)
@@ -104,22 +104,22 @@ wow 支持四大类服务端核心，根据你的需求选择：
 
 ```bash
 # 安装原版 (纯净服)
-wow install vanilla 1.20.1
+wow scheme create vanilla-srv -t vanilla -v 1.20.1
 
 # 安装 Forge (模组服)
-wow install forge 1.20.1
+wow scheme create forge-srv -t forge -v 1.20.1
 
 # 安装 Paper (插件服)
-wow install paper 1.20.1
+wow scheme create paper-srv -t paper -v 1.20.1
 
 # 安装 Mohist (混合服) - 需要指定构建号
-wow install mohist 1.20.1 -b 346
+wow scheme create mohist-srv -t mohist -v 1.20.1 -b 346
 
 # 安装 CatServer (混合服)
-wow install catserver 1.12.2
+wow scheme create cat-srv -t catserver -v 1.12.2
 
 # 下载任意 URL 文件
-wow install https://example.com/plugin.jar -o ./server/plugins/
+wow install https://example.com/plugin.jar -o pool/plugins/
 ```
 
 > 安装后核心会自动复制到 `core/pool/cores/` 供其他方案共享。
@@ -211,19 +211,13 @@ wow mod remove JEI
 # 1. 初始化
 wow init
 
-# 2. 安装 Paper
-wow install paper 1.20.1
+# 2. 创建并激活方案（自动下载 Paper 核心）
+wow scheme create survival -t paper -v 1.20.1
 
-# 3. 创建方案
-wow scheme create survival -v 1.20.1 -t paper
-
-# 4. 切换方案
-wow scheme switch survival
-
-# 5. 启动服务器
+# 3. 启动服务器
 wow server start --memory 4G
 
-# 6. 打开 Web 面板
+# 4. 打开 Web 面板
 wow web start
 ```
 
@@ -233,19 +227,13 @@ wow web start
 # 1. 初始化
 wow init
 
-# 2. 安装 Forge
-wow install forge 1.20.1
+# 2. 创建并激活方案（自动下载 Forge 核心）
+wow scheme create modded -t forge -v 1.20.1
 
-# 3. 创建方案
-wow scheme create modded -v 1.20.1 -t forge
-
-# 4. 切换方案
-wow scheme switch modded
-
-# 5. 安装模组（通过 Web 面板或 CLI）
+# 3. 安装模组（通过 Web 面板或 CLI）
 wow mod install https://example.com/JEI.jar
 
-# 6. 启动服务器
+# 4. 启动服务器
 wow server start --memory 6G
 ```
 
@@ -256,5 +244,5 @@ wow server start --memory 6G
 - 📖 [完整命令参考](COMMANDS.md)
 - 📦 [方案管理详解](SCHEMES.md)
 - 🎨 [主题包开发指南](THEMES.md)
-- 🔌 [插件开发指南](PLUGINS.md)
+- 🔌 [插件开发指南](WOW-PLUGINS.md)
 - 🛠️ [故障排除](TROUBLE_*.md)

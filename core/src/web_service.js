@@ -8,6 +8,7 @@
 
 const http = require('http');
 const path = require('path');
+const os = require('os');
 const fs = require('fs-extra');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
@@ -103,29 +104,36 @@ function generateAndSendCode(email) {
  * JWT 认证中间件
  */
 function authMiddleware(req, res, next) {
-    // 白名单路径（无需认证）
-    const publicPaths = ['/api/auth/request-code', '/api/auth/login', '/api/auth/verify'];
-    if (publicPaths.includes(req.path)) {
-        return next();
-    }
-    // 静态文件放行
-    if (!req.path.startsWith('/api/')) {
-        return next();
-    }
-
-    const authHeader = req.headers['authorization'];
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-        return res.status(401).json({ error: '未登录' });
-    }
-
-    const token = authHeader.substring(7);
     try {
-        const secret = getJwtSecret();
-        const decoded = jwt.verify(token, secret);
-        req.user = decoded;
-        next();
+        // 白名单路径（无需认证）
+        // 注：/api/download 允许通过 ?token= 认证（浏览器 window.open 无法带 Authorization 头），
+        //     故在中间件层放行，由路由内部完成校验。
+        const publicPaths = ['/api/auth/request-code', '/api/auth/login', '/api/auth/verify', '/api/download'];
+        if (publicPaths.includes(req.path)) {
+            return next();
+        }
+        // 静态文件放行
+        if (!req.path.startsWith('/api/')) {
+            return next();
+        }
+
+        const authHeader = req.headers['authorization'];
+        if (!authHeader || !authHeader.startsWith('Bearer ')) {
+            return res.status(401).json({ error: '未登录' });
+        }
+
+        const token = authHeader.substring(7);
+        try {
+            const secret = getJwtSecret();
+            const decoded = jwt.verify(token, secret);
+            req.user = decoded;
+            next();
+        } catch (e) {
+            return res.status(401).json({ error: 'Token 无效或已过期' });
+        }
     } catch (e) {
-        return res.status(401).json({ error: 'Token 无效或已过期' });
+        // 防御：任何非预期异常都不应导致进程崩溃
+        return res.status(500).json({ error: `认证处理异常: ${e.message}` });
     }
 }
 
@@ -451,6 +459,336 @@ function startWeb(options = {}) {
         }
     });
 
+    // ===== 文件管理（V3.5.6）=====
+    // 所有路径严格限制在服务器（方案）运行目录内，详见 file_manager.js
+
+    /**
+     * 列出目录内容
+     * GET /api/files?path=<相对路径>
+     */
+    app.get('/api/files', async (req, res) => {
+        try {
+            const FileManager = require('./file_manager');
+            const result = await FileManager.listFiles(req.query.path || '');
+            res.json({ success: true, path: result.path, root: FileManager.getRoot(), files: result.files });
+        } catch (e) {
+            const code = e.code === 'EPATH' ? 403 : (e.code === 'ENOENT' ? 404 : 400);
+            res.status(code).json({ success: false, error: e.message });
+        }
+    });
+
+    /**
+     * 下载单个文件
+     * GET /api/download?path=<相对路径>
+     * 说明：浏览器 window.open 无法附带 Authorization 头，故同时接受 ?token= 查询参数。
+     */
+    app.get('/api/download', (req, res) => {
+        // 允许通过 query token 认证（仅用于本接口的下载场景）
+        if (!req.user && req.query.token) {
+            try {
+                const secret = getJwtSecret();
+                req.user = jwt.verify(String(req.query.token), secret);
+            } catch (e) {
+                return res.status(401).json({ error: 'Token 无效或已过期' });
+            }
+        }
+        if (!req.user) {
+            return res.status(401).json({ error: '未登录' });
+        }
+
+        try {
+            const FileManager = require('./file_manager');
+            const info = FileManager.resolveDownload(req.query.path || '');
+            // 文件名含非 ASCII 时用 RFC 5987 编码，避免部分浏览器乱码
+            const asciiName = info.name.replace(/[^\x20-\x7e]/g, '_');
+            res.setHeader('Content-Disposition',
+                `attachment; filename="${asciiName}"; filename*=UTF-8''${encodeURIComponent(info.name)}`);
+            res.setHeader('Content-Length', info.size);
+            res.setHeader('Content-Type', 'application/octet-stream');
+            fs.createReadStream(info.abs).pipe(res);
+        } catch (e) {
+            const code = e.code === 'EPATH' ? 403 : (e.code === 'ENOENT' ? 404 : 400);
+            res.status(code).json({ success: false, error: e.message });
+        }
+    });
+
+    /**
+     * 上传文件（multipart/form-data）
+     * 表单字段：files[]（可多个，支持 webkitRelativePath 相对路径）、path（目标子目录）
+     * 说明：不使用额外的 multipart 依赖，此处以二进制方式收集并按 multipart 规范解析。
+     */
+    app.post('/api/upload', (req, res) => {
+        const contentType = req.headers['content-type'] || '';
+        const m = contentType.match(/boundary=(?:"([^"]+)"|([^;]+))/i);
+        if (!m) {
+            return res.status(400).json({ success: false, error: '请求必须为 multipart/form-data' });
+        }
+        const boundary = m[1] || m[2];
+
+        const MAX_TOTAL = 512 * 1024 * 1024; // 单次上传总上限 512MB，防内存耗尽
+        const chunks = [];
+        let total = 0;
+        let aborted = false;
+
+        req.on('data', (chunk) => {
+            total += chunk.length;
+            if (total > MAX_TOTAL) {
+                aborted = true;
+                res.status(413).json({ success: false, error: '上传内容过大（上限 512MB）' });
+                req.destroy();
+                return;
+            }
+            chunks.push(chunk);
+        });
+
+        req.on('end', async () => {
+            if (aborted) return;
+            try {
+                const buf = Buffer.concat(chunks);
+                const parsed = parseMultipart(buf, boundary);
+                const FileManager = require('./file_manager');
+                const result = await FileManager.saveUploads(parsed.fields.path || '', parsed.files);
+                res.json({ success: true, uploaded: result.uploaded, files: result.files, skipped: result.skipped });
+            } catch (e) {
+                const code = e.code === 'EPATH' ? 403 : 500;
+                res.status(code).json({ success: false, error: e.message });
+            }
+        });
+
+        req.on('error', (e) => {
+            if (!aborted) res.status(500).json({ success: false, error: `上传中断: ${e.message}` });
+        });
+    });
+
+    // ===== 模组搜索与下载队列（V3.5.6）=====
+
+    /**
+     * 搜索模组
+     * GET /api/mod/search?source=<modrinth|curseforge>&query=<关键词>&loader=<加载器>&version=<MC版本>
+     */
+    app.get('/api/mod/search', async (req, res) => {
+        try {
+            const ModSearch = require('./mod_search');
+            const result = await ModSearch.search(
+                req.query.source,
+                req.query.query,
+                req.query.loader,
+                req.query.version
+            );
+            res.json({ success: true, source: result.source, results: result.results });
+        } catch (e) {
+            res.status(e.status || 502).json({ success: false, error: e.message });
+        }
+    });
+
+    /**
+     * 模组详情（含依赖列表）
+     * GET /api/mod/info?source=<来源>&project=<项目 id 或 slug>
+     */
+    app.get('/api/mod/info', async (req, res) => {
+        try {
+            const ModSearch = require('./mod_search');
+            const info = await ModSearch.getInfo(req.query.source, req.query.project);
+            res.json({ success: true, ...info });
+        } catch (e) {
+            res.status(e.status || 502).json({ success: false, error: e.message });
+        }
+    });
+
+    /**
+     * 下载队列状态
+     * GET /api/download/status        → 队列
+     * DELETE /api/download/status     → 清理已完成任务
+     */
+    app.get('/api/download/status', (req, res) => {
+        try {
+            const Queue = require('./download_queue');
+            res.json({ success: true, queue: Queue.list(), stats: Queue.stats() });
+        } catch (e) {
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+    app.delete('/api/download/status', (req, res) => {
+        try {
+            const Queue = require('./download_queue');
+            const removed = Queue.clearFinished();
+            res.json({ success: true, removed });
+        } catch (e) {
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+    // ===== 其余页面数据（V3.5.6）=====
+
+    /**
+     * Pool 资源共享统计
+     * GET /api/pool/stats
+     * 统计 pool/ 下各类资源的文件数，以及被方案引用的数量（同名文件出现在方案目录内视为已引用）。
+     */
+    app.get('/api/pool/stats', async (req, res) => {
+        try {
+            const poolDir = utils.resolvePath('pool');
+            const schemeDir = utils.resolvePath('../scheme');
+
+            // 收集方案目录内所有文件名（用于判定"被引用"）
+            const schemeFiles = new Set();
+            const collect = (dir, depth) => {
+                if (depth > 6 || !fs.existsSync(dir)) return;
+                let entries;
+                try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+                for (const ent of entries) {
+                    const full = path.join(dir, ent.name);
+                    if (ent.isDirectory()) {
+                        if (ent.name === 'logs' || ent.name === 'world' || ent.name === 'libraries') continue;
+                        collect(full, depth + 1);
+                    } else {
+                        schemeFiles.add(ent.name);
+                    }
+                }
+            };
+            collect(schemeDir, 0);
+
+            // 遍历 pool 下的资源文件
+            const byType = {};
+            let total = 0;
+            let refs = 0;
+            const walk = (dir, typeKey, depth) => {
+                if (depth > 4 || !fs.existsSync(dir)) return;
+                let entries;
+                try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+                for (const ent of entries) {
+                    const full = path.join(dir, ent.name);
+                    if (ent.isDirectory()) {
+                        walk(full, typeKey, depth + 1);
+                    } else if (ent.name.endsWith('.jar') || ent.name.endsWith('.zip')) {
+                        total++;
+                        byType[typeKey] = (byType[typeKey] || 0) + 1;
+                        if (schemeFiles.has(ent.name)) refs++;
+                    }
+                }
+            };
+            if (fs.existsSync(poolDir)) {
+                for (const sub of fs.readdirSync(poolDir)) {
+                    const full = path.join(poolDir, sub);
+                    if (fs.statSync(full).isDirectory()) walk(full, sub, 0);
+                }
+            }
+
+            // 统计去重后的文件大小
+            let totalSize = 0;
+            const seen = new Set();
+            const sizeWalk = (dir, depth) => {
+                if (depth > 4 || !fs.existsSync(dir)) return;
+                let entries;
+                try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+                for (const ent of entries) {
+                    const full = path.join(dir, ent.name);
+                    if (ent.isDirectory()) {
+                        sizeWalk(full, depth + 1);
+                    } else if (!seen.has(ent.name)) {
+                        seen.add(ent.name);
+                        try { totalSize += fs.statSync(full).size; } catch { /* 忽略 */ }
+                    }
+                }
+            };
+            if (fs.existsSync(poolDir)) sizeWalk(poolDir, 0);
+
+            res.json({ success: true, total, refs, unique: total - refs, byType, totalSize, poolDir });
+        } catch (e) {
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+    /**
+     * 插件列表
+     * GET /api/plugins
+     */
+    app.get('/api/plugins', (req, res) => {
+        try {
+            const PluginManager = require('./plugin_manager');
+            const pm = new PluginManager();
+            const plugins = pm.list();
+            res.json({ success: true, plugins });
+        } catch (e) {
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+    /**
+     * 最近一次日志 AI 分析结果
+     * GET /api/logs/analysis
+     * 读 logs/ 下由 `logs analyze` 生成的最近报告；无报告时给出明确说明而非 404。
+     */
+    app.get('/api/logs/analysis', async (req, res) => {
+        try {
+            const reportDir = utils.resolvePath('../logs');
+            if (!fs.existsSync(reportDir)) {
+                return res.json({ success: true, result: '', message: '暂无分析报告，请先执行「日志分析」。' });
+            }
+            const reports = fs.readdirSync(reportDir)
+                .filter(f => /^analysis[-_.]/i.test(f) || /\.analysis\.(json|md|txt)$/i.test(f))
+                .map(f => {
+                    const full = path.join(reportDir, f);
+                    return { name: f, full, mtime: fs.statSync(full).mtimeMs };
+                })
+                .sort((a, b) => b.mtime - a.mtime);
+
+            if (!reports.length) {
+                return res.json({ success: true, result: '', message: '暂无分析报告，请先执行「日志分析」。' });
+            }
+
+            const latest = reports[0];
+            if (latest.name.endsWith('.json')) {
+                let parsed;
+                try {
+                    parsed = JSON.parse(fs.readFileSync(latest.full, 'utf8'));
+                } catch (e) {
+                    return res.json({ success: true, result: '', message: `报告 ${latest.name} 解析失败: ${e.message}` });
+                }
+                const text = parsed.result || parsed.analysis || parsed.summary || JSON.stringify(parsed, null, 2);
+                return res.json({ success: true, result: text, file: latest.name });
+            }
+            res.json({ success: true, result: fs.readFileSync(latest.full, 'utf8'), file: latest.name });
+        } catch (e) {
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+    /**
+     * 运行时指标（CPU / 内存 / 运行时长 / 在线人数）
+     * GET /api/metrics
+     */
+    app.get('/api/metrics', async (req, res) => {
+        try {
+            const ServerManager = require('./server');
+            const running = ServerManager.isRunning ? ServerManager.isRunning() : false;
+
+            let cpu = '0%';
+            let memory = '0 MB';
+            let uptime = '0s';
+            let players = 0;
+
+            if (running) {
+                const pid = ServerManager.getPid ? ServerManager.getPid() : null;
+                if (pid) {
+                    const m = readProcessMetrics(pid);
+                    if (m) {
+                        cpu = m.cpu;
+                        memory = m.memory;
+                        uptime = m.uptime;
+                    }
+                }
+                // 在线人数：从最近日志中抓取
+                players = await countOnlinePlayers();
+            }
+
+            res.json({ success: true, running, cpu, memory, uptime, players });
+        } catch (e) {
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
 // ===== 创建 HTTP 服务器 =====
 
     const server = http.createServer(app);
@@ -736,6 +1074,185 @@ function stopLogTail() {
         clearInterval(logTailTimer);
         logTailTimer = null;
     }
+}
+
+/**
+ * 读取进程运行指标（V3.5.6）
+ * 数据源：/proc/<pid>/stat 与 /proc/<pid>/status，Windows 上不可用时返回 null。
+ * @param {number|string} pid
+ * @returns {{cpu:string, memory:string, uptime:string}|null}
+ */
+function readProcessMetrics(pid) {
+    try {
+        const statPath = `/proc/${pid}/stat`;
+        const statusPath = `/proc/${pid}/status`;
+        if (!fs.existsSync(statPath)) return null;
+
+        const stat = fs.readFileSync(statPath, 'utf8');
+        // 字段以空格分隔，第 2 项为进程名且可能含空格/括号，故从最后一个 ')' 之后开始切分
+        const afterName = stat.slice(stat.lastIndexOf(')') + 2).split(' ');
+        // afterName[0] = state，相对 stat 第 3 项
+        const utime = parseInt(afterName[11], 10) || 0;  // 第 14 项
+        const stime = parseInt(afterName[12], 10) || 0;  // 第 15 项
+
+        // 内存：VmRSS
+        let memory = '0 MB';
+        let startTicks = null;
+        if (fs.existsSync(statusPath)) {
+            const status = fs.readFileSync(statusPath, 'utf8');
+            const m = status.match(/VmRSS:\s*(\d+)\s*kB/i);
+            if (m) memory = (parseInt(m[1], 10) / 1024).toFixed(1) + ' MB';
+        }
+
+        // 运行时长：以 /proc/<pid> 目录创建时间估算更稳妥，这里用 stat 的 starttime 字段
+        startTicks = parseInt(afterName[19], 10) || null; // 第 22 项 starttime
+        let uptime = '0s';
+        if (startTicks) {
+            const hz = 100; // 常见 USER_HZ，用作估算
+            const bootTime = readBootTime();
+            if (bootTime) {
+                const startedAt = bootTime + startTicks / hz;
+                uptime = formatDuration(Date.now() / 1000 - startedAt);
+            }
+        }
+
+        // CPU 百分比需两次采样，这里给出累计 CPU 时间的相对占比（以进程生命周期为分母）
+        let cpu = '0%';
+        const totalTicks = utime + stime;
+        if (startTicks) {
+            const hz = 100;
+            const runtimeSeconds = Math.max((Date.now() / 1000) - (readBootTime() + startTicks / hz), 0.001);
+            const cpuSeconds = totalTicks / hz;
+            cpu = Math.min((cpuSeconds / runtimeSeconds) * 100, 100 * os.cpus().length).toFixed(1) + '%';
+        }
+
+        return { cpu, memory, uptime };
+    } catch (e) {
+        return null;
+    }
+}
+
+/** 读取系统启动时间（秒） */
+function readBootTime() {
+    try {
+        const txt = fs.readFileSync('/proc/stat', 'utf8');
+        const m = txt.match(/^btime\s+(\d+)/m);
+        return m ? parseInt(m[1], 10) : null;
+    } catch (e) {
+        return null;
+    }
+}
+
+/** 秒 → 人类可读时长 */
+function formatDuration(seconds) {
+    const s = Math.max(Math.floor(seconds), 0);
+    const d = Math.floor(s / 86400);
+    const h = Math.floor((s % 86400) / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    if (d > 0) return `${d}d ${h}h`;
+    if (h > 0) return `${h}h ${m}m`;
+    if (m > 0) return `${m}m ${s % 60}s`;
+    return `${s}s`;
+}
+
+/**
+ * 从服务器最近日志中统计在线人数（V3.5.6）
+ * 匹配 Minecraft 日志中的 "There are N of a max" / "N/M players" 等常见格式。
+ */
+async function countOnlinePlayers() {
+    try {
+        const logPath = path.join(utils.getServerDir(), 'logs', 'latest.log');
+        if (!logPath || !fs.existsSync(logPath)) return 0;
+
+        const MAX_READ = 256 * 1024; // 只读尾部 256KB
+        const stat = fs.statSync(logPath);
+        const start = Math.max(stat.size - MAX_READ, 0);
+        const fd = fs.openSync(logPath, 'r');
+        const buf = Buffer.alloc(stat.size - start);
+        fs.readSync(fd, buf, 0, buf.length, start);
+        fs.closeSync(fd);
+
+        const text = buf.toString('utf8');
+        const patterns = [
+            /There are (\d+) of a max/i,
+            /online players?:\s*(\d+)/i,
+            /players online:\s*(\d+)/i
+        ];
+        for (const re of patterns) {
+            const all = text.match(new RegExp(re.source, 'gi'));
+            if (all && all.length) {
+                const last = all[all.length - 1].match(re);
+                if (last && last[1] !== undefined) return parseInt(last[1], 10);
+            }
+        }
+        return 0;
+    } catch (e) {
+        return 0;
+    }
+}
+
+/**
+ * 解析 multipart/form-data 请求体（V3.5.6）
+ * 仅依赖 Node 原生 Buffer，避免引入 multer 等额外依赖。
+ * @param {Buffer} buf 完整请求体
+ * @param {string} boundary 分隔串
+ * @returns {{fields:Object, files:Array<{name:string, rel:string, buffer:Buffer}>}}
+ */
+function parseMultipart(buf, boundary) {
+    const fields = {};
+    const files = [];
+    const delimiter = Buffer.from(`--${boundary}`);
+
+    // 按分隔串切分各部分
+    const parts = [];
+    let start = buf.indexOf(delimiter);
+    while (start !== -1) {
+        const next = buf.indexOf(delimiter, start + delimiter.length);
+        if (next === -1) {
+            parts.push(buf.slice(start + delimiter.length));
+            break;
+        }
+        parts.push(buf.slice(start + delimiter.length, next));
+        start = next;
+    }
+
+    for (let part of parts) {
+        // 去掉每段首尾的 CRLF
+        if (part.length >= 2 && part[0] === 0x0d && part[1] === 0x0a) part = part.slice(2);
+        if (part.length >= 2 && part[part.length - 2] === 0x0d && part[part.length - 1] === 0x0a) {
+            part = part.slice(0, part.length - 2);
+        }
+        if (part.length === 0) continue;
+
+        // 头与体以 \r\n\r\n 分隔
+        const headerEnd = part.indexOf('\r\n\r\n');
+        if (headerEnd === -1) continue;
+        const headerText = part.slice(0, headerEnd).toString('utf8');
+        const body = part.slice(headerEnd + 4);
+
+        const disposition = headerText.match(/content-disposition:[^\r\n]*/i);
+        if (!disposition) continue;
+        const nameMatch = disposition[0].match(/name="([^"]*)"/i);
+        const fileMatch = disposition[0].match(/filename="([^"]*)"/i);
+        const fieldName = nameMatch ? nameMatch[1] : null;
+        if (!fieldName) continue;
+
+        if (fileMatch) {
+            // 文件字段：filename 可能是 webkitRelativePath（含子目录）
+            const rawName = fileMatch[1];
+            const cleanName = rawName.replace(/\\/g, '/').split('/').pop() || rawName;
+            // 保留完整相对路径（目录层级交由 file_manager 再次净化）
+            files.push({
+                name: cleanName,
+                rel: rawName,
+                buffer: body
+            });
+        } else {
+            fields[fieldName] = body.toString('utf8').trim();
+        }
+    }
+
+    return { fields, files };
 }
 
 module.exports = {
