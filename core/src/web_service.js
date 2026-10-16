@@ -187,7 +187,9 @@ function startWeb(options = {}) {
     app.use(express.static(webDir));
 
     // 解析 JSON 请求体
-    app.use(express.json());
+    // V3.5.7：默认上限由 100kb 提升到 4mb，以支持「保存文本文件」接口（其自身限 2MB）。
+    // 否则 2MB 的 PUT /api/files/content 会在 body 解析阶段就被拒（且抛未捕获异常）。
+    app.use(express.json({ limit: '4mb' }));
 
     // 认证中间件（保护 /api/* 路由）
     app.use(authMiddleware);
@@ -560,6 +562,160 @@ function startWeb(options = {}) {
         });
     });
 
+    // ===== 文件操作（V3.5.7，纯 Node 跨平台；旧版走 shell 在 Windows 上不可用）=====
+
+    /** 错误码 → HTTP 状态映射 */
+    const fileErrStatus = (e) => ({
+        EPATH: 403, ENOENT: 404, ENOTDIR: 400, EISDIR: 400,
+        EEXIST: 409, ETOOBIG: 413, EBADZIP: 400
+    }[e.code] || 500);
+
+    /**
+     * 新建文件夹
+     * POST /api/files/mkdir  { path: 父目录, name: 新文件夹名 }
+     */
+    app.post('/api/files/mkdir', async (req, res) => {
+        try {
+            const FileManager = require('./file_manager');
+            const { path: parentPath = '', name } = req.body || {};
+            const r = await FileManager.makeDir(parentPath, name);
+            logger.info(`Web 新建文件夹: ${r.path}`);
+            res.json({ success: true, ...r });
+        } catch (e) {
+            res.status(fileErrStatus(e)).json({ success: false, error: e.message });
+        }
+    });
+
+    /**
+     * 重命名
+     * POST /api/files/rename  { path: 原路径, newName: 新名称 }
+     */
+    app.post('/api/files/rename', async (req, res) => {
+        try {
+            const FileManager = require('./file_manager');
+            const { path: p, newName } = req.body || {};
+            const r = await FileManager.renameEntry(p, newName);
+            logger.info(`Web 重命名: ${r.from} → ${r.to}`);
+            res.json({ success: true, ...r });
+        } catch (e) {
+            res.status(fileErrStatus(e)).json({ success: false, error: e.message });
+        }
+    });
+
+    /**
+     * 移动
+     * POST /api/files/move  { from: 源路径, to: 目标目录 }
+     */
+    app.post('/api/files/move', async (req, res) => {
+        try {
+            const FileManager = require('./file_manager');
+            const { from, to } = req.body || {};
+            const r = await FileManager.transferEntry(from, to, false);
+            logger.info(`Web 移动: ${r.from} → ${r.to}`);
+            res.json({ success: true, ...r });
+        } catch (e) {
+            res.status(fileErrStatus(e)).json({ success: false, error: e.message });
+        }
+    });
+
+    /**
+     * 复制
+     * POST /api/files/copy  { from: 源路径, to: 目标目录 }
+     */
+    app.post('/api/files/copy', async (req, res) => {
+        try {
+            const FileManager = require('./file_manager');
+            const { from, to } = req.body || {};
+            const r = await FileManager.transferEntry(from, to, true);
+            logger.info(`Web 复制: ${r.from} → ${r.to}`);
+            res.json({ success: true, ...r });
+        } catch (e) {
+            res.status(fileErrStatus(e)).json({ success: false, error: e.message });
+        }
+    });
+
+    /**
+     * 删除（不可逆）
+     * DELETE /api/files  { path: 路径 }
+     * 前端必须已让用户二次确认。
+     */
+    app.delete('/api/files', async (req, res) => {
+        try {
+            const FileManager = require('./file_manager');
+            const { path: p } = req.body || {};
+            const r = await FileManager.removeEntry(p);
+            logger.warn(`Web 删除${r.type === 'dir' ? '目录' : '文件'}: ${r.path}`);
+            res.json({ success: true, ...r });
+        } catch (e) {
+            res.status(fileErrStatus(e)).json({ success: false, error: e.message });
+        }
+    });
+
+    /**
+     * 压缩为 zip
+     * POST /api/files/compress  { paths: [...], dest: "xxx.zip" }
+     */
+    app.post('/api/files/compress', async (req, res) => {
+        try {
+            const FileManager = require('./file_manager');
+            const { paths = [], dest } = req.body || {};
+            if (!Array.isArray(paths) || paths.length === 0) {
+                return res.status(400).json({ success: false, error: '请至少选择一个要压缩的条目' });
+            }
+            const r = await FileManager.compress(paths, dest);
+            logger.info(`Web 压缩: ${r.entries} 项 → ${r.path}`);
+            res.json({ success: true, ...r });
+        } catch (e) {
+            res.status(fileErrStatus(e)).json({ success: false, error: e.message });
+        }
+    });
+
+    /**
+     * 解压 zip
+     * POST /api/files/extract  { path: zip 路径, dest: 目标目录 }
+     */
+    app.post('/api/files/extract', async (req, res) => {
+        try {
+            const FileManager = require('./file_manager');
+            const { path: zipPath, dest = '' } = req.body || {};
+            const r = await FileManager.extract(zipPath, dest);
+            logger.info(`Web 解压: ${zipPath} → ${r.path}（${r.extracted} 项）`);
+            res.json({ success: true, ...r });
+        } catch (e) {
+            res.status(fileErrStatus(e)).json({ success: false, error: e.message });
+        }
+    });
+
+    /**
+     * 读取文本文件（预览 / 编辑）
+     * GET /api/files/content?path=xxx
+     */
+    app.get('/api/files/content', async (req, res) => {
+        try {
+            const FileManager = require('./file_manager');
+            const r = await FileManager.readText(req.query.path || '');
+            res.json({ success: true, ...r });
+        } catch (e) {
+            res.status(fileErrStatus(e)).json({ success: false, error: e.message });
+        }
+    });
+
+    /**
+     * 保存文本文件
+     * PUT /api/files/content  { path, content }
+     */
+    app.put('/api/files/content', async (req, res) => {
+        try {
+            const FileManager = require('./file_manager');
+            const { path: p, content = '' } = req.body || {};
+            const r = await FileManager.writeText(p, content);
+            logger.info(`Web 保存文件: ${r.path}（${r.size} 字节）`);
+            res.json({ success: true, ...r });
+        } catch (e) {
+            res.status(fileErrStatus(e)).json({ success: false, error: e.message });
+        }
+    });
+
     // ===== 模组搜索与下载队列（V3.5.6）=====
 
     /**
@@ -843,6 +999,29 @@ function startWeb(options = {}) {
         });
     });
 
+    // ===== 全局错误处理（必须最后注册）=====
+    // V3.5.7：此前没有错误中间件，express 内部抛出的异常（如 body 超限的
+    // PayloadTooLargeError）会直接打印堆栈并返回 HTML 错误页，前端拿不到 JSON。
+    // eslint-disable-next-line no-unused-vars
+    app.use((err, req, res, next) => {
+        // body 解析类错误映射为明确的状态码
+        if (err && (err.type === 'entity.too.large' || err.status === 413)) {
+            return res.status(413).json({ success: false, error: '请求体过大' });
+        }
+        if (err && err.type === 'entity.parse.failed') {
+            return res.status(400).json({ success: false, error: '请求体不是合法 JSON' });
+        }
+        const status = (err && err.status) ? err.status : 500;
+        try {
+            logger.erro(`Web 请求异常 ${req.method} ${req.path}: ${err && err.message}`);
+        } catch (e) { /* 日志失败不影响响应 */ }
+        if (res.headersSent) return next(err);
+        res.status(status).json({
+            success: false,
+            error: (err && err.message) ? err.message : '服务器内部错误'
+        });
+    });
+
     // ===== 启动服务器 =====
 
     server.listen(port, host, () => {
@@ -850,6 +1029,24 @@ function startWeb(options = {}) {
         console.log(`Web 服务已启动: http://${host}:${port}`);
         console.log(`  主题: ${theme}`);
         console.log(`  静态目录: ${webDir}`);
+
+        // V3.5.7：危险配置自检（仅提示，不阻断）
+        try {
+            const { auditDangerousConfig } = require('./command_policy');
+            const warnings = auditDangerousConfig();
+            if (warnings.length) {
+                console.log('');
+                console.log('  ⚠️  安全提示');
+                for (const w of warnings) {
+                    console.log(`     • ${w}`);
+                }
+                console.log('');
+                logger.warn(`Web 危险配置自检: ${warnings.join(' | ')}`);
+            }
+        } catch (e) {
+            // 自检失败不影响启动
+        }
+
         logger.impt(`Web 管理面板已启动 | 地址 http://${host}:${port} | 主题 ${theme}`);
 
         // 写��� PID 文件和端口文件（跨进程状态）
@@ -881,9 +1078,22 @@ function startWeb(options = {}) {
  * 支持跨进程：优先通过 PID 文件杀进程，兼容同进程内存模式
  */
 function stopWeb() {
-    // 方式 1：通过 PID 文件停止（跨进程兼容）
     logger.impt('正在停止 Web 管理面板...');
+
+    // V3.5.7 修复：若 PID 文件记录的正是当前进程，说明服务与本调用者在同一进程，
+    // 此时绝不能走「杀进程」分支 —— 否则 process.kill(self, 'SIGTERM') 会把自己终止，
+    // 导致调用方（如测试脚本、CLI 内嵌调用）在 stopWeb() 处直接挂掉、后续代码全不执行。
+    // 这是同进程内存模式的典型场景，应直接走方式 2。
+    let pidIsSelf = false;
     if (fs.existsSync(WEB_PID_FILE)) {
+        try {
+            const pid = parseInt(fs.readFileSync(WEB_PID_FILE, 'utf8').trim(), 10);
+            pidIsSelf = (pid === process.pid);
+        } catch (e) { /* 读不到就当不是自己 */ }
+    }
+
+    // 方式 1：通过 PID 文件停止（跨进程兼容，仅当目标确实是别的进程）
+    if (fs.existsSync(WEB_PID_FILE) && !pidIsSelf) {
         try {
             const pid = parseInt(fs.readFileSync(WEB_PID_FILE, 'utf8').trim());
             if (pid && pid > 0) {

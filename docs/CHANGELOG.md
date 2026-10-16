@@ -8,7 +8,8 @@
 
 | 版本 | 状态 | 发布时间 |
 |------|------|------|
-| **3.5.6-26.3e** | 当前版本 |2026-10-15|
+| **3.5.7-26.3f** | 当前版本 |2026-10-16|
+| **3.5.6-26.3e** | 上一版本 |2026-10-15|
 | **3.5.5-26.3d** | 上一版本 |2026-10-14|
 | **3.5.4-26.3c** | 上一版本 |2026-10-12|
 | **3.5.3-26.3b** | 上一版本 |2026-10-04|
@@ -58,6 +59,177 @@
 | **3.0.0** | 上一版本 |2026-07-23|
 | **2.0.0** | 内部迭代 |2026-02-27|
 | **1.0.0** | 内部迭代 |2026-02-07|
+
+---
+
+## [3.5.7-26.3f] — 2026-10-16
+
+> 主题：**跨平台修复 + Java 自动搜索与安装 + 危险指令分档开关**。
+> 这一版把「只在 Linux 能跑」的隐患集中清理了一遍，并让 Java 环境完全自动化。
+
+### 🖥️ 修复：Web 文件管理在 Windows 上完全不可用
+
+Web 面板的文件管理（新建文件夹、重命名、删除、移动、复制、压缩、解压）此前全部通过
+`/api/exec` 调用系统命令实现，用到了 `mkdir`、`mv`、`rm -rf`、`cp -r`、`zip`、`unzip`、`tar`。
+这些命令中**只有 1 个在 Windows 上存在**，导致 Windows 用户点击「新建文件夹」必然报错。
+此外，文件名直接拼进命令字符串，含 `;`、反引号等字符即可造成命令注入。
+
+本次改为**纯 Node.js 实现**，彻底消除 shell 依赖与注入面：
+
+- `file_manager.js` 新增 8 个操作函数：`makeDir` / `renameEntry` / `transferEntry`（移动·复制）/
+  `removeEntry` / `compress` / `extract` / `readText` / `writeText`
+- `web_service.js` 新增 9 条 REST 路由：`POST /api/files/mkdir`、`rename`、`move`、`copy`、
+  `compress`、`extract`、`DELETE /api/files`、`GET|PUT /api/files/content`
+- `web/file.html` 8 处 shell 调用全部改为 `fetch`；删除操作由 `confirm` 升级为
+  **要求输入 `DELETE` 全大写确认**，避免误触
+- **跨平台文件名校验**：拒绝 `<>:"|?*` 与控制字符、Windows 保留设备名（CON/PRN/AUX/NUL/COM1-9/LPT1-9）、
+  以点或空格结尾的名称、超长名称
+- **zip slip 防御**：解压时逐条校验条目名，拒绝 `..`、绝对路径、盘符越界；被跳过的条目会明确报告
+- `safeResolve` 由「静默剥离前导斜杠」改为**明确拒绝绝对路径**，消除语义歧义
+
+> 压缩包格式：`.zip` 走纯 Node（`adm-zip`）；`.tar.gz` 的**解压**在 Web 端暂不支持，会给出明确提示（终端可用）。
+
+### ☕ 新增：Java 自动搜索、版本匹配与自动安装
+
+之前的问题是「找到哪个 Java 就用哪个」，装了 Java 17 但服务器需要 Java 21 时会静默用错版本，
+启动即崩。本次做了完整重构：
+
+**1) 全平台 Java 扫描** — `utils.scanAllJava()` / `utils.findJavaByMajor()`
+
+覆盖来源：`PATH`、`JAVA_HOME`、系统包（`/usr/lib/jvm`、`/usr/java`、`/opt/java`）、
+IDE 下载目录（`~/.jdks`）、版本管理器（mise / rtx / sdkman / asdf / jabba）、
+macOS（`/Library/Java/JavaVirtualMachines`、Homebrew `openjdk@17`）、
+Windows（`Program Files\Java`、`Eclipse Adoptium`、`Corretto`、`Zulu`、`BellSoft`、`Semeru`、`Microsoft`）。
+结果按主版本升序排列，用 `realpath` 去重（避免 `/usr/bin/java → alternatives → 真实 jdk` 被算三次）。
+
+**2) 版本匹配策略** — 精确优先，**仅允许 LTS 向上兼容**
+
+| 需要 | 可用替代 | 说明 |
+|------|----------|------|
+| Java 8 | 无 | Java 9+ 移除大量 API，1.12.2 服务端在 17 上必崩 |
+| Java 11 | 17 / 21 | LTS 向上兼容 |
+| Java 17 | 21 | LTS 向上兼容 |
+| Java 21 | 无 | 1.20.5+ 字节码需要 21+ |
+
+非 LTS 版本（如 Java 20）**不会**被用来替代 LTS 需求。
+
+**3) 自动安装** — 本机找不到匹配版本时，从 Eclipse Temurin（Adoptium）自动下载
+
+修复了安装链路中的三个问题：
+- 下载产物扩展名按**重定向后的最终 URL + content-type** 推断（此前硬编码 `.zip`，
+  而 Linux/macOS 拿到的是 `.tar.gz`，解压分支必选错）
+- 解压改为**纯 Node**（zip 走 `adm-zip`，tar.gz 走 `tar`）—— 此前无条件调 `unzip`，
+  该命令在 Windows 上不存在，导致 Windows 用户永远无法完成 JRE 安装
+- 解压后**自动剥壳**：Temurin 归档内层多套一层 `jdk-17.0.12+7/`，
+  现在会定位真正的 JDK 根并提升，得到预期的 `core/jre/17/bin/java`；
+  同时补 `chmod 755`（zip 解压会丢失执行权限）
+
+**4) 菜单 11 → 1 重做** — 由「手填 Java 路径」升级为交互式管理
+
+会列出本机扫描到的**全部 Java**（标注主版本与来源）供选择，另提供
+`自动检测` / `手动输入路径` / `按 MC 版本自动安装` 三个入口。
+
+### 🔧 修复：MC 版本 → Java 版本的映射错误（影响 1.3~1.9 全部版本）
+
+`getRequiredJavaVersion` 此前用 `parseFloat` 比较版本号：
+
+```js
+parseFloat('1.8.9')  // => 1.8
+1.8 <= 1.16          // => false（因为 1.80 > 1.16）
+```
+
+于是 **Minecraft 1.8.9 被判为需要 Java 21**，1.3~1.9 的所有版本都受影响。
+现改为按「点分整数」逐段比较，并把 `scheme_manager.js` 中重复的一份映射也统一到同一实现。
+
+同时修正 1.20.5+ 的边界（此前 `<= 1.20` 会把它归到 Java 17，实际需要 Java 21）。
+
+### 🔧 修复：`_getFeatureVersion` 数字入参失效
+
+`getJavaExecutable(8)` 传入数字时，内部 `_getFeatureVersion` 只与字符串 `'8'` 比较，
+返回 `null`，导致**跳过版本匹配、直接掉进「任意 Java」兜底分支**。
+现统一归一化为字符串，并支持 `jdk8` / `java17` / `8u442` 等写法。
+
+### 🔧 修复：Temurin 下载 URL 404
+
+`baseUrl` 末尾多带了 `/version`，与路径段本身拼出
+`/v3/binary/version/latest/8/ga/...` 这种 404 路径。已修正为 `/v3/binary`，
+实测 Windows / Linux / macOS × Java 8 / 17 / 21 全部可达。
+
+### 🛡️ 新增：危险指令分档开关（方案 B）
+
+此前 Web 端危险指令是**硬编码拒绝清单**，无任何放开途径。现拆分为两档：
+
+- `SCHEME_OPS`（方案操作）：`scheme create/switch/delete/edit/pull/prune/register/export/import`
+  → 可通过配置 `web.allow_scheme_ops: true` 放开
+- `DENIED_WEB_ALWAYS`（永久拒绝）：`init`、`mod remove/sync/toggle`、`pack install`、
+  `web start`、`logs tail` → **不受任何开关影响**
+
+新增 `web.allow_remote_install`（默认 `false`）控制远程安装入口。
+两个开关**默认全关**，保持既有安全基线。
+拒绝时会明确告知所需配置项，便于用户按需放开。
+
+新增**启动自检** `auditDangerousConfig()`：当检测到「危险开关已开 + 面板监听 `0.0.0.0`
++ `dev_mode=true`」等危险组合时，在启动日志中打印安全提示（仅提示，不阻断启动）。
+
+### 🎨 优化：主菜单第 2 项改为「新建方案」
+
+原第 2 项是「下载/安装实例」，直接把核心装到当前目录，**不建方案也不询问方案名**，
+与「方案即服务器运行目录」的模型冲突，且与菜单 13 功能重叠。
+
+现改为完整的新建方案流程：询问方案名 → 校验合法性 → 选择核心类型 →
+询问版本/加载器/构建号 → 创建方案目录并安装核心，失败时自动回滚。
+原菜单 13 的「1. 创建方案」已移除，其余子项重编号为 1-4。
+
+> 顺带修掉一个静默 bug：旧菜单 13-1 调用 `schemeManager.create(name, version, loader)`
+> 用的是**三个位置参数**，而该方法签名是 `create(name, options = {})` —— 用户输入的
+> 版本和加载器被**静默忽略**，永远用默认值。现已改为正确的对象签名。
+
+### 📌 涉及文件
+
+| 文件 | 变更 |
+|------|------|
+| `core/src/file_manager.js` | 新增 8 个跨平台文件操作函数 |
+| `core/src/web_service.js` | 新增 9 条文件 REST 路由、启动自检 |
+| `core/src/command_policy.js` | 拆分 `SCHEME_OPS` / `DENIED_WEB_ALWAYS`、新增审计函数 |
+| `core/src/config.js` | 新增 `allow_scheme_ops` / `allow_remote_install` 开关 |
+| `core/src/utils.js` | 新增 `scanAllJava` / `findJavaByMajor`，重写 `detectJava` |
+| `core/src/jre_manager.js` | 版本匹配重构、纯 Node 解压、剥壳、下载 URL 修正 |
+| `core/src/scheme_manager.js` | Java 版本映射统一 |
+| `core/src/server.js` | Java 解析改为严格版本匹配 |
+| `core/src/installer.js` | Java 解析同步调整 |
+| `core/src/interactive.js` | 菜单 2 改为新建方案、菜单 13 重编号、菜单 11-1 重做 |
+| `web/file.html` | 文件管理全面改为 REST |
+
+### 🔧 修复：`stopWeb()` 在同进程调用时会终止调用方
+
+PID 文件由 `startWeb()` 写入 `process.pid`，而 `stopWeb()` 无条件优先走「按 PID 杀进程」分支。
+当调用方与服务**在同一进程**时（CLI 内嵌调用、自动化脚本、测试），
+`process.kill(self, 'SIGTERM')` 会把自己杀掉 —— 表现为调用方在 `stopWeb()` 处直接挂掉、
+后续代码完全不执行，且退出码为 143（SIGTERM）。
+
+现改为：读取 PID 后先判断是否为当前进程，是则跳过杀进程分支，直接走同进程内存模式关闭。
+
+### 🔧 修复：`express.json()` 默认 100kb 上限 + 缺少全局错误处理
+
+`PUT /api/files/content` 声称支持 2MB，但 `express.json()` 默认只接受 100kb，
+超限请求会在 body 解析阶段就被拒并抛出未捕获的 `PayloadTooLargeError` 堆栈
+（返回 HTML 错误页而非 JSON）。现提升到 4MB，并补上**全局错误处理中间件**，
+把 body 解析类错误映射为明确的 `413` / `400` JSON 响应。
+
+### ✅ 测试
+
+新增 6 个测试文件，合计 **309 项全部通过**：
+
+| 测试 | 数量 | 覆盖 |
+|------|------|------|
+| `test/file_ops.test.js` | 56 | 名称校验、增删改移复制、压缩解压、zip slip 防御、路径穿越 |
+| `test/file_ops_edge.test.js` | 56 | 名称校验 39 项（保留名/控制字符/长度边界）、safeResolve 12 项、实际操作边界（自身子目录/根目录/非 zip/超限） |
+| `test/command_policy.test.js` | 47 | 默认全关、单/双开关、永久拒绝项不受开关影响、审计警告 |
+| `test/java_scan.test.js` | 61 | MC→Java 映射 25 项、LTS 兼容策略、扫描去重、类型归一化、严格/放宽模式 |
+| `test/web_files_e2e.test.js` | 37 | **真实启动 Web 服务**逐个验证 9 条文件路由（认证/错误码/落盘/穿越/保留名） |
+| `test/interactive_menu.test.js` | 21 | 菜单 2/13 结构、对象签名调用、旧位置参数已清除 |
+| `test/jre_extract.test.js` | 10 | 解压三种布局剥壳、tar.gz/zip 端到端、**手工构造 zip slip 包**验证防御 |
+| `test/file_manager.test.js` | 21 | （既有，已同步 1 处断言） |
 
 ---
 

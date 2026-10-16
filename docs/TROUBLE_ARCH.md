@@ -2,6 +2,8 @@
 
 > 适用于 Arch Linux、Manjaro、EndeavourOS 及其衍生发行版
 
+> 📌 **命令引导词**：文档中的 `wow` 是简写 —— Arch / Linux 下实际写 `./wow.sh`（Windows 为 `wow.bat`）。例如 `wow mod install` 即 `./wow.sh mod install`。
+
 ---
 
 ## 常见问题分类

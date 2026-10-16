@@ -4,6 +4,8 @@ wow~ V3.3.0 起内置对接 **[陶瓦（Terracotta）](https://github.com/burnin
 
 > ⚠️ **3.3.0 范围**：仅实现 **房主端（「我要当房主」）**。加入端由 **PCL / HMCL / BakaXL / FCL** 等启动器内置支持，wow~ 无需也不实现加入逻辑。
 
+> 📌 **命令引导词**：文档中的 `wow` 是简写 —— Linux / macOS 请写 `./wow.sh`，Windows 请写 `wow.bat`。例如 `wow lan host` 在 Linux 下即 `./wow.sh lan host`。
+
 ---
 
 ## 一、它是怎么工作的

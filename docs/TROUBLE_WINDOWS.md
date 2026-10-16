@@ -8,6 +8,8 @@
 > 请注意：**自1.21起，mojang宣布使用Java21，官方文档声称不再支持Windows 7，建议安装Windows 11以安装高版本**
 > Windows Vista、Windows XP及以下用户存在严重的兼容性问题，建议安装高版本，或采取特殊手段
 
+> 📌 **命令引导词**：文档中的 `wow` 是简写 —— Windows 下实际写 `wow.bat`（Linux/macOS 为 `./wow.sh`）。例如 `wow mod install` 即 `wow.bat mod install`。
+
 ---
 
 ## 常见问题分类

@@ -97,11 +97,25 @@ async function showMainMenu(options = {}, directChoice = null) {
         // Java 信息
         try {
             if (utils) {
+                // V3.5.7：改为展示「主菜单扫描到的全部 Java 版本清单」+ 当前生效的 Java，
+                // 便于用户一眼看出本机装了哪些版本、当前用的是哪个。
+                const allJava = (typeof utils.scanAllJava === 'function') ? utils.scanAllJava() : [];
+                const majors = [...new Set(allJava.map(j => j.major).filter(m => m != null))]
+                    .sort((a, b) => a - b);
+                if (majors.length) {
+                    console.log(`  已装 Java:  ${majors.map(m => 'Java ' + m).join(', ')}`);
+                }
+
+                const configured = config ? config.getConfig('server.java', null) : null;
                 const javaPath = utils.detectJava();
-                if (javaPath) {
-                    console.log(`  Java 路径:  ${javaPath}`);
+                if (configured && javaPath) {
+                    console.log(`  当前 Java:  ${javaPath}（已手动指定）`);
+                } else if (javaPath) {
+                    console.log(`  当前 Java:  ${javaPath}`);
+                } else if (majors.length) {
+                    console.log('  当前 Java:  (未匹配到服务器需求的版本，可在菜单 11 → 1 安装)');
                 } else {
-                    console.log(`  Java 路径:  (未检测到)`);
+                    console.log('  当前 Java:  (未检测到，可在菜单 11 → 1 自动安装)');
                 }
             }
         } catch (e) {
@@ -113,7 +127,7 @@ async function showMainMenu(options = {}, directChoice = null) {
         // 主菜单（纯数字导航；长命令不在此处执行，请直接查阅文档使用命令行）
         const menuItems = [
             ['1', '启动服务器'],
-            ['2', '下载/安装实例'],
+            ['2', '新建方案'],
             ['3', '变更配置 (server.properties)'],
             ['4', '管理模组/插件'],
             ['5', '错误日志分析'],
@@ -124,7 +138,7 @@ async function showMainMenu(options = {}, directChoice = null) {
             ['10', '模组/插件搜索下载'],
             ['11', '系统设置'],
             ['12', '服务器状态监控'],
-            ['13', '备份/恢复 (方案管理)'],
+            ['13', '方案管理 (切换/列表/删除)'],
             ['14', 'Web 主题更改'],
             ['15', '联机 / 我要当房主 (陶瓦)']
         ];
@@ -212,23 +226,82 @@ async function dispatchMenu(choice, options, rl) {
             }
 
             case '2': {
-                // 下载/安装实例
-                printHeader('下载/安装实例');
-                if (!installer) {
-                    console.log('安装器模块未加载');
+                // 新建方案（V3.5.7）
+                // 旧实现是「下载/安装实例」：直接调 installer.install 装到当前目录，
+                // 既不建方案、也不问方案名，与「方案即服务器运行目录」的模型冲突，
+                // 且和菜单 13 的「创建方案」功能重叠。现改为统一入口。
+                printHeader('新建方案');
+                if (!schemeManager) {
+                    console.log('方案管理模块未加载');
                     break;
                 }
-                console.log('\n支持的服务器类型:');
-                const types = ['vanilla', 'forge', 'fabric', 'paper', 'purpur', 'spigot', 'bukkit', 'mohist', 'leaves'];
-                types.forEach((t, i) => console.log(`  ${i + 1}. ${t}`));
-                console.log('  0. 返回');
-                const tChoice = await ask(rl, '\n选择类型 (1-9): ');
-                const tIdx = parseInt(tChoice) - 1;
-                if (tIdx >= 0 && tIdx < types.length) {
-                    const version = await ask(rl, 'Minecraft 版本 (如 1.20.1): ');
-                    if (version) {
-                        await installer.install(types[tIdx], version);
+
+                // 1) 方案名
+                const sName = (await ask(rl, '方案名称: ')).trim();
+                if (!sName) {
+                    console.log('未输入方案名，已取消。');
+                    break;
+                }
+
+                // 名称校验：复用 file_manager 的跨平台校验段（拒绝路径分隔符、
+                // Windows 保留字符/保留设备名、以点或空格结尾等）
+                let fm;
+                try {
+                    fm = require('./file_manager');
+                } catch (e) { fm = null; }
+                if (fm && typeof fm.validateNameSegment === 'function') {
+                    const check = fm.validateNameSegment(sName);
+                    if (!check.ok) {
+                        console.log(`❌ 方案名不合法: ${check.reason}`);
+                        break;
                     }
+                }
+
+                // 目录已存在则直接拒绝（避免 create 抛错后留下残缺目录）
+                if (typeof schemeManager._schemeExists === 'function'
+                    && schemeManager._schemeExists(sName)) {
+                    console.log(`❌ 方案「${sName}」已存在。可用菜单 13 → 2 查看全部方案。`);
+                    break;
+                }
+
+                // 2) 核心类型
+                const sTypes = ['vanilla', 'forge', 'fabric', 'paper', 'purpur', 'spigot', 'bukkit', 'mohist', 'leaves'];
+                console.log('\n支持的服务器类型:');
+                sTypes.forEach((t, i) => console.log(`  ${i + 1}. ${t}`));
+                const stChoice = (await ask(rl, '\n选择类型 (默认 1 vanilla): ')).trim();
+                let type = 'vanilla';
+                if (stChoice) {
+                    const stIdx = parseInt(stChoice, 10) - 1;
+                    if (!(stIdx >= 0 && stIdx < sTypes.length)) {
+                        console.log('类型选择无效，已取消。');
+                        break;
+                    }
+                    type = sTypes[stIdx];
+                }
+
+                // 3) 版本 / 加载器 / 构建号
+                const sVersion = (await ask(rl, 'Minecraft 版本 (默认 1.20.1): ')).trim() || '1.20.1';
+                const sLoader = (await ask(rl, `加载器 (默认 ${type}): `)).trim() || type;
+                const sBuild = (await ask(rl, '构建号 (留空自动选择最新): ')).trim() || null;
+
+                // 4) 创建（务必用对象签名——旧菜单 13-1 用三个位置参数调用，
+                //    导致用户输入的版本/加载器被静默忽略，这里已修正）
+                console.log('');
+                try {
+                    await schemeManager.create(sName, {
+                        type,
+                        version: sVersion,
+                        loader: sLoader,
+                        build: sBuild
+                    });
+                    console.log(`\n✅ 方案「${sName}」创建完成。`);
+                    const sDir = (schemeManager.schemesDir)
+                        ? require('path').join(schemeManager.schemesDir, sName)
+                        : `scheme/${sName}`;
+                    console.log(`   目录: ${sDir}`);
+                    console.log('   可在菜单 13 → 1 切换到此方案后启动服务器。');
+                } catch (e) {
+                    console.log(`\n❌ 创建失败: ${e.message}`);
                 }
                 break;
             }
@@ -578,7 +651,7 @@ async function dispatchMenu(choice, options, rl) {
                     console.log('配置模块未加载');
                     break;
                 }
-                console.log('\n  1. 修改 Java 路径');
+                console.log('\n  1. Java 设置（扫描/选择/自动安装）');
                 console.log('  2. 修改 JVM 参数');
                 console.log('  3. 查看系统信息');
                 console.log('  4. 重置配置');
@@ -586,11 +659,8 @@ async function dispatchMenu(choice, options, rl) {
                 const subChoice = await ask(rl, '\n请选择 (0-4): ');
                 switch (subChoice) {
                     case '1': {
-                        const current = config.getConfig('server.java', '(自动检测)');
-                        console.log(`当前 Java: ${current}`);
-                        const newPath = await ask(rl, '新 Java 路径 (留空自动检测): ');
-                        config.setConfig('server.java', newPath || null);
-                        console.log('✅ Java 路径已更新');
+                        // V3.5.7：由「手填 Java 路径」升级为「扫描本机全部 Java 并列出选择」
+                        await javaSettingsFlow(rl, config, utils);
                         break;
                     }
                     case '2': {
@@ -642,30 +712,22 @@ async function dispatchMenu(choice, options, rl) {
             }
 
             case '13': {
-                // 备份/恢复
+                // 备份/恢复（方案管理）
+                // V3.5.7：「创建方案」已上移到主菜单第 2 项，此处只保留日常管理操作，
+                // 原 2-5 项顺次重编号为 1-4。
                 printHeader('备份/恢复 (方案管理)');
                 if (!schemeManager) {
                     console.log('方案管理模块未加载');
                     break;
                 }
-                console.log('\n  1. 创建方案');
-                console.log('  2. 切换方案');
-                console.log('  3. 列出方案');
-                console.log('  4. 删除方案');
-                console.log('  5. 方案信息');
+                console.log('\n  1. 切换方案');
+                console.log('  2. 列出方案');
+                console.log('  3. 删除方案');
+                console.log('  4. 方案信息');
                 console.log('  0. 返回');
-                const subChoice = await ask(rl, '\n请选择 (0-5): ');
+                const subChoice = await ask(rl, '\n请选择 (0-4): ');
                 switch (subChoice) {
                     case '1': {
-                        const name = await ask(rl, '方案名称: ');
-                        if (name) {
-                            const version = await ask(rl, 'MC 版本 (默认 1.20.1): ') || '1.20.1';
-                            const loader = await ask(rl, '加载器 (默认 vanilla): ') || 'vanilla';
-                            schemeManager.create(name, version, loader);
-                        }
-                        break;
-                    }
-                    case '2': {
                         schemeManager.list();
                         const name = await ask(rl, '要切换到的方案名: ');
                         if (name) {
@@ -673,21 +735,21 @@ async function dispatchMenu(choice, options, rl) {
                         }
                         break;
                     }
-                    case '3':
+                    case '2':
                         schemeManager.list();
                         break;
-                    case '4': {
+                    case '3': {
                         schemeManager.list();
                         const name = await ask(rl, '要删除的方案名: ');
                         if (name) {
                             const confirm = await ask(rl, `确定删除方案 "${name}"? (y/N): `);
                             if (confirm.toLowerCase() === 'y') {
-                                schemeManager.delete(name);
+                                await schemeManager.delete(name);
                             }
                         }
                         break;
                     }
-                    case '5': {
+                    case '4': {
                         schemeManager.list();
                         const name = await ask(rl, '方案名: ');
                         if (name) {
@@ -791,11 +853,121 @@ async function dispatchMenu(choice, options, rl) {
     }
 }
 
+/**
+ * Java 设置流程（V3.5.7 新增）
+ * 1) 扫描本机所有 Java（PATH / 系统包 / IDE / 版本管理器）
+ * 2) 列出并标注主版本与来源，供用户选择
+ * 3) 支持「自动检测」与「手动输入路径」
+ * 4) 支持按 MC 版本自动安装缺失的 Java（Temurin）
+ */
+async function javaSettingsFlow(rl, config, utils) {
+    let JreManager;
+    try {
+        JreManager = require('./jre_manager');
+    } catch (e) {
+        console.log(`Java 管理模块加载失败: ${e.message}`);
+        return;
+    }
+    const jre = new JreManager();
+
+    for (;;) {
+        const current = config.getConfig('server.java', null);
+        console.log('\n' + '─'.repeat(52));
+        console.log(`当前配置: ${current ? current : '(自动检测)'}`);
+
+        let list = [];
+        try { list = utils.scanAllJava(); } catch (e) { list = []; }
+
+        if (list.length === 0) {
+            console.log('\n本机未扫描到任何可用的 Java。');
+        } else {
+            console.log(`\n本机扫描到 ${list.length} 个 Java：`);
+            list.forEach((j, i) => {
+                const ver = j.major != null ? `Java ${j.major}` : '版本未知';
+                console.log(`  ${String(i + 1).padStart(2)}. ${ver.padEnd(9)} [${j.source}]  ${j.path}`);
+            });
+        }
+
+        const bundled = jre.listBundled ? jre.listBundled() : [];
+        if (bundled.length) {
+            console.log(`\n内置 JRE（core/jre）: Java ${bundled.join(', Java ')}`);
+        }
+
+        console.log('\n  a. 自动检测（清除手动配置）');
+        console.log('  m. 手动输入 Java 路径');
+        console.log('  i. 自动安装缺失的 Java（按 MC 版本）');
+        console.log('  0. 返回');
+        console.log('─'.repeat(52));
+
+        const c = (await ask(rl, '\n请选择: ')).trim().toLowerCase();
+
+        if (c === '0' || c === '') break;
+
+        if (c === 'a') {
+            config.setConfig('server.java', null);
+            console.log('✅ 已切换为自动检测模式。');
+            continue;
+        }
+
+        if (c === 'm') {
+            const p = (await ask(rl, 'Java 可执行文件完整路径: ')).trim();
+            if (!p) { console.log('未输入，已取消。'); continue; }
+            const fs = require('fs');
+            if (!fs.existsSync(p)) {
+                console.log(`❌ 路径不存在: ${p}`);
+                continue;
+            }
+            // 探测该路径的真实版本，避免用户误填
+            const hit = (utils.scanAllJava() || [])
+                .find(j => require('path').normalize(j.path) === require('path').normalize(p));
+            if (hit && hit.major != null) {
+                console.log(`   该 Java 主版本: ${hit.major}`);
+            } else {
+                console.log('⚠️  无法确认该路径可执行（不在扫描结果中），仍将写入配置。');
+            }
+            config.setConfig('server.java', p);
+            console.log('✅ Java 路径已更新。');
+            continue;
+        }
+
+        if (c === 'i') {
+            const mc = (await ask(rl, '目标 Minecraft 版本 (如 1.20.1): ')).trim();
+            if (!mc) { console.log('未输入，已取消。'); continue; }
+            const need = jre.getRequiredJavaVersion(mc);
+            console.log(`\nMinecraft ${mc} 需要 Java ${need}。`);
+            try {
+                const p = await jre.resolveJavaFor(mc, true);
+                console.log(`\n✅ 可用 Java: ${p}`);
+                const setIt = await ask(rl, '是否写入配置 server.java? (y/N): ');
+                if (setIt.toLowerCase() === 'y') {
+                    config.setConfig('server.java', p);
+                    console.log('✅ 已写入配置。');
+                }
+            } catch (e) {
+                console.log(`\n❌ 处理失败: ${e.message}`);
+            }
+            continue;
+        }
+
+        // 数字：选择列出的某个 Java
+        const idx = parseInt(c, 10);
+        if (!isNaN(idx) && idx >= 1 && idx <= list.length) {
+            const picked = list[idx - 1];
+            config.setConfig('server.java', picked.path);
+            console.log(`✅ 已选择 ${picked.major != null ? 'Java ' + picked.major : '该 Java'}: ${picked.path}`);
+            continue;
+        }
+
+        console.log('无效选择。');
+    }
+}
+
 module.exports = {
     showMainMenu,
     dispatchMenu,
     createRL,
     ask,
     clearScreen,
-    printHeader
+    printHeader,
+    javaSettingsFlow
 };

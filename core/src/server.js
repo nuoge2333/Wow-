@@ -595,12 +595,29 @@ class ServerManager {
             return javaExec;
         }
 
-        const systemJava = utils.detectJava();
+        // V3.5.7：ensureJavaForMinecraft 已极尽所能（含自动下载），仍失败时说明
+        // 确实没有可用 Java。此时不再退到「任意能跑的 java」——用错版本会启动即崩，
+        // 提示用户更清晰。仅在完全没有 Java 时才抛错。
+        const required = (this.jreManager && this.jreManager.getRequiredJavaVersion)
+            ? this.jreManager.getRequiredJavaVersion(mcVersion)
+            : null;
+        const systemJava = required
+            ? utils.detectJava(required)
+            : utils.detectJava();
         if (systemJava) {
             return systemJava;
         }
 
-        throw new Error('未找到 Java，请安装 Java 或配置 server.java');
+        if (required) {
+            const anyJava = utils.detectJava(null, { allowMismatch: true });
+            if (anyJava) {
+                console.warn(`⚠️ 未找到 Java ${required}（此版本 Minecraft 需要），当前将使用 ${anyJava}。`);
+                console.warn('   如果服务器启动失败，请在菜单 11 → 1 自动安装对应的 Java。');
+                return anyJava;
+            }
+        }
+
+        throw new Error(`未找到 Java ${required || ''}，请在菜单 11 → 1 自动安装，或手动配置 server.java`);
     }
 
     /**

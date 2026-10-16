@@ -3,6 +3,8 @@
  适用于 macOS 10.15 (Catalina) 及以上版本
  包括 Intel 和 Apple Silicon (M1M2M3) 芯片
 
+> 📌 **命令引导词**：文档中的 `wow` 是简写 —— macOS / Linux 下实际写 `./wow.sh`（Windows 为 `wow.bat`）。例如 `wow mod install` 即 `./wow.sh mod install`。
+
 ---
 
 ## 常见问题分类

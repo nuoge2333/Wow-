@@ -2,6 +2,16 @@
 
 > wow~ 所有命令按类别分组，共计 51 个命令
 
+> 📌 **命令引导词说明（重要）**
+> 本文档中的命令有两种写法：带前缀的（`wow server start`）与只写主干的（`### server start`）。无论哪种，**实际执行时都要加上启动脚本前缀**：
+>
+> | 操作系统 | 文档写法 | 实际执行 |
+> |----------|----------|----------|
+> | **Linux / macOS** | `wow server start` / `server start` | `./wow.sh server start` |
+> | **Windows** | `wow server start` / `server start` | `wow.bat server start` |
+>
+> 即：Linux / macOS 下把 `wow` 读作 `./wow.sh`，Windows 下读作 `wow.bat`。下文所有示例同理。
+
 ---
 
 > 💡 **开服控制台三视图切换（V3.4.0+）**

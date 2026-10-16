@@ -693,8 +693,16 @@ class Installer {
         } catch (e) {
             console.warn(`⚠️ 自动解析/下载 Java 失败，回退系统 java: ${e.message}`);
         }
+        // V3.5.7：优先严格按版本匹配。detectJava(required) 现在匹配不到会返回 null
+        // （旧实现会随便返回一个能跑的 java，例如需要 8 却给了 20，安装器直接崩）。
         const sys = utils.detectJava(required);
         if (sys) return sys;
+        // 严格匹配失败时才退让：至少给一个能跑的（并明确告警），否则连报错都跑不出来
+        const loose = utils.detectJava(null, { allowMismatch: true });
+        if (loose) {
+            console.warn(`⚠️ 未找到 Java ${required}，暂时使用 ${loose}（可能导致安装失败）`);
+            return loose;
+        }
         return 'java';
     }
 

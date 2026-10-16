@@ -1,5 +1,7 @@
 # 🔌 Web API 参考
 
+> 📌 **命令引导词**：文档中的 `wow` 是简写 —— Linux / macOS 请写 `./wow.sh`，Windows 请写 `wow.bat`。例如 `wow server start` 在 Linux 下即 `./wow.sh server start`。
+
 Wow~ Web 面板以 Express 提供 HTTP 接口，并以 Socket.IO 提供实时通信。所有接口基址为 `http://<host>:<port>`（默认 `http://127.0.0.1:8080`）。
 
 > 除认证接口外，所有 `/api/*` 接口都需在请求头携带 JWT：
@@ -140,6 +142,26 @@ Wow~ Web 面板以 Express 提供 HTTP 接口，并以 Socket.IO 提供实时通
 ```
 失败时返回 HTTP 500：`{ "success": false, "error": "..." }`。
 
+#### 危险指令分档（V3.5.7）
+
+后端维护两份清单，拒绝时返回 `403` 并说明原因：
+
+| 类别 | 指令 | 可否放开 |
+|------|------|----------|
+| **方案操作** `SCHEME_OPS` | `scheme create` / `switch` / `delete` / `edit` / `pull` / `prune` / `register` / `export` / `import` | ✅ 配置 `web.allow_scheme_ops: true` |
+| **永久拒绝** `DENIED_WEB_ALWAYS` | `init`、`mod remove` / `sync` / `toggle`、`pack install`、`web start`、`logs tail` | ❌ 不受任何开关影响 |
+| **远程安装** | `install <http(s)://...>` | ✅ 配置 `web.allow_remote_install: true` |
+
+两个开关**默认均为 `false`**。拒绝响应示例：
+
+```json
+{ "success": false, "error": "该指令已在 Web 端禁用：scheme delete。如需放开，请在配置中设置 web.allow_scheme_ops: true" }
+```
+
+> ⚠️ `web.allow_remote_install: true` 等同于开放任意代码执行入口，请仅在完全可信的网络环境中开启。
+> 启动时会做一次危险配置自检，若检测到「危险开关已开 + 监听 `0.0.0.0` + `dev_mode=true`」
+> 等组合，会在日志中打印安全提示（仅提示，不阻断启动）。
+
 ---
 
 ## 四之二、文件管理（V3.5.6 新增，需认证）
@@ -181,6 +203,97 @@ Wow~ Web 面板以 Express 提供 HTTP 接口，并以 Socket.IO 提供实时通
 { "success": true, "uploaded": 2, "files": ["a.jar", "b.jar"], "skipped": [] }
 ```
 单次上传总大小上限 **512MB**，超限返回 `413`；被安全策略拒绝的文件会出现在 `skipped` 中。
+
+### 文件管理进阶接口（V3.5.7 新增，需认证）
+
+> **重要变更**：V3.5.7 起，新建/重命名/移动/复制/删除/压缩/解压全部改为下列 REST 接口，
+> **不再通过 `/api/exec` 调用系统命令**。旧实现依赖 `mkdir`/`mv`/`rm`/`cp`/`zip`/`unzip`/`tar`，
+> 在 Windows 上几乎全部不可用，且存在命令注入风险。
+> 所有接口的响应错误码见下方映射表。
+
+**通用错误码**
+
+| 错误码 | HTTP | 含义 |
+|--------|------|------|
+| `EPATH` | 403 | 路径越界 / 名称非法 / 操作方案根目录 |
+| `ENOENT` | 404 | 目标不存在 |
+| `ENOTDIR` | 400 | 路径中存在非目录段 |
+| `EISDIR` | 400 | 期望文件但拿到目录 |
+| `EEXIST` | 409 | 目标已存在 |
+| `ETOOBIG` | 413 | 内容超出上限 |
+| `EBADZIP` | 400 | 压缩包损坏或格式不符 |
+
+**名称合法性规则**（跨平台，Windows 最严格）：不得为空、不得为 `.` / `..`、不得含路径分隔符、
+不得含 `< > : " | ? *` 或控制字符、不得是 Windows 保留设备名（`CON`/`PRN`/`AUX`/`NUL`/`COM1-9`/`LPT1-9`）、
+不得以点或空格结尾、长度不超过 255。
+
+---
+
+### `POST /api/files/mkdir`
+新建文件夹。
+
+```json
+{ "path": "mods", "name": "新文件夹" }
+```
+`path` 为父目录（相对方案根，可为空表示根目录）。成功返回 `{ "success": true, "path": "mods/新文件夹" }`。
+
+### `POST /api/files/rename`
+重命名。
+
+```json
+{ "path": "mods/a.jar", "newName": "b.jar" }
+```
+
+### `POST /api/files/move`
+移动。
+
+```json
+{ "paths": ["mods/a.jar"], "target": "mods/old" }
+```
+支持批量。**不允许把目录移入自身的子目录**（返回 `403`）。
+
+### `POST /api/files/copy`
+复制。请求体同 `move`。
+
+### `DELETE /api/files`
+删除文件或目录（目录递归删除）。
+
+```json
+{ "paths": ["mods/a.jar", "temp"] }
+```
+支持批量。**不允许删除方案根目录**（返回 `403`）。
+
+### `POST /api/files/compress`
+压缩为 zip。
+
+```json
+{ "paths": ["mods/a.jar", "config"], "dest": "backup.zip" }
+```
+
+### `POST /api/files/extract`
+解压 zip。
+
+```json
+{ "path": "backup.zip", "dest": "restore" }
+```
+> **仅支持 `.zip`**，其他格式返回 `403` 并提示在终端操作。
+> 解压时逐条校验条目名，含 `..`、绝对路径或盘符越界的条目会被**跳过**（不报错中断），
+> 并在响应 `skipped` 数组中列出。
+
+### `GET /api/files/content?path=<相对路径>`
+读取文本文件。默认上限 512KB，超限返回 `413`。
+
+```json
+{ "success": true, "path": "server.properties", "content": "..." }
+```
+
+### `PUT /api/files/content`
+写入文本文件（覆盖）。上限 2MB。
+
+```json
+{ "path": "server.properties", "content": "motd=Hello\n" }
+```
+父目录不存在会自动创建。
 
 ---
 

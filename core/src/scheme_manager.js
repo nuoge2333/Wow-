@@ -854,10 +854,19 @@ class SchemeManager {
     // ==================== 辅助方法 ====================
 
     _getRequiredJava(version) {
-        const v = parseFloat(version);
-        if (v <= 1.16) return '8';
-        if (v <= 1.20) return '17';
-        return '21';
+        // V3.5.7：改为复用 JreManager 的映射。旧实现用 parseFloat 比较，
+        // parseFloat('1.8.9')=1.8 被当成 1.80 > 1.16，导致 1.8/1.9 等版本
+        // 被误判为需要 Java 21，写进 scheme.yaml 的 compatibility.java 也是错的。
+        try {
+            if (!this._jreManagerForJava) {
+                const JreManager = require('./jre_manager');
+                this._jreManagerForJava = new JreManager();
+            }
+            return this._jreManagerForJava.getRequiredJavaVersion(version);
+        } catch (e) {
+            // 兜底：即使 JreManager 不可用也不能再退回 parseFloat 的老逻辑
+            return '17';
+        }
     }
 
     _isEcoIncompatible(meta) {

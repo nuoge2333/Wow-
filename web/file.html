@@ -223,28 +223,33 @@
             let fileList = [];
 
             // ==================== API 封装 ====================
-            async function apiExec(command, args = []) {
-                const resp = await fetch('/api/exec', {
-                    method: 'POST',
+            // V3.5.7：全部走纯 REST 接口，不再依赖 /api/exec 调 shell。
+            // 原因：旧实现用 `mkdir` `mv` `rm -rf` `cp -r` `zip` `unzip` `tar` 等系统命令，
+            // Windows 上绝大多数不存在（mkdir/mv/cp/rm 都是 Unix 工具），且存在命令注入风险。
+            async function apiRequest(path, method = 'GET', body = null) {
+                const options = {
+                    method,
                     headers: {
                         'Content-Type': 'application/json',
                         'Authorization': 'Bearer ' + token
-                    },
-                    body: JSON.stringify({ command, args })
-                });
-                if (!resp.ok) {
-                    const err = await resp.json();
-                    throw new Error(err.error || '请求失败');
-                }
-                return await resp.json();
+                    }
+                };
+                if (body !== null) options.body = JSON.stringify(body);
+                const resp = await fetch(path, options);
+                const text = await resp.text();
+                let data = {};
+                try { data = text ? JSON.parse(text) : {}; } catch (e) { data = {}; }
+                if (!resp.ok) throw new Error(data.error || `请求失败 (HTTP ${resp.status})`);
+                return data;
             }
 
             async function apiGet(path) {
-                const resp = await fetch(path, {
-                    headers: { 'Authorization': 'Bearer ' + token }
-                });
-                if (!resp.ok) throw new Error('请求失败');
-                return await resp.json();
+                return apiRequest(path, 'GET');
+            }
+
+            /** 拼接相对路径：空父目录时直接返回名字 */
+            function joinPath(parent, name) {
+                return parent ? `${parent}/${name}` : name;
             }
 
             // ==================== 加载文件列表 ====================
@@ -481,7 +486,7 @@
                 const name = prompt('请输入新文件夹名称:');
                 if (!name) return;
                 try {
-                    await apiExec(`mkdir ${currentPath ? currentPath + '/' + name : name}`);
+                    await apiRequest('/api/files/mkdir', 'POST', { path: currentPath, name });
                     loadFiles(currentPath);
                 } catch (e) {
                     alert('创建失败: ' + e.message);
@@ -493,10 +498,11 @@
                 const oldName = selectedFiles[0];
                 const newName = prompt('请输入新名称:', oldName);
                 if (!newName || newName === oldName) return;
-                const oldPath = currentPath ? `${currentPath}/${oldName}` : oldName;
-                const newPath = currentPath ? `${currentPath}/${newName}` : newName;
                 try {
-                    await apiExec(`mv ${oldPath} ${newPath}`);
+                    await apiRequest('/api/files/rename', 'POST', {
+                        path: joinPath(currentPath, oldName),
+                        newName
+                    });
                     selectedFiles = [];
                     loadFiles(currentPath);
                 } catch (e) {
@@ -506,12 +512,20 @@
 
             async function deleteFiles() {
                 if (selectedFiles.length === 0) return;
-                const confirmMsg = `确定删除 ${selectedFiles.length} 个文件/文件夹吗？`;
-                if (!confirm(confirmMsg)) return;
+                const list = selectedFiles.join('、');
+                // 不可逆操作：要求用户手动输入 DELETE 确认（比 confirm 更难误触）
+                const answer = prompt(
+                    `⚠️ 即将永久删除以下 ${selectedFiles.length} 项，此操作不可恢复：\n\n${list}\n\n` +
+                    `如确认，请输入 DELETE（全大写）后回车：`
+                );
+                if (answer !== 'DELETE') {
+                    return;
+                }
+                let ok = 0;
                 for (const name of selectedFiles) {
-                    const path = currentPath ? `${currentPath}/${name}` : name;
                     try {
-                        await apiExec(`rm -rf ${path}`);
+                        await apiRequest('/api/files', 'DELETE', { path: joinPath(currentPath, name) });
+                        ok++;
                     } catch (e) {
                         alert(`删除 ${name} 失败: ${e.message}`);
                     }
@@ -522,35 +536,32 @@
 
             function copyFiles() {
                 if (selectedFiles.length === 0) return;
-                clipboard = { action: 'copy', files: selectedFiles.map(f => currentPath ? `${currentPath}/${f}` : f) };
+                clipboard = { action: 'copy', files: selectedFiles.map(f => joinPath(currentPath, f)) };
                 pasteBtn.disabled = false;
                 alert(`已复制 ${selectedFiles.length} 个文件/文件夹到剪贴板`);
             }
 
             function moveFiles() {
                 if (selectedFiles.length === 0) return;
-                clipboard = { action: 'cut', files: selectedFiles.map(f => currentPath ? `${currentPath}/${f}` : f) };
+                clipboard = { action: 'cut', files: selectedFiles.map(f => joinPath(currentPath, f)) };
                 pasteBtn.disabled = false;
                 alert(`已剪切 ${selectedFiles.length} 个文件/文件夹到剪贴板`);
             }
 
             async function pasteFiles() {
                 if (!clipboard || clipboard.files.length === 0) return;
-                const dest = currentPath ? currentPath : '.';
+                const isCopy = clipboard.action === 'copy';
+                const endpoint = isCopy ? '/api/files/copy' : '/api/files/move';
                 let successCount = 0;
                 for (const src of clipboard.files) {
                     try {
-                        if (clipboard.action === 'copy') {
-                            await apiExec(`cp -r ${src} ${dest}/`);
-                        } else if (clipboard.action === 'cut') {
-                            await apiExec(`mv ${src} ${dest}/`);
-                        }
+                        await apiRequest(endpoint, 'POST', { from: src, to: currentPath });
                         successCount++;
                     } catch (e) {
                         alert(`操作 ${src} 失败: ${e.message}`);
                     }
                 }
-                alert(`${clipboard.action === 'copy' ? '复制' : '移动'} 完成 ${successCount} 个`);
+                alert(`${isCopy ? '复制' : '移动'} 完成 ${successCount} 个`);
                 clipboard = null;
                 pasteBtn.disabled = true;
                 selectedFiles = [];
@@ -561,14 +572,13 @@
                 if (selectedFiles.length === 0) return;
                 const zipName = prompt('输入压缩包文件名 (不含扩展名):', 'archive');
                 if (!zipName) return;
-                const fullZipName = zipName + '.zip';
-                const targetPath = currentPath ? `${currentPath}/${fullZipName}` : fullZipName;
-                // 构建文件列表
-                const files = selectedFiles.map(f => currentPath ? `${currentPath}/${f}` : f);
+                const fullZipName = zipName.endsWith('.zip') ? zipName : zipName + '.zip';
                 try {
-                    // 使用 zip 命令
-                    await apiExec(`zip ${targetPath} ${files.join(' ')}`);
-                    alert(`压缩成功: ${fullZipName}`);
+                    const r = await apiRequest('/api/files/compress', 'POST', {
+                        paths: selectedFiles.map(f => joinPath(currentPath, f)),
+                        dest: joinPath(currentPath, fullZipName)
+                    });
+                    alert(`压缩成功: ${fullZipName}（${formatSize(r.size)}）`);
                     selectedFiles = [];
                     loadFiles(currentPath);
                 } catch (e) {
@@ -577,26 +587,39 @@
             }
 
             async function unzipFiles() {
-                if (selectedFiles.length !== 1) return;
-                const name = selectedFiles[0];
-                if (!name.endsWith('.zip') && !name.endsWith('.tar.gz') && !name.endsWith('.tgz')) {
-                    alert('仅支持 .zip 或 .tar.gz 文件');
+                if (selectedFiles.length !== 1) {
+                    alert('请只选中一个压缩包');
                     return;
                 }
-                const filePath = currentPath ? `${currentPath}/${name}` : name;
-                const destDir = currentPath ? currentPath : '.';
+                const name = selectedFiles[0];
+                if (!name.toLowerCase().endsWith('.zip')) {
+                    alert('目前仅支持解压 .zip 文件（.tar.gz 请在终端操作）');
+                    return;
+                }
                 try {
-                    if (name.endsWith('.zip')) {
-                        await apiExec(`unzip ${filePath} -d ${destDir}`);
-                    } else if (name.endsWith('.tar.gz') || name.endsWith('.tgz')) {
-                        await apiExec(`tar -xzf ${filePath} -C ${destDir}`);
+                    const r = await apiRequest('/api/files/extract', 'POST', {
+                        path: joinPath(currentPath, name),
+                        dest: currentPath
+                    });
+                    let msg = `解压成功，共 ${r.extracted} 个文件`;
+                    if (r.skipped && r.skipped.length) {
+                        msg += `\n⚠️ 有 ${r.skipped.length} 个条目因路径不安全被跳过`;
                     }
-                    alert('解压成功');
+                    alert(msg);
                     selectedFiles = [];
                     loadFiles(currentPath);
                 } catch (e) {
                     alert('解压失败: ' + e.message);
                 }
+            }
+
+            /** 格式化文件大小 */
+            function formatSize(bytes) {
+                const n = Number(bytes) || 0;
+                if (n >= 1024 * 1024 * 1024) return (n / 1024 / 1024 / 1024).toFixed(2) + ' GB';
+                if (n >= 1024 * 1024) return (n / 1024 / 1024).toFixed(2) + ' MB';
+                if (n >= 1024) return (n / 1024).toFixed(1) + ' KB';
+                return n + ' B';
             }
 
             // ==================== 事件绑定 ====================

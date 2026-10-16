@@ -4,6 +4,8 @@ Wow~ 内置一个基于 Express + Socket.IO 的 Web 管理面板，可在浏览�
 
 > Web 面板把前端操作转换成 CLI 命令执行，等价于在终端里使用 `wow` 命令。
 
+> 📌 **命令引导词**：文档中的 `wow` 是简写 —— Linux / macOS 请写 `./wow.sh`，Windows 请写 `wow.bat`。例如 `wow web start` 在 Linux 下即 `./wow.sh web start`。
+
 ---
 
 ## 一、启动与停止

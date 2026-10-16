@@ -6,6 +6,16 @@
 
 **wow~** 是一个轻量级的 Minecraft 服务器管理工具，专为 **纯终端环境** 和 **远程管理** 场景设计。它同时提供命令行界面 (CLI) 和 Web 管理面板，支持模板模式的多实例方案管理，让你轻松管理多个服务器实例。
 
+> 📌 **命令引导词说明（重要）**
+> 本文档中所有以 `wow` 开头的命令（如 `wow server start`）都是**简写**，实际执行时请按你的操作系统替换为对应的启动脚本：
+>
+> | 操作系统 | 文档写法 | 实际执行 |
+> |----------|----------|----------|
+> | **Linux / macOS** | `wow server start` | `./wow.sh server start` |
+> | **Windows** | `wow server start` | `wow.bat server start` |
+>
+> 下文所有文档（QUICKSTART / COMMANDS / CONFIG 等）均遵循同一约定。
+
 ---
 
 ## ✨ 特性

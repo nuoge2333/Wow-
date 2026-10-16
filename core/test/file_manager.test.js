@@ -83,9 +83,9 @@ check('拒绝反斜杠穿越 ..\\..\\x', () => {
 });
 check('拒绝绝对路径 /etc/passwd', () => {
     const r = fm.safeResolve('/etc/passwd');
-    // 前导斜杠被去除后成为 etc/passwd（落在 root 内），故应 ok 且落在 root 内
-    assert.strictEqual(r.ok, true);
-    assert.ok(r.abs.startsWith(ROOT));
+    // V3.5.7：由「静默剥离前导斜杠」改为「直接拒绝」，避免语义歧义
+    assert.strictEqual(r.ok, false);
+    assert.match(r.reason, /绝对路径/);
 });
 check('拒绝盘符路径 C:\\Windows', () => {
     assert.strictEqual(fm.safeResolve('C:\\Windows\\system32').ok, false);

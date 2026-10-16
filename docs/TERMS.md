@@ -2,6 +2,8 @@
 
 > 面向非专业用户，用通俗语言解释本项目涉及的核心概念。
 
+> 📌 **命令引导词说明**：文档中写的 `wow xxx` 是命令简写。**Linux / macOS** 实际要输入 `./wow.sh xxx`（比如 `./wow.sh server start`）；**Windows** 实际要输入 `wow.bat xxx`（比如 `wow.bat server start`）。后文所有命令同理，不再重复说明。
+
 ---
 
 ## 基础概念

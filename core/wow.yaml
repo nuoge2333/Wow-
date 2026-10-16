@@ -26,6 +26,11 @@ web:
   auth_token: null
   run_startup: true
   theme: default
+  dev_mode: false
+  auth_password: null
+  cors_origins: []
+  allow_scheme_ops: false
+  allow_remote_install: false
 mail:
   smtp:
     host: null

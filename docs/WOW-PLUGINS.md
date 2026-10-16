@@ -2,6 +2,8 @@
 
 > wow 插件用于扩展 wow 工具本身的命令，不涉及 Minecraft 服务端插件。
 
+> 📌 **命令引导词**：文档中的 `wow` 是简写 —— Linux / macOS 请写 `./wow.sh`，Windows 请写 `wow.bat`。例如 `wow hello` 在 Linux 下即 `./wow.sh hello`。
+
 ---
 
 ## 插件是什么？

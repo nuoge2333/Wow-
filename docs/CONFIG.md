@@ -2,6 +2,14 @@
 
 > wow 的所有配置集中在 `core/wow.yaml` 文件中，采用 YAML 格式。
 
+> 📌 **命令引导词说明（重要）**
+> 本文档中所有以 `wow` 开头的命令都是**简写**，实际执行时请按你的操作系统替换为对应的启动脚本：
+>
+> | 操作系统 | 文档写法 | 实际执行 |
+> |----------|----------|----------|
+> | **Linux / macOS** | `wow config ...` | `./wow.sh config ...` |
+> | **Windows** | `wow config ...` | `wow.bat config ...` |
+
 ---
 
 ## 配置文件位置
@@ -141,6 +149,10 @@ backup:
 | `run_startup` | boolean | `true` | 是否随 CLI 自动启动 Web 服务 |
 | `theme` | string | `default` | 当前激活的主题包名称 |
 | `session_timeout` | integer | `86400` | 登录会话有效期（秒），默认 24 小时 |
+| `dev_mode` | boolean | `false` | 开发模式（开启后暴露调试信息） |
+| `cors_origins` | array | `[]` | 允许的跨源域名白名单；空数组 = 仅同源 |
+| `allow_scheme_ops` | boolean | `false` | 🔺 **V3.5.7** 放开 `scheme create/switch/delete/edit/pull/prune/register/export/import` |
+| `allow_remote_install` | boolean | `false` | 🔺 **V3.5.7** 放开 `install <http(s)://...>` 远程下载（等同任意代码执行入口） |
 
 **示例：**
 ```yaml
@@ -151,9 +163,19 @@ web:
   run_startup: true
   theme: dark
   session_timeout: 86400
+  cors_origins: []
+  allow_scheme_ops: false
+  allow_remote_install: false
 ```
 
 > ⚠️ 将 `host` 设为 `0.0.0.0` 会允许外部 IP 访问，请确保已配置防火墙或设置 `auth_token`。
+
+> 🔒 **关于 `allow_scheme_ops` / `allow_remote_install`**
+> 默认均为 `false`，保持安全基线。开启 `allow_remote_install` 相当于把任意代码执行入口
+> 暴露给 Web 面板访问者，请仅在完全可信的网络环境中开启。
+> 若同时开启危险开关 + 监听 `0.0.0.0` + `dev_mode: true`，启动日志会打印安全提示。
+> 无论如何，`init`、`mod remove/sync/toggle`、`pack install`、`web start`、`logs tail`
+> 这五项在 Web 端**永久禁用**，不受配置影响。
 
 ---
 
@@ -256,6 +278,48 @@ auth:
 |------|------|--------|------|
 | `dir` | string | `jre` | JRE 存储路径（位于 core/ 内） |
 | `auto_download` | boolean | `true` | 是否按需自动下载 JRE |
+| `version` | string | `null` | 锁定 Temurin 完整版本号（如 `17.0.12+7`）；`null` 自动取该特征版本的最新 GA |
+
+#### Java 版本选择逻辑（V3.5.7）
+
+启动服务器 / 安装核心时按以下优先级确定 Java：
+
+1. **`server.java`** — 用户显式配置的路径（最高优先，不做版本校验，只在不匹配时告警）
+2. **系统扫描** — 遍历 PATH、`JAVA_HOME`、系统包、IDE 目录、版本管理器，
+   按 `Minecraft 版本 → 所需 Java 版本` 精确匹配
+3. **内置 JRE** — `core/jre/<特征版本>/bin/java`
+4. **自动下载** — 以上都没有时，从 Eclipse Temurin 下载对应版本
+
+**Minecraft 版本与 Java 要求的对应关系：**
+
+| Minecraft | 所需 Java |
+|-----------|-----------|
+| ≤ 1.16.5 | Java 8 |
+| 1.17 ~ 1.20.4 | Java 17 |
+| ≥ 1.20.5 | Java 21 |
+
+**版本允许的替代关系（仅 LTS 向上兼容）：**
+
+| 需要 | 可用替代 |
+|------|----------|
+| Java 8 | ❌ 不可向上替代（Java 9+ 移除了大量 API） |
+| Java 11 | Java 17 / 21 |
+| Java 17 | Java 21 |
+| Java 21 | ❌ 不可向下替代 |
+
+> 非 LTS 版本（如 Java 20）不会被用来替代 LTS 需求。
+> 若本机没有匹配版本且 `auto_download: false`，则直接报错而不是硬用错版本。
+
+**扫描来源一览：**
+
+| 平台 | 覆盖路径 |
+|------|----------|
+| 通用 | `PATH`、`JAVA_HOME`、mise / rtx / sdkman / asdf / jabba、`~/.jdks` |
+| Linux | `/usr/lib/jvm`、`/usr/java`、`/opt/java`、`/opt/jdk` |
+| macOS | `/Library/Java/JavaVirtualMachines`、Homebrew（`/opt/homebrew/opt/openjdk@17` 等） |
+| Windows | `Program Files\Java`、`Eclipse Adoptium`、`Corretto`、`Zulu`、`BellSoft`、`Semeru`、`Microsoft` |
+
+在菜单 **11 → 1** 中可查看扫描结果并交互式选择。
 
 ---
 
