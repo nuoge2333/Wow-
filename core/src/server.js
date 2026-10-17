@@ -555,6 +555,15 @@ class ServerManager {
             return lf.endsWith('.jar') && !lf.includes('authlib-injector') && !lf.includes('installer');
         });
         if (jarFiles.length === 0) {
+            // V3.5.8：新型 Forge/NeoForge 只有 args 文件、根目录没有独立核心 jar，
+            // 此时配置里若记录了 server.jar（可能在 libraries/ 深处）就直接认它，
+            // 不再盲目报「未找到核心」。
+            const argsCfg = this.config.getConfig('server.launchArgsFile');
+            if (argsCfg && fs.existsSync(path.join(serverDir, argsCfg))) {
+                return cfgJar && fs.existsSync(path.join(serverDir, cfgJar))
+                    ? cfgJar
+                    : argsCfg;
+            }
             throw new Error('未找到服务器核心文件 (.jar)');
         }
         if (jarFiles.length === 1) {
@@ -571,6 +580,21 @@ class ServerManager {
         if (prefer) {
             const hit = jarFiles.find(f => prefer.test(f));
             if (hit) return hit;
+        }
+        // Forge/NeoForge 老版本：根目录的核心叫 forge-<mc>-<loader>.jar（无 -server 后缀），
+        // 与同目录的 minecraft_server.<mc>.jar（原版）并存——旧实现会「含 server」地误选原版，
+        // 结果装的是 Forge、跑起来却是原版。这里显式优先 forge-/neoforge- 前缀的核心。
+        if (type === 'forge' || type === 'neoforge') {
+            const prefix = type === 'forge' ? 'forge-' : 'neoforge-';
+            const fam = jarFiles.filter(f => {
+                const lf = f.toLowerCase();
+                return lf.startsWith(prefix)
+                    && !lf.startsWith('minecraft_server.')
+                    && !/^server-[\d.]+\.jar$/.test(lf);
+            });
+            if (fam.length) {
+                return fam.find(f => /-server\.jar$/i.test(f)) || fam[0];
+            }
         }
         // 兜底：优先选含 'server' 的启动器 jar
         const byServer = jarFiles.find(f => f.toLowerCase().includes('server'));

@@ -419,7 +419,13 @@ class Installer {
         await this._runInstaller(java, args, installDir);
 
         // 检测生成的服务端核心（现代 Forge/NeoForge 会把核心生成在 libraries/ 子目录，需递归扫描）
-        const serverJarAbs = this._detectServerJar(installDir, source.serverJarPattern);
+        // V3.5.8：Forge/NeoForge 的产物布局随版本变化极大（老版根目录 forge-<mc>-<ver>.jar、
+        // 1.17+ libraries/.../forge-<mc>-<ver>-server.jar、1.21+ 只剩 args 文件），
+        // 旧的单一 pattern 会把「路径找错」，统一走 _detectForgeJar 多策略探测。
+        const isForgeFamily = (type === 'forge' || type === 'neoforge');
+        const serverJarAbs = isForgeFamily
+            ? this._detectForgeJar(installDir, type)
+            : this._detectServerJar(installDir, source.serverJarPattern);
         if (!serverJarAbs) {
             throw new Error(`安装器执行完成，但未在 ${installDir} 找到匹配的服务端核心（${source.serverJarPattern}）。请检查 java 输出。`);
         }
@@ -430,7 +436,7 @@ class Installer {
         this._recordConfig(type, mc);
         this.config.setConfig('server.jar', serverJar);
 
-        // 现代 Forge / NeoForge 用 unix_args.txt 启动（不再能用 java -jar），记录启动参数文件
+        // 现代 Forge / NeoForge 用 args.txt 启动（不再能用 java -jar），记录启动参数文件
         const argsFileAbs = this._detectForgeArgsFile(serverJarAbs);
         this.config.setConfig('server.launchArgsFile', argsFileAbs ? path.relative(installDir, argsFileAbs) : '');
         if (argsFileAbs) console.log(`🔧 检测到启动参数文件（用 @args 方式启动）: ${path.relative(installDir, argsFileAbs)}`);
@@ -754,6 +760,110 @@ class Installer {
     }
 
     /**
+     * Forge / NeoForge 专用核心探测（V3.5.8 修复「安装后核心路径找错」）。
+     *
+     * 背景：`serverJarPattern: /forge-.+-server\.jar$/` 只在少数老版本成立。真实产物随版本漂移：
+     *   - 1.12.2 / 1.16.5：根目录 forge-<mc>-<loader>.jar            （无 -server 后缀）
+     *   - 1.17 ~ 1.20.x ：libraries/net/minecraftforge/forge/<mc>-<loader>/
+     *                       forge-<mc>-<loader>-server.jar + {unix,win}_args.txt（本项目原本唯一命中的形态）
+     *   - 1.21+         ：同目录，但核心文件叫 win_args.txt/.jar 或 forge-<mc>-<loader>-shim.jar，仅剩 args 文件
+     * 旧实现一旦 pattern 不命中就抛「未找到匹配的服务端核心」，或退到根目录选中原版
+     * minecraft_server.<mc>.jar，于是「安装成功但启动的是原版 / 路径找错」。
+     *
+     * 新策略（按优先级）：
+     *   1. 全目录搜索 *args.txt（unix_args.txt 优先）→ 其所在目录即 Forge 安装根，
+     *      同目录内的 jar（含 -server/-shim 变体）就是真实核心；找不到 jar 也会返回 args 文件，
+     *      由调用方记录「用 @args 启动」，这才是现代 Forge 的正确启动方式。
+     *   2. 递归搜 forge-/neoforge- 前缀的 jar。显式排除安装器与 **原版核心**
+     *      （minecraft_server.<mc>.jar / server-<mc>.jar），避免误把原版当成加载器核心。
+     *   3. 退回旧的 pattern 匹配（兼容老版本）。
+     * 返回值与 _detectServerJar 一致：绝对路径，或 null。
+     */
+    _detectForgeJar(dir, type) {
+        const prefix = type === 'neoforge' ? 'neoforge-' : 'forge-';
+        const isVanilla = (name) => {
+            const lf = name.toLowerCase();
+            return lf.startsWith('minecraft_server.') || /^server-[\d.]+\.jar$/.test(lf);
+        };
+        const isGoodJar = (name) => {
+            const lf = name.toLowerCase();
+            return lf.endsWith('.jar')
+                && lf.startsWith(prefix)
+                && !lf.includes('installer')
+                && !lf.includes('shim')
+                && !isVanilla(name);
+        };
+
+        const skip = new Set(['world', 'logs', 'backups', 'node_modules', 'mods', 'config', 'crash-reports']);
+        const hits = { args: [], jars: [] };
+        const walk = (d) => {
+            let entries;
+            try { entries = fs.readdirSync(d, { withFileTypes: true }); }
+            catch (e) { return; }
+            for (const e of entries) {
+                const p = path.join(d, e.name);
+                if (e.isDirectory()) {
+                    if (skip.has(e.name)) continue;
+                    walk(p);
+                } else if (e.isFile()) {
+                    const lf = e.name.toLowerCase();
+                    if (lf === 'unix_args.txt' || lf === 'win_args.txt' || lf === 'args.txt') {
+                        hits.args.push(p);
+                    } else if (isGoodJar(e.name)) {
+                        hits.jars.push(p);
+                    }
+                }
+            }
+        };
+        walk(dir);
+
+        // 1) args 文件优先：同目录的 jar 是核心；没 jar 也认（现代 Forge 只用 @args 启动）
+        if (hits.args.length) {
+            const pick = hits.args.find(p => path.basename(p) === 'unix_args.txt')
+                || hits.args.find(p => path.basename(p) === 'win_args.txt')
+                || hits.args[0];
+            const sibDir = path.dirname(pick);
+            let sib = [];
+            try {
+                sib = fs.readdirSync(sibDir).filter(f => isGoodJar(f)).map(f => path.join(sibDir, f));
+            } catch (e) { /* 读不到同级目录就当只有 args */ }
+            // 同目录里 -server.jar 最像传统核心，优先；否则取首个
+            const jar = sib.find(f => /-server\.jar$/i.test(f)) || sib[0];
+            return jar || pick;
+        }
+
+        // 2) 递归搜构造器 jar
+        //    注意：libraries/ 深层里还有 *-universal.jar / *-client.jar 等**库文件，不是可启动核心**，
+        //    不能因为「在 libraries 里」就优先。正确判据是文件名形态：
+        //      forge-<mc>-<ver>.jar        根目录启动核心（1.12.2 / 1.16.5）
+        //      forge-<mc>-<ver>-server.jar 1.17+ 的 libraries 产物
+        //    其余带 -universal / -client / -shim / -installer 后缀的一律降级。
+        if (hits.jars.length) {
+            const isServerJar = (p) => /-server\.jar$/i.test(p);
+            // 老版本根目录的启动核心形如 forge-1.16.5-36.2.39.jar：
+            // 去掉前缀后是两段点分数字，且不带 -universal/-client 等修饰后缀
+            const isPlainCore = (p) => {
+                const base = path.basename(p).replace(/\.jar$/i, '');
+                return /^[a-z]+-\d+\.\d+(?:\.\d+)?-\d+\.\d+(?:\.\d+)?$/i.test(base);
+            };
+            // 先找 -server.jar（现代 Forge 的 libraries 产物）
+            const srv = hits.jars.find(isServerJar);
+            if (srv) return srv;
+            // 再找不带修饰后缀的普通核心（老版本放根目录）
+            const plain = hits.jars.find(isPlainCore);
+            if (plain) return plain;
+            // 最后才退回首个（带上 -universal 等，至少能让用户看到装了东西）
+            return hits.jars[0];
+        }
+
+        // 3) 老版本兜底
+        const legacy = type === 'neoforge'
+            ? /^neoforge-.+-server\.jar$/
+            : /^forge-.+-server\.jar$/;
+        return this._detectServerJar(dir, legacy);
+    }
+
+    /**
      * 现代 Forge / NeoForge 用 unix_args.txt / win_args.txt 提供完整 classpath 与模块参数，
      * 无法用 java -jar 直接启动。在 server jar 同目录查找该启动参数文件。
      */
@@ -918,6 +1028,9 @@ class Installer {
      * 复制核心到 pool/cores 供多方案共享
      */
     async _copyToPool(type, version, sourcePath) {
+        // V3.5.8：新型 Forge/NeoForge 只有 args 文件、没有独立核心 jar，
+        // 此时 sourcePath 指向 args.txt，不能当核心复制到 pool（会污染共享池）。
+        if (!sourcePath || !/\.jar$/i.test(sourcePath)) return null;
         const coreStorage = utils.getCoreStoragePath(type, version);
         fs.ensureDirSync(coreStorage);
         const targetPath = path.join(coreStorage, path.basename(sourcePath));

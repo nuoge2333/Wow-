@@ -8,7 +8,8 @@
 
 | 版本 | 状态 | 发布时间 |
 |------|------|------|
-| **3.5.7-26.3f** | 当前版本 |2026-10-16|
+| **3.5.8-26.3g** | 当前版本 |2026-10-17|
+| **3.5.7-26.3f** | 上一版本 |2026-10-16|
 | **3.5.6-26.3e** | 上一版本 |2026-10-15|
 | **3.5.5-26.3d** | 上一版本 |2026-10-14|
 | **3.5.4-26.3c** | 上一版本 |2026-10-12|
@@ -59,6 +60,82 @@
 | **3.0.0** | 上一版本 |2026-07-23|
 | **2.0.0** | 内部迭代 |2026-02-27|
 | **1.0.0** | 内部迭代 |2026-02-07|
+
+---
+
+## [3.5.8-26.3g] — 2026-10-17
+
+> 主题：**修复 Forge 类型安装后核心路径找错**。
+> Forge / NeoForge 的产物布局随版本剧烈漂移，旧实现只有一条 `forge-*-server.jar`
+> 的正则，命中不了就开始「盲选」，最终把原版核心当成 Forge 核心、或切换方案后
+> 核心落到错误目录。
+
+### 🎯 修复：Forge 核心路径探测（安装阶段）
+
+旧实现 `serverJarPattern: /^forge-.+-server\.jar$/` 只在 1.17 ~ 1.20.x 成立：
+
+| MC 版本 | 真实产物 | 旧实现结果 |
+|---------|----------|-----------|
+| 1.12.2 / 1.16.5 | 根目录 `forge-<mc>-<ver>.jar`（**无** `-server` 后缀） | 正则不命中 → 抛「未找到核心」 |
+| 1.17 ~ 1.20.x | `libraries/.../forge-<mc>-<ver>-server.jar` + `unix_args.txt` | 命中，唯一正常区间 |
+| 1.21+ | 同目录仅 `unix_args.txt` / `win_args.txt`，无独立核心 jar | 抛「未找到核心」 |
+| NeoForge | `libraries/net/neoforged/neoforge/<ver>/` | 依赖同名正则，脆弱 |
+
+新增 `_detectForgeJar(dir, type)`，按三级优先探测：
+
+1. **`*args.txt` 优先** —— 找到 `unix_args.txt`（或 `win_args.txt` / `args.txt`）后，
+   其所在目录即 Forge 安装根，同目录的 jar 才是真实核心；若该目录无 jar（1.21+），
+   直接返回 args 文件，交由 `server.launchArgsFile` 用 `@args` 方式启动。
+2. **前缀 + 形态匹配** —— 递归搜 `forge-` / `neoforge-` 前缀 jar，优先 `-server.jar`，
+   其次不带修饰后缀的普通核心（`forge-<mc>-<ver>.jar`）。
+3. **显式排除误选源** —— `minecraft_server.<mc>.jar`、`server-<mc>.jar`、
+   `*-installer.jar`、`*-shim.jar`、以及 libraries 里同为 `forge-` 前缀的
+   `*-universal.jar` / `*-client.jar`（这些是库文件，不能启动）。
+
+### 🎯 修复：Forge 核心路径探测（启动阶段）
+
+`server._getServerJar()` 两处盲选：
+
+- 原版核心 `minecraft_server.1.16.5.jar` 含 `server` 字样，兜底分支会把它选中，
+  于是「装的是 Forge、跑起来却是原版」。现在 Forge/NeoForge 类型下显式优先
+  `forge-` / `neoforge-` 前缀，且排除原版文件。
+- 根目录没有任何 jar（1.21+ 只有 args 文件）时原本直接抛「未找到核心」。
+  现在若配置里有 `server.launchArgsFile` 就直接返回它，走 `@args` 启动。
+
+### 🎯 修复：方案瘦身/补齐把核心拍平到根目录
+
+这是「切换方案后核心路径找错」的根因。`_addToPool()` 只按 `path.basename()`
+入池 —— Forge 核心在 `libraries/net/minecraftforge/forge/...` 深层，
+入池后层级丢失，`_materializeScheme()` 补回时只能落到方案**根目录**，
+与记录里的深层路径对不上，`_pruneScheme()` 也因此删不掉真实文件。
+
+修复：
+
+- `_addToPool()` 新增 `relPath` 参数，池内按原始相对路径落盘
+- `scheme.yaml` 的 `resources.core.file` 改为记录**相对方案根目录的完整路径**
+  （旧方案里的纯文件名仍然兼容，落到根目录）
+- 新增 `_resolveCoreTarget()` 统一解析，兼容新格式 / 老格式 / Windows 反斜杠 / `./` 前缀
+- `_materializeScheme()` 补齐时自动 `ensureDirSync(dirname)` 还原深层目录
+- pool 里核心缺失时不再静默跳过（旧行为会把状态强标 FULL 但实际缺核心，
+  要到启动才报错），改为明确告警
+
+### 🧪 测试
+
+新增 2 个测试文件，35 项：
+
+- `core/test/forge_core_path.test.js`（26 项）—— 造 1.12.2 / 1.16.5 / 1.20.1 /
+  1.21 / NeoForge 五种真实目录布局，验证探测结果、排除原版与库文件、空目录不抛异常
+- `core/test/forge_scheme_roundtrip.test.js`（9 项）—— 端到端跑「入池 → 瘦身 →
+  补齐」往返，验证深层核心回到原位、根目录不出现拍平文件、老方案仍兼容
+
+全套测试 **10 个文件 / 344 项全部通过**。
+
+### ⬆️ 升级须知
+
+- 无需手动迁移。已有的老方案（`resources.core.file` 是纯文件名）继续可用。
+- 已安装的 Forge 1.21+ 方案**需要重建**：旧版本在安装阶段就会抛「未找到核心」，
+  目录里可能残留 `libraries/` 但不完整。建议 `scheme create` 重新来一遍。
+- 若 `scheme.yaml` 里的 `core.file` 与实际文件对不上，删掉该方案重新创建最省事。
 
 ---
 

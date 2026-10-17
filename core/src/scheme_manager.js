@@ -85,12 +85,19 @@ class SchemeManager {
         // scheme.yaml、没有核心 jar 的残缺方案，在 scheme list 中显示为「已损坏」。
         let corePath;
         let coreHash;
+        // V3.5.8：核心的「方案内相对路径」。现代 Forge/NeoForge 的核心不在方案根目录，
+        // 而在 libraries/net/minecraftforge/forge/<mc>-<ver>/ 里，甚至只有 args.txt。
+        // 旧实现只存 path.basename(corePath)，瘦身后从 pool 补回会落到根目录，
+        // 于是「切换方案后核心路径找错」。这里记录相对安装目录的完整相对路径。
+        let coreRel;
         try {
             if (fromPack) {
                 // 从整合包复制核心
                 corePath = await this._installCoreFromPack(fromPack, schemePath);
+                coreRel = path.relative(schemePath, corePath).split(path.sep).join('/');
             } else {
                 corePath = await this.installer.install(type, version, build, schemePath);
+                coreRel = path.relative(schemePath, corePath).split(path.sep).join('/');
             }
             coreHash = await this._computeHash(corePath);
         } catch (e) {
@@ -108,7 +115,7 @@ class SchemeManager {
 
         // 4. 复制核心到pool（如果不在）
         if (!coreInPool) {
-            await this._addToPool(corePath, 'cores', `${type}/${version}`, coreHash);
+            await this._addToPool(corePath, 'cores', `${type}/${version}`, coreHash, coreRel);
         }
 
         // 5. 收集模组列表（初始为空）
@@ -137,10 +144,14 @@ class SchemeManager {
             },
             resources: {
                 core: {
-                    file: path.basename(corePath),
+                    // file 记录「相对方案根目录」的完整路径（V3.5.8）。老方案里是纯文件名，
+                    // 读取端兼容处理（见 _resolveCoreTarget）。
+                    file: coreRel || path.basename(corePath),
                     hash: coreHash,
                     in_pool: coreInPool,
-                    pool_path: coreInPool ? `pool/cores/${type}/${version}/${path.basename(corePath)}` : null
+                    pool_path: coreInPool
+                        ? `pool/cores/${type}/${version}/${coreRel || path.basename(corePath)}`
+                        : null
                 },
                 mods: [],
                 plugins: []
@@ -519,6 +530,21 @@ class SchemeManager {
         return path.join(this.schemesDir, name);
     }
 
+    /**
+     * 解析一个方案内核心资源对应的落盘位置。
+     * V3.5.8：Forge/NeoForge 的核心位于 libraries/ 深层，必须按记录里的相对路径还原，
+     * 否则会平铺到方案根目录，导致 server._getServerJar 找不到（「核心路径找错」）。
+     * 兼容三种历史数据形态：
+     *   1. 'libraries/net/minecraftforge/forge/1.20.1-47.2.0/forge-...-server.jar'（新格式）
+     *   2. 'forge-1.16.5-36.2.39.jar'（老格式，纯文件名 → 根目录）
+     *   3. Windows 上误存的反斜杠相对路径
+     */
+    _resolveCoreTarget(schemePath, coreMeta) {
+        const raw = (coreMeta && coreMeta.file) || '';
+        const norm = String(raw).replace(/\\/g, '/').replace(/^\.\//, '');
+        return path.join(schemePath, norm.split('/').filter(Boolean).join(path.sep));
+    }
+
     _schemeExists(name) {
         const schemePath = this._getSchemePath(name);
         return fs.existsSync(schemePath) && fs.existsSync(path.join(schemePath, 'scheme.yaml'));
@@ -577,19 +603,28 @@ class SchemeManager {
         return this.poolIndex.resources[hash] || null;
     }
 
-    async _addToPool(filePath, category, subPath, hash) {
+    /**
+     * 把文件加入资源池。
+     * V3.5.8：新增 relPath 参数——Forge/NeoForge 的核心位于 libraries/ 深层，
+     * 若池内只按 basename 平铺存放，补回方案时就会落到方案根目录（路径找错）。
+     * 这里按原始相对路径落盘，pool_path 记录该相对路径，_materializeScheme 原样还原。
+     */
+    async _addToPool(filePath, category, subPath, hash, relPath = null) {
         // 复制文件到pool
         const poolSubDir = path.join(this.poolDir, category, subPath);
         fs.ensureDirSync(poolSubDir);
-        const fileName = path.basename(filePath);
-        const poolFilePath = path.join(poolSubDir, fileName);
+        const rel = relPath && typeof relPath === 'string' && relPath.length
+            ? relPath.split('/').filter(Boolean).join(path.sep)
+            : path.basename(filePath);
+        const poolFilePath = path.join(poolSubDir, rel);
+        fs.ensureDirSync(path.dirname(poolFilePath));
 
         if (!fs.existsSync(poolFilePath)) {
             fs.copyFileSync(filePath, poolFilePath);
         }
 
-        // 更新索引
-        this.poolIndex.resources[hash] = path.join(category, subPath, fileName);
+        // 更新索引（存相对 pool 根的路径，便于回溯）
+        this.poolIndex.resources[hash] = path.join(category, subPath, rel);
         this.poolIndex.ref_count[hash] = (this.poolIndex.ref_count[hash] || 0) + 1;
         this._savePoolIndex();
 
@@ -709,18 +744,24 @@ class SchemeManager {
 
         // 检查核心
         if (meta.resources.core.in_pool && meta.resources.core.hash) {
-            const poolPath = path.join(this.poolDir, meta.resources.core.hash);
-            // 从索引获取实际路径
-            const poolFullPath = path.join(this.poolDir, this.poolIndex.resources[meta.resources.core.hash]);
-            if (fs.existsSync(poolFullPath)) {
-                const targetPath = path.join(schemePath, meta.resources.core.file);
+            // 从索引获取实际路径（poolIndex 里存的是相对 pool 根的路径）
+            const relInPool = this.poolIndex.resources[meta.resources.core.hash];
+            const poolFullPath = relInPool ? path.join(this.poolDir, relInPool) : null;
+            if (poolFullPath && fs.existsSync(poolFullPath)) {
+                // V3.5.8：按记录的相对路径还原（Forge 核心在 libraries/ 深层）
+                const targetPath = this._resolveCoreTarget(schemePath, meta.resources.core);
                 if (!fs.existsSync(targetPath)) {
+                    fs.ensureDirSync(path.dirname(targetPath));
                     fs.copyFileSync(poolFullPath, targetPath);
                     copied++;
                 }
                 meta.resources.core.in_pool = false;
                 // 增加引用计数
                 this._incrementRefCount(meta.resources.core.hash);
+            } else {
+                // V3.5.8：pool 里找不到核心（被手动删除 / 索引漂移）。不要静默跳过——
+                // 跳过会让状态被强行标成 FULL，而实际缺核心，启动时才报「找不到核心」。
+                console.warn(`  ⚠️ 方案 ${name} 的核心在资源池中缺失（hash=${String(meta.resources.core.hash).slice(0, 12)}…），方案可能无法启动`);
             }
         }
 
@@ -779,7 +820,8 @@ class SchemeManager {
 
         // 检查核心
         if (meta.resources.core.hash && this._isResourceInPool(meta.resources.core.hash)) {
-            const corePath = path.join(schemePath, meta.resources.core.file);
+            // V3.5.8：按记录的相对路径删除（Forge 核心在 libraries/ 深层，不能只看方案根目录）
+            const corePath = this._resolveCoreTarget(schemePath, meta.resources.core);
             if (fs.existsSync(corePath)) {
                 fs.removeSync(corePath);
                 removed++;
