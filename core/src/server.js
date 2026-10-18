@@ -75,9 +75,15 @@ function classifyConsoleInput(rawLine) {
     if (tokens[0].toLowerCase() === 'wow') tokens = tokens.slice(1); // 允许行首带 wow
     if (tokens.length === 0) return { action: 'mc' };
 
-    // 交互菜单 M / m 在开服控制台中不可用
+    // V3.5.8：旧菜单命令 m / M 已移除（无参数启动即进数字菜单）。
+    // 这里保留拦截并给新指引，避免 `wow m` 被当成 MC 指令转发后报 unknown command。
     if (tokens[0] === 'm' || tokens[0] === 'M') {
-        return { action: 'deny', reason: '交互菜单(M)在开服控制台中不可用，请另开终端运行 wow m' };
+        return { action: 'deny', reason: '菜单命令已调整：直接运行 wow（无参数）即进入数字菜单；长命令模式为 wow L' };
+    }
+
+    // V3.5.8：长命令 REPL（wow L）是交互式界面，在开服控制台里会抢占 stdin，不可用
+    if (tokens[0] === 'L') {
+        return { action: 'deny', reason: '长命令模式(wow L)是交互式 REPL，在开服控制台中不可用，请另开终端运行' };
     }
 
     const head = tokens[0].toLowerCase();

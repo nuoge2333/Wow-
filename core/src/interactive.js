@@ -1,7 +1,7 @@
 /**
- * 交互式菜单模块 (V3.1)
- * - wow m           → 进入交互式主菜单（纯数字导航）
- * - wow m <1-14>    → 直接跳转到指定功能
+ * 数字选择菜单模块 (V3.1；V3.5.8 改为默认入口)
+ * - wow / wow.bat / ./wow.sh（无参数）→ 直接进入本菜单（纯数字导航）
+ * - wow L                              → 长命令模式（REPL，输入 server start 等完整命令）
  * 菜单仅支持数字选择；命令行用法（如 server start）请查阅 README.MD
  */
 
@@ -46,7 +46,8 @@ function printHeader(title) {
 /**
  * 显示主菜单
  * @param {object} options - 模块实例
- * @param {string} directChoice - 直接跳转的菜单编号（wow m N）
+ * @param {string} [directChoice] - 直接跳转的菜单编号（仅供内部/测试调用，
+ *         V3.5.8 起外部入口已改为「无参数直接进菜单」，不再提供 wow m N 直达）
  */
 async function showMainMenu(options = {}, directChoice = null) {
     const {

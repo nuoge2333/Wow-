@@ -1,7 +1,7 @@
 # V3.5.8-26.3g 发布说明
 
 > 发布日期：2026-10-17
-> 主题：**修复 Forge 类型安装后核心路径找错** + 新增 Web 登录邮箱白名单 + 文档围栏修复
+> 主题：**修复 Forge 类型安装后核心路径找错** + 新增 Web 登录邮箱白名单 + 日志按天聚合 + 启动方式调整
 
 ---
 
@@ -15,8 +15,10 @@ Forge / NeoForge 的安装产物布局随 MC 版本剧烈漂移，旧实现只�
 2. 安装「成功」但启动的是**原版**（`minecraft_server.<mc>.jar` 抢了位置）；
 3. 切换方案后提示「目录内没有可运行的核心」——核心被补齐到了错误的目录。
 
-同时本版补了两件小事：**Web 面板登录邮箱白名单**（`mail.whitelist`），
-以及修掉 `docs/TROUBLE_WINDOWS.md` 整篇被包进代码围栏的历史问题。
+同时本版还做了四件事：**Web 面板登录邮箱白名单**（`mail.whitelist`）、
+**事件日志改为按天单文件**、**启动方式调整**（`wow` 无参数直达数字菜单，
+长命令模式改为 `wow L`，`wow m` 移除），以及修掉
+`docs/TROUBLE_WINDOWS.md` 整篇被包进代码围栏的历史问题。
 
 ---
 
@@ -165,9 +167,78 @@ mail:
 
 ---
 
+## 四点五、优化：事件日志按天聚合为单文件
+
+### 旧行为
+
+每次运行生成一个独立文件，退出时再改名：
+
+```
+logs/Wow-2026-10-18-213045-12345.log
+logs/Wow-2026-10-18-221310-12400.log
+logs/Wow-2026-10-18-230002-12510.log     ← 一天开关三次，三个文件
+```
+
+找昨天的日志要先猜时间，想对比两次运行还得逐个开。
+
+### 新行为
+
+```
+logs/Wow-2026-10-18.log    ← 同一天所有运行都追加进这一份
+```
+
+文件内用**会话标记**区分每次运行：
+
+```
+════ 会话开始 (pid 12400) ════════
+...本次运行的指令、错误、Web 面板操作...
+════ 会话结束：运行 3 分 12 秒 ════════
+```
+
+### 实现要点
+
+| 点 | 说明 |
+|----|------|
+| 追加写 | `appendFileSync` + `O_APPEND`，多进程同时写不会互相覆盖 |
+| 原子性 | 单行截断到 **3600 字节**（< `PIPE_BUF` 4096），POSIX 保证单次写不被打断，超长行附 `…[已截断]` |
+| 跨天滚动 | 写入时若日期已变，自动切到新文件（`_ensureInit` 内重新对齐日期，修掉「23:59 构造 + 00:00 写入产生只有文件头的空文件」这个边缘 bug） |
+| 会话时长 | < 60 秒显示「运行 N 秒」，否则显示分钟；`crashFlag` 为真时额外标注 `⚠️ 存在错误记录` |
+| 强杀检测 | SIGKILL / 断电不会触发 `exit` 钩子，故不会写「会话结束」标记——反过来可用来判断异常中断 |
+| 历史清理 | 启动时无条件清理旧版遗留的 `Wow-*-active.log`（含清理动作自身的日志记录） |
+
+---
+
+## 四点六、调整：启动方式 —— `wow` 无参数进菜单，长命令模式改为 `wow L`
+
+### 动机
+
+`wow` 无参数原本只打印帮助文本，而「进菜单」要额外打 `wow m`。
+最顺手的位置给了信息量最低的输出——这次把入口对调。
+
+### 命令对照
+
+| 命令 | 旧行为 | 新行为 |
+|------|--------|--------|
+| `wow` | 打印帮助 | **直接进入数字选择菜单** |
+| `wow m` | 进入菜单 | ❌ **已移除**（`error: unknown command 'm'`） |
+| `wow L` | 无此命令 | 长命令模式：无参 → 交互式 REPL；带参 → 执行单条后退出（如 `wow L server start`） |
+
+### 影响面
+
+| 场景 | 行为 |
+|------|------|
+| `wow.sh` / `wow.bat` 交互终端 | 无参调用改为直达菜单 |
+| Docker / 面板后台（非交互） | 仍走 `web start` 保活，**不受影响** |
+| 开服控制台输入 `m` | 得到新指引：「菜单命令已调整：直接运行 wow（无参数）即进入数字菜单；长命令模式为 wow L」，不转发给 MC |
+| 开服控制台输入 `L` | 被拒绝：REPL 会抢占 stdin，在开服控制台里不可用 |
+
+菜单与 REPL 的 options 抽取为共享的 `buildMenuOptions()`，两个入口不会各自漂移。
+
+---
+
 ## 五、测试
 
-新增 2 个测试文件、35 项，全部离线运行（不需要联网、不需要真装 Forge）：
+新增 6 个测试文件、62 项，全部离线运行（不需要联网、不需要真装 Forge）：
 
 ### `core/test/forge_core_path.test.js`（26 项）
 
@@ -193,6 +264,22 @@ mail:
 验证点：池内保留层级、瘦身能删掉深层文件、补齐回到原位、
 根目录不出现被拍平的 jar、老方案（纯文件名）仍解析正确。
 
+### `core/test/mail_whitelist.test.js`（25 项）＋ `core/test/mail_whitelist_e2e.test.js`（12 项）
+
+单元层覆盖归一化 / 判定语义 / 配置读取 / 兼容键名；E2E 真实起 Express 打接口，
+验证 403、不生成验证码、登录二次校验、通配符、边界输入。
+
+### `core/test/log_daily_file.test.js`（25 项）
+
+覆盖按天命名、同日追加、会话开始/结束标记、时长与错误标注、
+超长行截断、跨天滚动（含 23:59 → 00:00 边缘）、强杀无结束标记、
+历史 `-active.log` 清理。
+
+### `core/test/interactive_menu.test.js`（21 → 32 项）
+
+补充 V3.5.8 启动方式断言：`wow` 无参数进菜单、`L` 命令注册与 REPL 分发、
+`m` 已移除、控制台分类新指引。
+
 ### 全量回归
 
 | 测试文件 | 项数 |
@@ -203,13 +290,14 @@ mail:
 | file_ops_edge | 56 |
 | **forge_core_path** | **26** |
 | **forge_scheme_roundtrip** | **9** |
-| interactive_menu | 21 |
+| **interactive_menu** | **32** |
 | java_scan | 61 |
 | jre_extract | 10 |
+| **log_daily_file** | **25** |
 | **mail_whitelist** | **25** |
 | **mail_whitelist_e2e** | **12** |
 | web_files_e2e | 37 |
-| **合计** | **381 项全部通过** |
+| **合计** | **417 项全部通过** |
 
 工作区无污染：`scheme/` 为空、`core/wow.yaml` 的 `jar` / `scheme` 仍为初始值。
 
@@ -224,6 +312,10 @@ mail:
   `scheme create <名> --type forge --version 1.21.1` 重新来一遍最稳妥。
 - 若 `scheme.yaml` 的 `core.file` 与实际文件对不上，删掉方案重建比手动改 YAML 省事。
 - **白名单默认留空，升级后行为不变**。若面板要暴露到公网，建议立刻配上 `mail.whitelist`。
+- **启动习惯要改**：`wow m` 已移除，直接敲 `wow`（或双击 `wow.bat`）即进菜单；
+  长命令 REPL 改为 `wow L`。自定义脚本、开机任务、面板启动项里写死 `wow m` 的需要同步改。
+- **日志文件名变了**：`logs/` 下旧版是按次生成的 `Wow-日期-时间-PID.log`，
+  本版起同一天统一写 `Wow-YYYY-MM-DD.log`。旧文件不会被自动清理，需要的话手动归档。
 
 ---
 
@@ -233,7 +325,7 @@ mail:
 |------|------|
 | `core/src/installer.js` | +117 行：`_detectForgeJar()` 新增，`_installModLoader()` 接入，`_copyToPool()` 加 jar 校验 |
 | `core/src/scheme_manager.js` | +54 / -16：`_addToPool()` 支持 relPath，`_resolveCoreTarget()` 新增，create / materialize / prune 三处统一 |
-| `core/src/server.js` | +24 行：`_getServerJar()` 排除原版、支持 args-only |
+| `core/src/server.js` | +24 行：`_getServerJar()` 排除原版、支持 args-only；控制台分类对新入口的拦截 |
 | `core/test/forge_core_path.test.js` | 新增，26 项 |
 | `core/test/forge_scheme_roundtrip.test.js` | 新增，9 项 |
 | `core/src/mailer.js` | `loadWhitelist()` / `normalizeWhitelist()` / `isEmailAllowed()` 新增 |
@@ -242,8 +334,15 @@ mail:
 | `core/wow.yaml` | 新增 `mail.whitelist` 字段（含注释说明） |
 | `core/test/mail_whitelist.test.js` | 新增，25 项 |
 | `core/test/mail_whitelist_e2e.test.js` | 新增，12 项（真实起服务打 HTTP） |
+| `core/src/log.js` | 重写：按天单文件 `Wow-YYYY-MM-DD.log`、会话标记、3600 字节截断、`-active.log` 清理 |
+| `core/test/log_daily_file.test.js` | 新增，25 项 |
+| `core/src/cli.js` | 移除 `m` 命令，新增 `L` 长命令模式，无参数分支直达数字菜单，`buildMenuOptions()` 抽取 |
+| `core/src/interactive.js` | 头部注释与 `directChoice` 说明同步（默认入口改为无参数启动） |
+| `core/test/interactive_menu.test.js` | 21 → 32 项，补 V3.5.8 启动方式断言 |
+| `wow.sh` | 交互分支改为 `src/cli.js`（无参即菜单）；非交互分支 `web start` 不变 |
 | `docs/TROUBLE_WINDOWS.md` | 剥离外层围栏 + 补齐结尾围栏 |
 | `docs/CONFIG.md` | mail 段新增 `whitelist` 字段与用法说明 |
 | `docs/WEB_PANEL.md` | 登录章节补白名单说明与配置片段 |
+| `README.MD` | 命令表更新：数字选择菜单（无参数）/ 长命令模式（`wow L`） |
 | `docs/CHANGELOG.md` | 新增 3.5.8-26.3g 条目 |
 | `docs/RELEASE-V3.5.8-26.3g.md` | 本文件 |

@@ -266,7 +266,8 @@ fi
 # 运行 CLI
 if [ $# -eq 0 ]; then
     if [ "$INTERACTIVE" -eq 1 ]; then
-        "$NODE_EXE" src/cli.js --help
+        # V3.5.8：无参数直接进入数字选择菜单（长命令 REPL 改为 wow L）
+        "$NODE_EXE" src/cli.js
     else
         # 非交互环境（面板/Docker）：默认启动 Web 面板以保持进程常驻
         echo "未指定命令，默认启动 Web 管理面板 (web start)"

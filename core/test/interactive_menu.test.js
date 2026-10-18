@@ -1,5 +1,5 @@
 /**
- * V3.5.7 菜单改造静态校验
+ * V3.5.7 菜单改造 + V3.5.8 启动方式调整 静态校验
  *
  * 背景：interactive.js 的菜单分发依赖 readline + 真实网络/文件副作用，难以端到端跑。
  * 这里用源码级断言，确保本次改造（菜单 2 = 新建方案、菜单 13 重编号）不会被后续改动无声破坏。
@@ -18,7 +18,7 @@ function check(title, fn) {
     catch (e) { console.log(`  ❌ ${title}\n     ${e.message}`); failed++; }
 }
 
-console.log('\n菜单改造校验 (V3.5.7)\n');
+console.log('\n菜单改造校验 (V3.5.7 + V3.5.8)\n');
 
 // 提取顶层 case 体，便于精确断言
 // 注意：case 体内部有嵌套块，简单用 `^            }` 会在第一个嵌套 } 处提前截断，
@@ -119,6 +119,79 @@ check('主菜单第 2 项不再显示「下载/安装实例」', () => {
 check('主菜单第 13 项描述已更新', () => {
     assert.ok(/\['13', '方案管理/.test(src));
 });
+
+// ─────────────────────────────────────────────
+// V3.5.8：启动方式调整 —— wow(无参数) 进菜单；wow L 长命令模式；wow m 已移除
+console.log('\n— V3.5.8 启动方式（cli.js）—');
+{
+    const CLI = path.join(__dirname, '..', 'src', 'cli.js');
+    const cli = fs.readFileSync(CLI, 'utf8');
+
+    check('cli.js 注册了 L（长命令模式）命令', () => {
+        assert.ok(/\.command\('L \[cmd\.\.\.\]'\)/.test(cli), '未找到 L 命令注册');
+    });
+    check('cli.js 不再注册 m 命令', () => {
+        assert.ok(!/\.command\('m /.test(cli), 'm 命令应已移除');
+    });
+    check('cli.js 无参数分支进入数字菜单（showMainMenu）', () => {
+        // 从 `if (process.argv.length <= 2) {` 截到 `} else {`，取整个分支体
+        const m = cli.match(/if \(process\.argv\.length <= 2\) \{[\s\S]{0,600}?\n\} else \{/);
+        assert.ok(m, '未找到无参数分支');
+        assert.ok(/showMainMenu\(/.test(m[0]), '无参数分支未调用 showMainMenu');
+        assert.ok(!/startRepl\(\)/.test(m[0]), '无参数分支仍在调 startRepl');
+        assert.ok(/buildMenuOptions\(\)/.test(m[0]), '无参数分支未使用 buildMenuOptions');
+    });
+    check('cli.js 的 L 命令 action 调用 startRepl', () => {
+        // 从 `.command('L [cmd...]')` 截到该命令链的收尾 `    });`
+        const m = cli.match(/\.command\('L \[cmd\.\.\.\]'\)[\s\S]{0,900}?\n    \}\)/);
+        assert.ok(m, '未找到 L 的 action 体');
+        assert.ok(/startRepl\(\)/.test(m[0]), 'L 无参时应进入 startRepl');
+        assert.ok(/program\.parseAsync\(/.test(m[0]), 'L 带参时应执行单条长命令');
+    });
+    check('cli.js 提供 buildMenuOptions 供菜单使用', () => {
+        assert.ok(/function buildMenuOptions\(\)/.test(cli));
+    });
+}
+
+// ─────────────────────────────────────────────
+// V3.5.8：server.js 控制台分类对新入口的拦截
+console.log('\n— V3.5.8 开服控制台分类（server.js）—');
+{
+    const SRV = path.join(__dirname, '..', 'src', 'server.js');
+    const srv = fs.readFileSync(SRV, 'utf8');
+
+    check('控制台输入 m 给出新指引而非转发给 MC', () => {
+        assert.ok(/tokens\[0\] === 'm' \|\| tokens\[0\] === 'M'/.test(srv));
+        assert.ok(/菜单命令已调整/.test(srv));
+    });
+    check('控制台输入 L 被拒绝（REPL 抢占 stdin）', () => {
+        assert.ok(/tokens\[0\] === 'L'/.test(srv));
+    });
+}
+
+// ─────────────────────────────────────────────
+// V3.5.8：日志按天单文件（log.js）
+console.log('\n— V3.5.8 事件日志按天单文件（log.js）—');
+{
+    const LOG = path.join(__dirname, '..', 'src', 'log.js');
+    const lg = fs.readFileSync(LOG, 'utf8');
+
+    check('日志文件名为 Wow-YYYY-MM-DD.log（无 PID/分钟数）', () => {
+        assert.ok(/Wow-\$\{date\}\.log/.test(lg), '未找到按天命名');
+        assert.ok(!/\$\{this\.sessionId\}-active/.test(lg), '仍在生成 per-PID active 文件');
+    });
+    check('按天文件直接追加，退出时不再重命名', () => {
+        assert.ok(/appendFileSync\(this\.activePath/.test(lg));
+        assert.ok(!/renameSync\(this\.activePath, target\)/.test(lg), '退出重命名逻辑应已移除');
+    });
+    check('会话开始/结束标记用于区分同日多次运行', () => {
+        assert.ok(/===== 会话开始 /.test(lg));
+        assert.ok(/===== 会话结束 /.test(lg));
+    });
+    check('超长行截断保护并发写原子性', () => {
+        assert.ok(/MAX_LINE_BYTES/.test(lg));
+    });
+}
 
 console.log(`\n结果: ${passed} 通过, ${failed} 失败\n`);
 process.exit(failed ? 1 : 0);

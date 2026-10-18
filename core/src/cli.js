@@ -752,33 +752,51 @@ mailCmd
         updateMailRateLimit();
     });
 
-// ==================== menu (V3.1 新增) ====================
+// ==================== 菜单 / 长命令模式入口 (V3.5.8 调整) ====================
+//
+// V3.5.8 起启动方式调整：
+//   wow            → 直接进入数字选择菜单（替代原 `wow m`，该命令已移除）
+//   wow L          → 长命令模式（原「无参数进入的 REPL」，输入 server start 这类完整命令）
+//   wow L <命令>   → 直接执行单条长命令后退出，如 wow L server start
+//
+// 构造交互菜单所需的全部管理器实例（数字菜单与长命令 REPL 共用）
+function buildMenuOptions() {
+    return {
+        serverManager: new ServerManager(),
+        installer: new Installer(),
+        modManager: new ModManager(),
+        schemeManager: new SchemeManager(),
+        themeManager: new ThemeManager(),
+        packGenerator: new PackGenerator(),
+        logHandler: new LogHandler(),
+        config,
+        utils
+    };
+}
 
+// wow L：长命令模式（原无参数 REPL 的归宿）
 program
-    .command('m [num]')
-    .description('交互式菜单模式（不带参数进入菜单，带数字直接跳转）')
-    .action(async (num) => {
-        const { showMainMenu, dispatchMenu } = require('./interactive');
-
-        const options = {
-            serverManager: new ServerManager(),
-            installer: new Installer(),
-            modManager: new ModManager(),
-            schemeManager: new SchemeManager(),
-            themeManager: new ThemeManager(),
-            packGenerator: new PackGenerator(),
-            logHandler: new LogHandler(),
-            config,
-            utils
-        };
-
-        if (num) {
-            // 直接跳转：wow m 1
-            await dispatchMenu(num, options);
-        } else {
-            // 进入交互式菜单
-            await showMainMenu(options);
+    .command('L [cmd...]')
+    .description('长命令模式：不带参数进入交互式 REPL；带参数直接执行单条长命令（如 wow L server start）')
+    .action(async (cmd) => {
+        const parts = Array.isArray(cmd) ? cmd.filter(Boolean) : [];
+        if (parts.length) {
+            // 带参数：执行单条长命令后退出（不进入 REPL）
+            logger.impt(`执行长命令: ${parts.join(' ')}`);
+            try {
+                program.exitOverride();
+                await program.parseAsync(['node', 'cli.js', ...parts]);
+            } catch (err) {
+                if (err && (err.code === 'commander.helpDisplayed' || err.code === 'commander.help')) {
+                    // 帮助已打印，忽略
+                } else if (err && err.message) {
+                    console.error(err.message);
+                }
+            }
+            return;
         }
+        // 不带参数：进入长命令 REPL
+        startRepl();
     });
 
 // ==================== config mods (V3.1 新增) ====================
@@ -952,8 +970,9 @@ program.hook('postAction', () => {
     }
 });
 
-// V3.5.2：无参数运行（如 ./wow.sh）进入交互式 REPL
-// 逐行读取指令，用户无需输入 wow 前缀（如 server start），exit / quit 退出
+// V3.5.8：长命令 REPL 移至 `wow L`（无参数运行已改为进入数字选择菜单）。
+// 逐行读取完整指令，用户无需输入 wow 前缀（如 server start），exit / quit 退出。
+// 注意：函数声明提升，上方 L 命令的 action 可直接调用。
 async function startRepl() {
     const readline = require('readline');
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout, prompt: 'wow> ' });
@@ -1004,8 +1023,19 @@ async function startRepl() {
     });
 }
 
+// V3.5.8：无参数运行（如 ./wow.sh / wow.bat）直接进入数字选择菜单。
+// 长命令 REPL 已移至 `wow L`（见上方命令定义）。
 if (process.argv.length <= 2) {
-    startRepl();
+    (async () => {
+        const { showMainMenu } = require('./interactive');
+        logger.impt('进入数字选择菜单（无参数启动）');
+        try {
+            await showMainMenu(buildMenuOptions());
+        } catch (e) {
+            console.error(`菜单启动失败: ${e.message}`);
+            logger.erro(`菜单启动失败: ${e.message}`);
+        }
+    })();
 } else {
     program.parse(process.argv);
 }

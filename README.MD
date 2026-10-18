@@ -94,7 +94,8 @@ wow web start
 
 | 类别 | 命令 |
 |------|------|
-| 交互式菜单 | `m [1-14]` |
+| 数字选择菜单 | `wow`（无参数直接进入） |
+| 长命令模式 | `L [命令...]` |
 | 服务器管理 | `server start/stop/kill/restart/status` |
 | 方案管理 (模板模式) | `scheme create/list/switch/delete/info/status/edit/pull/prune/register` |
 | 模组管理 | `mod remove/list/toggle/sync` |
