@@ -6,6 +6,11 @@ wow~ V3.3.0 起内置对接 **[陶瓦（Terracotta）](https://github.com/burnin
 
 > 📌 **命令引导词**：文档中的 `wow` 是简写 —— Linux / macOS 请写 `./wow.sh`，Windows 请写 `wow.bat`。例如 `wow lan host` 在 Linux 下即 `./wow.sh lan host`。
 
+> 📵 **已知限制（2026-10-17 实测确认）**：
+> **手机移动数据（4G/5G）下 P2P 打洞会失败**——运营商 CGNAT + 对称型 NAT 使打洞成功率几乎为零，
+> 表现为能开房、客户端加入后立即超时。**请让服务端与客户端都保持在家宽（Wi-Fi）环境**。
+> 详见文末「实测记录」。
+
 ---
 
 ## 一、它是怎么工作的
@@ -117,8 +122,34 @@ Powered by Terracotta | 陶瓦联机 — https://github.com/burningtnt/Terracott
 - **开房失败 / 一直 scanning**：确认 Minecraft 服务端已启动并监听 `server-port`（自动读取自 `server.properties`，默认 25565）。V3.4.0 之前该问题几乎必然发生——陶瓦靠监听 MC 局域网发现广播来发现端口，而**专用服务端从不发送该广播**，wow 側會 30s 超时。V3.4.0 已通过 wow 代发广播修复（实现见 `core/src/lan_beacon.js`）；若仍卡在 `host-scanning`，请检查多播是否被本机防火墙/虚拟网卡拦截（广播目标 `224.0.2.60:4445`）。
 - **想固定房间号**：在 `lan.room_code` 填写，或在 `wow lan host -r <房间号>` 指定；若格式不被陶瓦接受，陶瓦会自动重新生成一个（不会报错）。
 - **关不掉房间**：`wow lan stop` 会先通过陶瓦 API 优雅退出，失败时回退为终止进程；也可直接结束陶瓦进程（运行时状态记录在 `core/.lan.json`）。
-- **平台支持**：自动下载支持 **Windows / macOS / Linux** 的 x64 与 arm64（Linux 为 musl 静态二进制，免 glibc 依赖，可直接在 Termux 运行）。**Android** 端（arm64v8a / armv7 / x86_64 / x86）会**优先尝试**下载 `terracotta-<ver>-android-<arch>.so`，但该 `.so` 是 **JNI 共享库**、不可作为命令行进程启动，因此 wow~ 会自动**回退到 `linux/arm64` 的 musl 静态二进制**（可在 Termux 中直接运行），无需手动切换。
-- **在手机上怎么用（Android / Termux 重要说明）**：
-  - **Termux 里可以直接用**：Termux 中 `process.platform` 实际为 **`android`**（并非 `linux`）。wow~ 会先尝试 Android 的 `.so`，下载成功后识别其为 JNI 共享库不可直接启动，于是**自动回退**到 `linux/arm64` 的 musl 静态二进制并直接启动——`wow lan host` 开房流程与桌面端一致，无需任何手动配置。
-  - **真·Android（如 nodejs-mobile 等把 wow~ 嵌进 App 的运行时）**：陶瓦提供的 `.so` 是 **JNI 共享库**，需要由 **FCL / HMCL** 等安卓启动器通过 `System.loadLibrary` 加载，**不能**作为独立命令行进程启动。在 Termux 之外这类场景下，wow~ 的回退逻辑仍会尝试 `linux/arm64`，但若该环境无法运行 linux 二进制，请改用 `lan.binary_url` 手动提供可用二进制。
-  - 其它未覆盖的架构（如 32 位 Linux）请改用 `lan.binary_url` 手动提供可用二进制。
+- **平台支持**：自动下载支持 **Windows / macOS / Linux** 的 x64 与 arm64（Linux 为 musl 静态二进制，免 glibc 依赖）。
+- **Android 手机**：**不能**运行 wow~ 服务端（网络沙箱限制，详见 [Android 已知限制说明](ANDROID_LIMITATIONS.md)）；但 Android 设备**可以作为联机客户端**——在 FCL 等启动器里「加入陶瓦房间」输入房间号即可（2026-10-17 实测通过，见下方实测记录）。
+- 其它未覆盖的架构（如 32 位 Linux）请改用 `lan.binary_url` 手动提供可用二进制。
+
+---
+
+## 七、实测记录（2026-10-17 里程碑）
+
+**结论：家宽对家宽、跨宽带约 3 公里，联机稳定，几乎不卡。**
+
+完整报告见 [陶瓦联机实测报告](LAN_TERRACOTTA-TEST-REPORT.md)，要点如下：
+
+| 项目 | 结果 |
+|------|------|
+| 服务端 | Windows 10 台式机，wow~ 管理，vanilla 1.16，`wow server start` 正常启动 |
+| 开房 | `wow lan host` 成功，房间号 `U/GB30-YMAT-NBN0-GXP1` |
+| 客户端 1 | Android 手机 + FCL，**跨宽带约 3 公里**（电信家宽对电信家宽），成功加入 |
+| 客户端 2 | Android 手机 + FCL，**同一局域网**，成功加入 |
+| 双方同时在线 / 断线重连 | ✅ 成功 |
+| 双端家宽（Wi-Fi）稳定性 | ✅ 据客户端报告「十分稳定，几乎不卡」 |
+| 客户端从 Wi-Fi 切到移动数据 | ❌ 立即超时（运营商 CGNAT + 对称型 NAT，P2P 打洞失败，切回 Wi-Fi 即恢复） |
+
+**这意味着什么**：此前大量教程宣称「家宽不能开服」，本次实测证明——通过陶瓦的
+P2P 打洞，**家宽开服联机是可行且稳定的**。wow~「降低开服门槛」的目标得到了实际验证。
+
+**注意**：家宽开服技术可行，但中大型服务器仍不建议长期家宽运行——运营商可能判定
+异常流量。建议限制人数、预生成区块、错峰开服。
+
+> 📵 **移动数据用户请注意**：手机流量处于运营商 CGNAT 之后的对称型 NAT，
+> 每次连接分配不同公网端口，P2P 打洞成功率几乎为零。这是 EasyTier 组网的
+> 已知限制，非 wow~ 代码问题。**联机请使用 Wi-Fi / 家宽环境。**

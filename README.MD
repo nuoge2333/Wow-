@@ -146,9 +146,11 @@ wow/
 - [插件开发指南](docs/WOW-PLUGINS.md)（规划中，尚未实装）
 - [Web 面板使用说明](docs/WEB_PANEL.md)
 - [联机 / 内网穿透（陶瓦）](docs/LAN_TERRACOTTA.md)
+- [陶瓦联机实测报告](docs/LAN_TERRACOTTA-TEST-REPORT.md)
 - [配置参考](docs/CONFIG.md)
 - [Web API 参考](docs/API.md)
 - [术语解释](docs/TERMS.md)
+- [Android 已知限制说明](docs/ANDROID_LIMITATIONS.md)
 - [更新日志](docs/CHANGELOG.md)
 ## 🛠 故障排除
 - [Windows 故障排除](docs/TROUBLE_WINDOWS.md)
@@ -156,7 +158,13 @@ wow/
 ### Linux
 - [Debian/Ubuntu 故障排除](docs/TROUBLE_DEBIAN.md)
 - [Arch/Manjaro 故障排除](docs/TROUBLE_ARCH.md)
-- [安卓 (Termux) 故障排除](docs/TROUBLE_ANDROID%28Termux%29.md)
+
+---
+
+## 📵 不支持 Android
+
+Android 设备无法运行 wow~ 服务端（网络沙箱限制，详见 [Android 已知限制说明](docs/ANDROID_LIMITATIONS.md)）。
+手机可以作为**联机客户端**通过陶瓦加入房间，也可以用浏览器访问跑在电脑 / VPS 上的 Web 面板。
 
 ---
 
@@ -164,12 +172,12 @@ wow/
 
 | 组件 | 要求 |
 |------|------|
-| 操作系统 | Windows 10+, Linux (glibc 2.28+), macOS 10.15+, **Android（需 Termux）** |
-| Java | 8、17、21（桌面端按需自动下载）；Android 端由 Termux 的 `pkg install openjdk-17` 提供 |
-| Node.js | 自动下载便携版（桌面端），或由 Termux 的 `pkg` 提供（安卓端）；均无需手动安装 |
+| 操作系统 | Windows 10+, Linux (glibc 2.28+), macOS 10.15+ |
+| Java | 8、17、21（按需自动下载） |
+| Node.js | 自动下载便携版，无需手动安装 |
 | 浏览器 | Chrome 90+, Firefox 88+, Edge 90+, Safari 15+ |
 > 注：Windows 7 无法保证能够稳定运行，建议升级到 Windows 10+。
-> 注：安卓必须在 **Termux** 终端内运行（不要用系统自带终端或 ADB shell），且设备架构需为 arm64 或 x64。
+> 注：**不支持 Android**。Android 的网络沙箱使服务端无法对外暴露端口，详见 [Android 已知限制说明](docs/ANDROID_LIMITATIONS.md)。
 ---
 
 ## 🤝 参与贡献

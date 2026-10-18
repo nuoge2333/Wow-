@@ -268,4 +268,4 @@ wow server start --memory 6G
 - 📦 [方案管理详解](SCHEMES.md)
 - 🎨 [主题包开发指南](THEMES.md)
 - 🔌 [插件开发指南](WOW-PLUGINS.md)（插件系统尚未实装，详见文首说明）
-- 🛠️ [故障排除](TROUBLE_WINDOWS.md)（[macOS](TROUBLE_MACOS.md) / [Debian·Ubuntu](TROUBLE_DEBIAN.md) / [Arch](TROUBLE_ARCH.md) / [安卓 Termux](TROUBLE_ANDROID%28Termux%29.md)）
+- 🛠️ [故障排除](TROUBLE_WINDOWS.md)（[macOS](TROUBLE_MACOS.md) / [Debian·Ubuntu](TROUBLE_DEBIAN.md) / [Arch](TROUBLE_ARCH.md) / [Android 已知限制说明](ANDROID_LIMITATIONS.md)）

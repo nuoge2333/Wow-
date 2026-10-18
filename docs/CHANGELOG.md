@@ -178,6 +178,40 @@ logs/Wow-2026-10-18.log    ← 同一天的所有运行都写进这一份
 - 开服控制台里输入 `m` 会得到新指引（提示改用无参数启动），输入 `L` 会被拒绝
   （REPL 会抢占 stdin，在开服控制台里不可用）
 
+### 📵 撤销 Android 支持（Termux / proot）
+
+经评估确认：**Android 上无法运行 Wow 服务端**，本版起正式撤销 Android 支持。
+
+根因是 Android 的网络命名空间沙箱，不是配置问题、无法绕过：
+
+- Termux 内监听的端口在**其他 App / 其他设备上不可见**（每个 App 独立网络栈）
+- SELinux 限制非授权进程绑定通配地址
+- proot-distro 只做文件系统模拟，**不改变网络栈**
+- 非 root 无法突破以上限制；陶瓦（EasyTier）依赖真实网络接口，联机随之失效
+
+随之落地的文档调整：
+
+| 文档 | 调整 |
+|------|------|
+| `README.MD` | 系统要求移除 Android 行；新增「📵 不支持 Android」独立章节 |
+| `docs/TROUBLE_ANDROID(Termux).md` | 重命名为 `docs/ANDROID_LIMITATIONS.md`，由故障排除指南改为**已知限制说明**（含可作联机客户端 / Web 面板访问端的说明） |
+| `docs/QUICKSTART.md` / `docs/wow.md` | 移除 Android / 手机开服示例与「理论上可行」表述 |
+| `docs/LAN_TERRACOTTA.md` | 「平台支持」移除 Android 服务端路径，保留客户端用法 |
+
+Android 手机**仍可作为联机客户端加入他人房间**，或作为 Web 面板的访问端。
+
+### 🌐 陶瓦联机实测通过（2026-10-17 里程碑）
+
+LAN（陶瓦）联机完成真实环境测试，**家宽对家宽 P2P 打洞成功**：
+
+- 实测双方均为家用宽带、相距约 3 公里，联机稳定
+- 房间号 `U/GB30-YMAT-NBN0-GXP1`
+- 完整实测记录见 `docs/LAN_TERRACOTTA-TEST-REPORT.md`（含 NAT / CGNAT 技术分析与结论）
+
+已知限制：**移动数据下打洞成功率几乎为零**——运营商 CGNAT + 对称型 NAT 组合下
+UDP 打洞不可行。开服方与加入方均需使用 Wi-Fi（家用宽带）。此结论已写入
+`docs/LAN_TERRACOTTA.md` 文首提醒。
+
 ### 🧪 测试（本版累计）
 
 新增 6 个测试文件：
@@ -205,6 +239,8 @@ logs/Wow-2026-10-18.log    ← 同一天的所有运行都写进这一份
   自定义脚本 / 面板配置里写死 `wow m` 的需要同步改。
 - **日志文件名变了**：`logs/` 下旧版是按次生成的 `Wow-日期-时间-PID.log`，
   本版起同一天统一写 `Wow-YYYY-MM-DD.log`。旧文件不会被自动清理，需要的话手动归档。
+- **Android 不再支持**：Termux / proot 用户请迁移到 PC；手机仅保留联机客户端与
+  Web 面板访问两种用法（见 `docs/ANDROID_LIMITATIONS.md`）。
 
 ---
 
