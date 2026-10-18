@@ -119,16 +119,43 @@
 - pool 里核心缺失时不再静默跳过（旧行为会把状态强标 FULL 但实际缺核心，
   要到启动才报错），改为明确告警
 
-### 🧪 测试
+### ✨ 新增：Web 面板登录邮箱白名单 `mail.whitelist`
 
-新增 2 个测试文件，35 项：
+面板默认接受任意邮箱请求验证码——一旦暴露到公网，等于谁拿到验证码谁就能进。
+新增白名单配置（`wow.yaml` → `mail.whitelist`）：
 
-- `core/test/forge_core_path.test.js`（26 项）—— 造 1.12.2 / 1.16.5 / 1.20.1 /
-  1.21 / NeoForge 五种真实目录布局，验证探测结果、排除原版与库文件、空目录不抛异常
-- `core/test/forge_scheme_roundtrip.test.js`（9 项）—— 端到端跑「入池 → 瘦身 →
-  补齐」往返，验证深层核心回到原位、根目录不出现拍平文件、老方案仍兼容
+```yaml
+mail:
+  whitelist:
+    - you@example.com
+    - teammate@example.com
+```
 
-全套测试 **10 个文件 / 344 项全部通过**。
+- 名单外邮箱在 `POST /api/auth/request-code` 阶段直接 403，**不生成验证码**
+- `POST /api/auth/login` 二次校验：即便此前已发出过验证码（白名单是后配的），
+  登录阶段仍会拒绝换取 token，堵住时序漏洞
+- 大小写不敏感；留空 `[]` = 不限制（与 V3.5.7 行为一致）；`- "*"` = 放开所有
+- 同时接受逗号分隔字符串写法，兼容 `mail.WhiteList` / `mail.whiteList` 大小写变体
+- 白名单读取异常时按放行处理并告警，避免配置写坏导致面板彻底登不上
+
+### 🔧 修复：`docs/TROUBLE_WINDOWS.md` 被整篇包在代码围栏里
+
+文件开头有一行 `## \`docs/TROUBLE_WINDOWS.md\`` 加一个未闭合的 ` ```markdown `，
+使得整份文档在 GitHub / 编辑器里渲染成一大块代码。这条包裹自 V3.4.3 首次提交起就存在。
+剥离外层包裹后又暴露出真正的问题：文件末尾的 ` ```cmd ` 从未闭合（此前靠那个多余的
+外层围栏"凑巧"闭上）。两处一并修掉，现全文 36 个围栏全部配对。
+
+### 🧪 测试（本版累计）
+
+新增 4 个测试文件：
+
+- `core/test/forge_core_path.test.js`（26 项）
+- `core/test/forge_scheme_roundtrip.test.js`（9 项）
+- `core/test/mail_whitelist.test.js`（25 项）—— 归一化 / 判定语义 / 配置读取 / 兼容键名
+- `core/test/mail_whitelist_e2e.test.js`（12 项）—— 真实起 Express 打接口，
+  验证 403、不生成验证码、登录二次校验、通配符、边界输入
+
+全套测试 **12 个文件 / 381 项全部通过**，`core/wow.yaml` 与 `scheme/` 无污染。
 
 ### ⬆️ 升级须知
 

@@ -24,8 +24,71 @@ class Mailer {
         this.adminEmail = config.getConfig('mail.admin_email', null);
         this.sendOnCrash = config.getConfig('mail.send_on_crash', true);
         this.sendLogsInterval = config.getConfig('mail.send_logs_interval', 0); // 小时
+        this.whitelist = Mailer.loadWhitelist();
         this.transporter = null;
         this._initTransporter();
+    }
+
+    /**
+     * 读取登录邮箱白名单（V3.5.8）。
+     *
+     * 配置项主键是 mail.whitelist（与 admin_email / send_on_crash 同风格，全小写下划线）。
+     * 同时兼容 mail.WhiteList / mail.whiteList 写法，避免手写 YAML 时因大小写踩坑。
+     * 支持三种写法：YAML 列表、逗号分隔字符串、单个邮箱字符串。
+     * 空 = 不限制（向后兼容）；含 "*" = 放开所有邮箱。
+     */
+    static loadWhitelist() {
+        let raw = null;
+        for (const key of ['mail.whitelist', 'mail.WhiteList', 'mail.whiteList']) {
+            const v = config.getConfig(key, null);
+            if (v !== null && v !== undefined) { raw = v; break; }
+        }
+        return Mailer.normalizeWhitelist(raw);
+    }
+
+    /**
+     * 归一化白名单：统一小写、去空白、去重，并滤掉非法项。
+     * 返回值里可能包含 '*'（通配）。
+     */
+    static normalizeWhitelist(raw) {
+        let list = [];
+        if (Array.isArray(raw)) {
+            list = raw;
+        } else if (typeof raw === 'string') {
+            list = raw.split(/[,;\s]+/);
+        } else if (raw && typeof raw === 'object') {
+            // 兼容 { a@b.com: true } 这种 YAML 映射写法
+            list = Object.keys(raw).filter(k => raw[k]);
+        }
+        const out = [];
+        for (const item of list) {
+            const s = String(item == null ? '' : item).trim();
+            if (!s) continue;
+            const lower = s.toLowerCase();
+            // '*' 通配所有；其余必须是形如 x@y.z 的邮箱
+            if (lower !== '*' && !Mailer.isValidEmailStatic(lower)) continue;
+            if (!out.includes(lower)) out.push(lower);
+        }
+        return out;
+    }
+
+    static isValidEmailStatic(email) {
+        return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email || ''));
+    }
+
+    /**
+     * 判断某邮箱是否允许登录 Web 面板。
+     * 语义（V3.5.8）：白名单为空 → 不限制；否则必须在名单内（或名单含 '*'）。
+     * @returns {{allowed: boolean, reason: string}}
+     */
+    isEmailAllowed(email) {
+        const wl = this.whitelist || [];
+        if (wl.length === 0) return { allowed: true, reason: '白名单未配置，不限制' };
+        if (wl.includes('*')) return { allowed: true, reason: '白名单通配放开' };
+        const target = String(email || '').trim().toLowerCase();
+        if (!target) return { allowed: false, reason: '邮箱为空' };
+        if (wl.includes(target)) return { allowed: true, reason: '在白名单内' };
+        return { allowed: false, reason: '邮箱不在白名单内' };
     }
 
     /**

@@ -54,6 +54,9 @@ const DEFAULT_CONFIG = {
             from: null
         },
         admin_email: null,
+        // V3.5.8：Web 面板登录邮箱白名单。只有名单内的邮箱才能获取验证码并登录面板。
+        // 空数组 = 不限制（向后兼容，保持 V3.5.7 行为）。支持 "*" 通配所有邮箱。
+        whitelist: [],
         send_on_crash: true,
         send_logs_interval: 0
     },

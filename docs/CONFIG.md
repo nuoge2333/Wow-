@@ -190,6 +190,7 @@ web:
 | `smtp.pass` | string | `null` | SMTP 密码或应用专用密码 |
 | `smtp.from` | string | `null` | 发件人邮箱地址 |
 | `admin_email` | string | `null` | 管理员邮箱（接收崩溃报告） |
+| `whitelist` | array | `[]` | **Web 面板登录邮箱白名单**（V3.5.8）。仅名单内邮箱可获取验证码并登录；空数组 = 不限制；含 `"*"` = 放开所有 |
 | `send_on_crash` | boolean | `true` | 是否在服务器崩溃时发送邮件通知 |
 | `send_logs_interval` | integer | `0` | 定时发送日志摘要（小时），`0` 禁用 |
 
@@ -203,9 +204,22 @@ mail:
     pass: abcd efgh ijkl mnop
     from: myemail@gmail.com
   admin_email: admin@example.com
+  whitelist:
+    - admin@example.com
+    - friend@example.com
   send_on_crash: true
   send_logs_interval: 24
 ```
+
+> 🔐 **`whitelist` 用法**（V3.5.8 新增）
+>
+> - 只有列表内的邮箱才能请求登录验证码、并换取 Web 面板的 token；
+>   名单外的邮箱在 `/api/auth/request-code` 阶段就直接返回 403，**不会生成验证码**。
+> - 大小写不敏感：配置写 `Admin@Example.com`，用 `admin@example.com` 登录同样放行。
+> - 留空（`whitelist: []`）= 不限制，行为与 V3.5.7 完全一致。
+> - 写 `- "*"` = 放开所有邮箱（等价于不限制，仅用于明确表态）。
+> - 除 YAML 列表外，也接受逗号分隔字符串：`whitelist: "a@b.com, c@d.cn"`。
+> - 兼容 `mail.WhiteList` / `mail.whiteList` 写法（主键 `whitelist` 优先）。
 
 > 💡 Gmail 需要使用 **应用专用密码**，不是登录密码。
 
@@ -374,6 +388,7 @@ mail:
     pass: null
     from: null
   admin_email: null
+  whitelist: []
   send_on_crash: true
   send_logs_interval: 0
 

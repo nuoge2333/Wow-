@@ -1,6 +1,3 @@
-## `docs/TROUBLE_WINDOWS.md`
-
-```markdown
 # 🛠️ Windows 故障排除
 
 > 适用于 Windows 10、Windows 11 及 Windows Server 2016+

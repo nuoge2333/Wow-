@@ -205,6 +205,22 @@ function startWeb(options = {}) {
             return res.status(400).json({ success: false, error: '请输入有效的邮箱地址' });
         }
 
+        // V3.5.8：邮箱白名单（mail.whitelist）。不在名单内直接拒绝，且**不生成验证码**，
+        // 避免把验证码塞进 verificationCodes 造成试探面。响应文案保持中性，
+        // 不向请求方泄露「白名单存在但我把你拒了」之外的任何信息。
+        try {
+            const Mailer = require('./mailer');
+            const wl = new Mailer();
+            const verdict = wl.isEmailAllowed(email);
+            if (!verdict.allowed) {
+                logger.impt(`Web 登录被拒（邮箱不在白名单内）: ${email}`);
+                return res.status(403).json({ success: false, error: '该邮箱无权登录，请联系管理员' });
+            }
+        } catch (e) {
+            // 白名单读取异常不应阻断登录（保持可用性），但要留痕
+            console.warn(`⚠️ 白名单校验异常，已按放行处理: ${e.message}`);
+        }
+
         try {
             const code = generateAndSendCode(email);
             const Mailer = require('./mailer');
@@ -251,6 +267,22 @@ function startWeb(options = {}) {
 
     app.post('/api/auth/login', (req, res) => {
         const { email, code, password } = req.body;
+
+        // V3.5.8：邮箱白名单（mail.whitelist）——即便验证码已被拿到，
+        // 名单外的邮箱也不得换取 token。这是 request-code 之外的第二道闸，
+        // 防止「白名单是后配的，但此前已发出过验证码」这类时序漏洞。
+        if (email) {
+            try {
+                const Mailer = require('./mailer');
+                const verdict = new Mailer().isEmailAllowed(email);
+                if (!verdict.allowed) {
+                    logger.impt(`Web 登录被拒（登录阶段白名单校验）: ${email}`);
+                    return res.status(403).json({ success: false, error: '该邮箱无权登录，请联系管理员' });
+                }
+            } catch (e) {
+                console.warn(`⚠️ 登录阶段白名单校验异常，已按放行处理: ${e.message}`);
+            }
+        }
 
         // V3.5.3：离线密码登录（未配 SMTP 时的替代方式）
         let offlineHash = config.getConfig('web.auth_password', null);
