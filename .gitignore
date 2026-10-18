@@ -15,6 +15,7 @@ scheme/
 core/down/
 core/temp/
 core/wow.yaml
+wow-plugins/
 
 # ====================
 # 日志与临时文件
