@@ -3,6 +3,20 @@
 /**
  * wow - Minecraft 服务器管理工具
  * 主入口：解析子命令，调用对应模块
+ *
+ * V3.5.9 懒加载重构：
+ *   顶部只静态引用 config / utils（外加 Node 内置模块与 commander 本身）。
+ *   其余模块（server / installer / mod_manager / scheme_manager /
+ *   theme_manager / pack_generator / log_handler / mailer /
+ *   web_service / terracotta / log / interactive）一律改为在对应的
+ *   action 回调函数内部动态 require，并统一经 load() 加载：
+ *     - 启动更快：只有当前命令真正用到的模块才会被加载
+ *       （如 `wow set` 不再拖家带口加载 express、陶瓦、整合包生成器）
+ *     - 故障隔离：单个模块损坏（语法错误 / 依赖缺失）只报错当前命令，
+ *       返回 null 由调用方降级，不再导致整个 CLI 进程无法启动
+ *   同时 set / down / pack / logs / mail / theme 等非核心命令以
+ *   `_hidden = true` 从 --help 隐藏，保持核心帮助信息极简
+ *   （命令本身仍可正常使用，完整命令清单见 docs/COMMANDS.md）。
  */
 
 const { Command } = require('commander');
@@ -10,30 +24,70 @@ const path = require('path');
 const fs = require('fs-extra');
 const program = new Command();
 
-// 导入模块
+// 导入模块（仅保留启动必需的核心模块）
 const config = require('./config');
 const utils = require('./utils');
-const ServerManager = require('./server');
-const Installer = require('./installer');
-const ModManager = require('./mod_manager');
-const SchemeManager = require('./scheme_manager');
-const ThemeManager = require('./theme_manager');
-const JreManager = require('./jre_manager');
-const PackGenerator = require('./pack_generator');
-const LogHandler = require('./log_handler');
-const Mailer = require('./mailer');
-const { startWeb, stopWeb, webStatus } = require('./web_service');
-const Terracotta = require('./terracotta');
-// V3.5.0：事件日志（记录指令发起/完成/失败、MC 报错、Web 面板操作等）
-const { logger, installGlobalErrorHook } = require('./log');
-installGlobalErrorHook();
+
+// ==================== 模块懒加载 ====================
+
+/**
+ * 按需加载模块。
+ * 各功能模块在 action 内经本函数动态加载；加载失败时只打印当前模块的
+ * 错误并返回 null，由调用方决定降级行为——不会连带整个进程退出。
+ * 某个模块坏了，其他命令照常能用。
+ */
+function load(modulePath) {
+    try {
+        return require(modulePath);
+    } catch (e) {
+        console.error(`❌ 模块加载失败 [${modulePath}]: ${e.message}`);
+        return null;
+    }
+}
+
+// ==================== 事件日志（懒加载 + 失败降级） ====================
+// V3.5.0 新增：记录指令发起/完成/失败、MC 报错、Web 面板操作等。
+// log 模块同样按需加载：损坏时仅失去事件日志能力，不影响主流程。
+
+let _log = null;
+let _logTried = false;
+function getLog() {
+    if (!_logTried) {
+        _logTried = true;
+        try {
+            _log = require('./log');
+        } catch (e) {
+            console.error(`⚠️ 事件日志模块加载失败（事件日志功能不可用）: ${e.message}`);
+            _log = null;
+        }
+    }
+    return _log;
+}
+
+// 事件日志实例访问器：模块不可用时返回 null，调用方以 logger()?.xxx() 降级
+function logger() {
+    const log = getLog();
+    return log ? log.logger : null;
+}
+
+// 全局错误钩子需尽早安装（捕获未处理异常 / 未捕获拒绝）；加载失败仅告警，不阻断启动
+{
+    const log = getLog();
+    if (log && typeof log.installGlobalErrorHook === 'function') {
+        try {
+            log.installGlobalErrorHook();
+        } catch (e) {
+            console.error(`⚠️ 全局错误钩子安装失败: ${e.message}`);
+        }
+    }
+}
 
 // ==================== 配置与初始化 ====================
 
 program
     .name('wow')
     .description('Minecraft 服务器管理工具 - 默认优先，可以修改')
-    .version('3.5.8-26.3g', '-V');
+    .version('3.5.9-26.3h', '-V');
 
 // ==================== init ====================
 
@@ -102,7 +156,7 @@ program
         console.log('  wow help           - 查看帮助');
     });
 
-// ==================== set ====================
+// ==================== set（非核心：与 config wow 等价，帮助菜单隐藏） ====================
 
 program
     .command('set <key> <value>')
@@ -110,7 +164,7 @@ program
     .action((key, value) => {
         config.setConfig(key, value);
         console.log(`✅ 设置已更新: ${key} = ${value}`);
-    });
+    })._hidden = true;
 
 // ==================== server ====================
 
@@ -122,6 +176,8 @@ serverCmd
     .option('-m, --memory <size>', '内存分配，如 4G')
     .option('--jvm-args <args>', '额外 JVM 参数')
     .action(async (options) => {
+        const ServerManager = load('./server');
+        if (!ServerManager) return;
         const server = new ServerManager();
         await server.start(options.memory, options.jvmArgs);
     });
@@ -130,6 +186,8 @@ serverCmd
     .command('stop')
     .description('正常停止服务器')
     .action(async () => {
+        const ServerManager = load('./server');
+        if (!ServerManager) return;
         const server = new ServerManager();
         await server.stop();
     });
@@ -138,6 +196,8 @@ serverCmd
     .command('kill')
     .description('强制终止服务器')
     .action(() => {
+        const ServerManager = load('./server');
+        if (!ServerManager) return;
         const server = new ServerManager();
         server.kill();
     });
@@ -148,6 +208,8 @@ serverCmd
     .option('-m, --memory <size>', '内存分配')
     .option('--jvm-args <args>', '额外 JVM 参数')
     .action(async (options) => {
+        const ServerManager = load('./server');
+        if (!ServerManager) return;
         const server = new ServerManager();
         await server.restart(options.memory, options.jvmArgs);
     });
@@ -156,6 +218,8 @@ serverCmd
     .command('status')
     .description('查看服务器状态')
     .action(() => {
+        const ServerManager = load('./server');
+        if (!ServerManager) return;
         const server = new ServerManager();
         server.status();
     });
@@ -172,12 +236,15 @@ program
     .action(async (target, version, options) => {
         // ============ 彩蛋入口 ============
         if (target === 'party') {
-            const { runParty } = require('./party/party');
-            await runParty();
+            const party = load('./party/party');
+            if (!party) return;
+            await party.runParty();
             return;
         }
         // ============ URL 下载 ============
         if (target.startsWith('http://') || target.startsWith('https://')) {
+            const Installer = load('./installer');
+            if (!Installer) return;
             const installer = new Installer();
             const output = options.output || path.join(utils.getServerDir(), path.basename(target));
             try {
@@ -201,6 +268,8 @@ modCmd
     .command('remove <name>')
     .description('卸载模组')
     .action((name) => {
+        const ModManager = load('./mod_manager');
+        if (!ModManager) return;
         const modManager = new ModManager();
         modManager.remove(name);
     });
@@ -211,6 +280,8 @@ modCmd
     .option('--loader <loader>', '过滤加载器')
     .option('-v, --mc-version <version>', '过滤版本')
     .action((options) => {
+        const ModManager = load('./mod_manager');
+        if (!ModManager) return;
         const modManager = new ModManager();
         const mods = modManager.listMods(options.loader, options.mcVersion);
         if (mods.length === 0) {
@@ -227,6 +298,8 @@ modCmd
     .command('toggle <name>')
     .description('启用/禁用模组')
     .action((name) => {
+        const ModManager = load('./mod_manager');
+        if (!ModManager) return;
         const modManager = new ModManager();
         modManager.toggleMod(name);
     });
@@ -237,6 +310,8 @@ modCmd
     .option('--loader <loader>', '加载器')
     .option('-v, --mc-version <version>', '版本')
     .action((options) => {
+        const ModManager = load('./mod_manager');
+        if (!ModManager) return;
         const modManager = new ModManager();
         const loader = options.loader || 'forge';
         const version = options.mcVersion || '1.20.1';
@@ -254,6 +329,8 @@ schemeCmd
     .option('-t, --type <type>', '核心类型/加载器 (vanilla/forge/fabric/neoforge/quilt/mohist/catserver/paper)，同时决定加载器')
     .option('-b, --build <id>', '构建标识（Mohist 为 git sha，可省略以自动取最新）')
     .action(async (name, options) => {
+        const SchemeManager = load('./scheme_manager');
+        if (!SchemeManager) return;
         const schemeManager = new SchemeManager();
         try {
             await schemeManager.create(name, {
@@ -272,6 +349,8 @@ schemeCmd
     .command('list')
     .description('列出所有方案')
     .action(() => {
+        const SchemeManager = load('./scheme_manager');
+        if (!SchemeManager) return;
         const schemeManager = new SchemeManager();
         const schemes = schemeManager.list();
         if (schemes.length === 0) {
@@ -295,6 +374,8 @@ schemeCmd
             console.log('查看可用方案: scheme list');
             return;
         }
+        const SchemeManager = load('./scheme_manager');
+        if (!SchemeManager) return;
         const schemeManager = new SchemeManager();
         try {
             await schemeManager.switch(name);
@@ -315,6 +396,8 @@ schemeCmd
     .command('delete <name>')
     .description('删除方案')
     .action((name) => {
+        const SchemeManager = load('./scheme_manager');
+        if (!SchemeManager) return;
         const schemeManager = new SchemeManager();
         try {
             schemeManager.delete(name);
@@ -327,6 +410,8 @@ schemeCmd
     .command('info [name]')
     .description('查看方案信息')
     .action((name) => {
+        const SchemeManager = load('./scheme_manager');
+        if (!SchemeManager) return;
         const schemeManager = new SchemeManager();
         const target = name || schemeManager.currentScheme;
         if (!target) {
@@ -347,14 +432,17 @@ schemeCmd
         }
     });
 
-// ==================== theme ====================
+// ==================== theme（非核心：帮助菜单隐藏，命令仍可用） ====================
 
 const themeCmd = program.command('theme').description('主题包管理');
+themeCmd._hidden = true;
 
 themeCmd
     .command('install <source>')
     .description('安装主题包（ZIP 文件路径）')
     .action(async (source) => {
+        const ThemeManager = load('./theme_manager');
+        if (!ThemeManager) return;
         const themeManager = new ThemeManager();
         try {
             await themeManager.install(source);
@@ -367,6 +455,8 @@ themeCmd
     .command('list')
     .description('列出已安装主题')
     .action(() => {
+        const ThemeManager = load('./theme_manager');
+        if (!ThemeManager) return;
         const themeManager = new ThemeManager();
         const themes = themeManager.list();
         if (themes.length === 0) {
@@ -384,6 +474,8 @@ themeCmd
     .command('switch <name>')
     .description('切换主题')
     .action((name) => {
+        const ThemeManager = load('./theme_manager');
+        if (!ThemeManager) return;
         const themeManager = new ThemeManager();
         try {
             themeManager.switch(name);
@@ -396,6 +488,8 @@ themeCmd
     .command('delete <name>')
     .description('删除主题')
     .action((name) => {
+        const ThemeManager = load('./theme_manager');
+        if (!ThemeManager) return;
         const themeManager = new ThemeManager();
         try {
             themeManager.delete(name);
@@ -408,6 +502,8 @@ themeCmd
     .command('info <name>')
     .description('查看主题信息')
     .action((name) => {
+        const ThemeManager = load('./theme_manager');
+        if (!ThemeManager) return;
         const themeManager = new ThemeManager();
         try {
             const info = themeManager.getInfo(name);
@@ -432,7 +528,9 @@ webCmd
     .option('-p, --port <port>', '端口')
     .option('--host <host>', '绑定地址')
     .action((options) => {
-        startWeb({
+        const webService = load('./web_service');
+        if (!webService) return;
+        webService.startWeb({
             port: options.port,
             host: options.host
         });
@@ -442,14 +540,18 @@ webCmd
     .command('stop')
     .description('停止 Web 服务')
     .action(() => {
-        stopWeb();
+        const webService = load('./web_service');
+        if (!webService) return;
+        webService.stopWeb();
     });
 
 webCmd
     .command('status')
     .description('查看 Web 服务状态')
     .action(() => {
-        webStatus();
+        const webService = load('./web_service');
+        if (!webService) return;
+        webService.webStatus();
     });
 
 // ==================== lan (V3.3.0 陶瓦内网穿透 / 联机) ====================
@@ -463,6 +565,8 @@ lanCmd
     .action(async (options) => {
         let failed = false;
         try {
+            const Terracotta = load('./terracotta');
+            if (!Terracotta) { failed = true; return; }
             const { roomCode } = await Terracotta.hostRoom({ roomCode: options.room });
             console.log(`\n🎮 好友在 PCL / HMCL / BakaXL / FCL 中选择「加入陶瓦房间」并输入房间号 ${roomCode} 即可联机。`);
         } catch (e) {
@@ -481,6 +585,8 @@ lanCmd
     .command('stop')
     .description('关闭联机房间（停止陶瓦）')
     .action(async () => {
+        const Terracotta = load('./terracotta');
+        if (!Terracotta) return;
         try {
             await Terracotta.stopHost();
         } catch (e) {
@@ -492,6 +598,8 @@ lanCmd
     .command('status')
     .description('查看联机房间状态 / 房间号')
     .action(async () => {
+        const Terracotta = load('./terracotta');
+        if (!Terracotta) return;
         try {
             const s = await Terracotta.getStatus();
             if (!s.running) {
@@ -512,14 +620,17 @@ lanCmd
         }
     });
 
-// ==================== pack ====================
+// ==================== pack（非核心：客户端整合包，帮助菜单隐藏） ====================
 
 const packCmd = program.command('pack').description('整合包管理');
+packCmd._hidden = true;
 
 packCmd
     .command('install <source>')
     .description('安装客户端整合包（支持 ZIP 文件或 URL）')
     .action(async (source) => {
+        const PackGenerator = load('./pack_generator');
+        if (!PackGenerator) return;
         const pack = new PackGenerator();
         try {
             await pack.install(source);
@@ -535,6 +646,8 @@ packCmd
     .option('--loader <loader>', '模组加载器 (forge/fabric)')
     .option('--output <path>', '输出目录')
     .action(async (name, options) => {
+        const PackGenerator = load('./pack_generator');
+        if (!PackGenerator) return;
         const pack = new PackGenerator();
         try {
             await pack.generate(name, { ...options, version: options.mcVersion });
@@ -543,14 +656,17 @@ packCmd
         }
     });
 
-// ==================== logs ====================
+// ==================== logs（非核心：日志/AI 分析，帮助菜单隐藏） ====================
 
 const logsCmd = program.command('logs').description('日志与 AI 分析');
+logsCmd._hidden = true;
 
 logsCmd
     .command('tail')
     .description('实时查看日志')
     .action(() => {
+        const LogHandler = load('./log_handler');
+        if (!LogHandler) return;
         const log = new LogHandler();
         log.tail();
     });
@@ -562,6 +678,8 @@ logsCmd
     .option('--model <model>', '模型名称')
     .option('--api-url <url>', 'API 端点')
     .action(async (options) => {
+        const LogHandler = load('./log_handler');
+        if (!LogHandler) return;
         const log = new LogHandler();
         await log.analyze(options);
     });
@@ -570,11 +688,13 @@ logsCmd
     .command('report')
     .description('生成日志分析报告（不调用 AI）')
     .action(() => {
+        const LogHandler = load('./log_handler');
+        if (!LogHandler) return;
         const log = new LogHandler();
         log.report();
     });
 
-// ==================== down ====================
+// ==================== down（非核心：裸下载器，帮助菜单隐藏） ====================
 
 program
     .command('down <url>')
@@ -585,8 +705,9 @@ program
         console.log(`下载: ${url}`);
         console.log(`  保存到: ${output}`);
 
-        const axios = require('axios');
-        const ProgressBar = require('progress');
+        const axios = load('axios');
+        const ProgressBar = load('progress');
+        if (!axios || !ProgressBar) return;
         fs.ensureDirSync(path.dirname(output));
 
         try {
@@ -618,7 +739,7 @@ program
         } catch (e) {
             console.error(`❌ 下载失败: ${e.message}`);
         }
-    });
+    })._hidden = true;
 
 // ==================== config ====================
 
@@ -641,7 +762,7 @@ configCmd
     .command('server <key> [value]')
     .description('查看/设置 server.properties')
     .action((key, value) => {
-        const ServerProperties = require('./config').ServerProperties;
+        const ServerProperties = config.ServerProperties;
         const props = new ServerProperties(utils.getServerDir());
         if (value !== undefined) {
             props.set(key, value);
@@ -656,7 +777,7 @@ configCmd
     .command('white <action> [player]')
     .description('白名单管理 (add/remove/list)')
     .action((action, player) => {
-        const WhitelistManager = require('./config').WhitelistManager;
+        const WhitelistManager = config.WhitelistManager;
         const wl = new WhitelistManager(utils.getServerDir());
 
         if (action === 'list') {
@@ -677,9 +798,10 @@ configCmd
         }
     });
 
-// ==================== mail ====================
+// ==================== mail（非核心：邮件管理，帮助菜单隐藏） ====================
 
 const mailCmd = program.command('mail').description('邮件管理');
+mailCmd._hidden = true;
 
 // 频率限制：15分钟/次
 const MAIL_RATE_LIMIT_FILE = path.join(__dirname, '../.mail_last_sent');
@@ -711,6 +833,8 @@ mailCmd
     .description('测试邮件配置，发送验证码到管理员邮箱')
     .action(async () => {
         if (!checkMailRateLimit()) return;
+        const Mailer = load('./mailer');
+        if (!Mailer) return;
         const mailer = new Mailer(config);
         await mailer.test();
         updateMailRateLimit();
@@ -721,6 +845,8 @@ mailCmd
     .description('发送验证码到指定邮箱（用于登录测试）')
     .action(async (email) => {
         if (!checkMailRateLimit()) return;
+        const Mailer = load('./mailer');
+        if (!Mailer) return;
         const mailer = new Mailer(config);
         const code = mailer.generateCode();
         const result = await mailer.sendVerificationCode(email, code);
@@ -738,6 +864,8 @@ mailCmd
     .description('模拟发送崩溃报告（用于测试）')
     .action(async (message) => {
         if (!checkMailRateLimit()) return;
+        const Mailer = load('./mailer');
+        if (!Mailer) return;
         const mailer = new Mailer(config);
         const result = await mailer.sendCrashReport({
             type: '模拟崩溃',
@@ -759,16 +887,25 @@ mailCmd
 //   wow L          → 长命令模式（原「无参数进入的 REPL」，输入 server start 这类完整命令）
 //   wow L <命令>   → 直接执行单条长命令后退出，如 wow L server start
 //
-// 构造交互菜单所需的全部管理器实例（数字菜单与长命令 REPL 共用）
+// 构造交互菜单所需的全部管理器实例（数字菜单与长命令 REPL 共用）。
+// V3.5.9：管理器改为懒加载——单个模块加载失败时对应项传 null，
+// interactive.js 的各菜单分支已有空值保护，会降级提示而不是崩溃。
 function buildMenuOptions() {
+    const ServerManager = load('./server');
+    const Installer = load('./installer');
+    const ModManager = load('./mod_manager');
+    const SchemeManager = load('./scheme_manager');
+    const ThemeManager = load('./theme_manager');
+    const PackGenerator = load('./pack_generator');
+    const LogHandler = load('./log_handler');
     return {
-        serverManager: new ServerManager(),
-        installer: new Installer(),
-        modManager: new ModManager(),
-        schemeManager: new SchemeManager(),
-        themeManager: new ThemeManager(),
-        packGenerator: new PackGenerator(),
-        logHandler: new LogHandler(),
+        serverManager: ServerManager ? new ServerManager() : null,
+        installer: Installer ? new Installer() : null,
+        modManager: ModManager ? new ModManager() : null,
+        schemeManager: SchemeManager ? new SchemeManager() : null,
+        themeManager: ThemeManager ? new ThemeManager() : null,
+        packGenerator: PackGenerator ? new PackGenerator() : null,
+        logHandler: LogHandler ? new LogHandler() : null,
         config,
         utils
     };
@@ -782,7 +919,7 @@ program
         const parts = Array.isArray(cmd) ? cmd.filter(Boolean) : [];
         if (parts.length) {
             // 带参数：执行单条长命令后退出（不进入 REPL）
-            logger.impt(`执行长命令: ${parts.join(' ')}`);
+            logger()?.impt(`执行长命令: ${parts.join(' ')}`);
             try {
                 program.exitOverride();
                 await program.parseAsync(['node', 'cli.js', ...parts]);
@@ -808,7 +945,8 @@ configModsCmd
     .description('列出 config/ 下所有配置文件')
     .option('--format <ext>', '过滤格式 (json/toml/yaml/cfg/properties)')
     .action((options) => {
-        const configEditor = require('./config_editor');
+        const configEditor = load('./config_editor');
+        if (!configEditor) return;
         const serverDir = utils.getServerDir();
         const files = configEditor.getConfigFiles(serverDir, options.format);
 
@@ -828,7 +966,8 @@ configModsCmd
     .command('view <file>')
     .description('查看指定配置文件内容')
     .action((file) => {
-        const configEditor = require('./config_editor');
+        const configEditor = load('./config_editor');
+        if (!configEditor) return;
         const serverDir = utils.getServerDir();
         const configDir = path.join(serverDir, 'config');
 
@@ -868,7 +1007,8 @@ configModsCmd
     .command('get <file> <key>')
     .description('读取配置文件中的嵌套键值（点号分隔，如 general.enable）')
     .action((file, key) => {
-        const configEditor = require('./config_editor');
+        const configEditor = load('./config_editor');
+        if (!configEditor) return;
         const serverDir = utils.getServerDir();
         const configDir = path.join(serverDir, 'config');
         let filePath = path.join(configDir, file);
@@ -894,7 +1034,8 @@ configModsCmd
     .command('set <file> <key> <value>')
     .description('设置配置文件中的嵌套键值（自动备份）')
     .action((file, key, value) => {
-        const configEditor = require('./config_editor');
+        const configEditor = load('./config_editor');
+        if (!configEditor) return;
         const serverDir = utils.getServerDir();
         const configDir = path.join(serverDir, 'config');
         let filePath = path.join(configDir, file);
@@ -923,7 +1064,7 @@ configCmd
     .command('server-list')
     .description('分类列出所有 server.properties 属性')
     .action(() => {
-        const ServerProperties = require('./config').ServerProperties;
+        const ServerProperties = config.ServerProperties;
         const props = new ServerProperties(utils.getServerDir());
         props.listAll();
     });
@@ -932,7 +1073,7 @@ configCmd
     .command('server-quick')
     .description('server.properties 快速设置向导')
     .action(async () => {
-        const ServerProperties = require('./config').ServerProperties;
+        const ServerProperties = config.ServerProperties;
         const props = new ServerProperties(utils.getServerDir());
         await props.quickSet();
     });
@@ -941,7 +1082,7 @@ configCmd
     .command('server-reset <key>')
     .description('重置 server.properties 属性为默认值')
     .action((key) => {
-        const ServerProperties = require('./config').ServerProperties;
+        const ServerProperties = config.ServerProperties;
         const props = new ServerProperties(utils.getServerDir());
         const result = props.reset(key);
         console.log(`✅ ${result.key} 已重置为 ${result.value}`);
@@ -958,14 +1099,14 @@ let _wowCmdLine = '';
 program.hook('preAction', (thisCmd, actionCmd) => {
     if (!_wowCmdStartLogged) {
         _wowCmdLine = process.argv.slice(2).join(' ').trim() || '(无参数)';
-        logger.impt(`用户执行指令: wow ${_wowCmdLine}`);
+        logger()?.impt(`用户执行指令: wow ${_wowCmdLine}`);
         _wowCmdStartLogged = true;
         _wowCmdResolved = false;
     }
 });
 program.hook('postAction', () => {
     if (!_wowCmdResolved) {
-        logger.info(`指令执行完成: wow ${_wowCmdLine}`);
+        logger()?.info(`指令执行完成: wow ${_wowCmdLine}`);
         _wowCmdResolved = true;
     }
 });
@@ -977,7 +1118,7 @@ async function startRepl() {
     const readline = require('readline');
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout, prompt: 'wow> ' });
     console.log('Wow~ 已进入交互模式（输入指令，无需 wow 前缀；exit / quit 退出）');
-    logger.impt('进入交互式 REPL 模式');
+    logger()?.impt('进入交互式 REPL 模式');
     rl.prompt();
     rl.on('line', async (line) => {
         const input = line.trim();
@@ -1017,7 +1158,7 @@ async function startRepl() {
     });
     rl.on('SIGINT', () => { rl.close(); });
     rl.on('close', () => {
-        logger.info('退出交互式 REPL 模式');
+        logger()?.info('退出交互式 REPL 模式');
         console.log('再见~');
         process.exit(0);
     });
@@ -1027,13 +1168,14 @@ async function startRepl() {
 // 长命令 REPL 已移至 `wow L`（见上方命令定义）。
 if (process.argv.length <= 2) {
     (async () => {
-        const { showMainMenu } = require('./interactive');
-        logger.impt('进入数字选择菜单（无参数启动）');
+        const interactive = load('./interactive');
+        if (!interactive) return;
+        logger()?.impt('进入数字选择菜单（无参数启动）');
         try {
-            await showMainMenu(buildMenuOptions());
+            await interactive.showMainMenu(buildMenuOptions());
         } catch (e) {
             console.error(`菜单启动失败: ${e.message}`);
-            logger.erro(`菜单启动失败: ${e.message}`);
+            logger()?.erro(`菜单启动失败: ${e.message}`);
         }
     })();
 } else {

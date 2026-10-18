@@ -40,7 +40,7 @@
 
 ```bash
 # 解压到任意目录
-unzip wow-3.5.8.zip
+unzip wow-3.5.9.zip
 cd wow
 ```
 

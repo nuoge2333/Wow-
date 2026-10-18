@@ -63,6 +63,80 @@
 
 ---
 
+## [3.5.9-26.3h] — 2026-10-18
+
+> 主题：**cli.js 懒加载重构 —— 启动更快、单模块损坏不再拖垮全局、核心帮助极简**。
+> 顶部只静态引用 config / utils，其余模块全部移入各自 action 内动态 require。
+
+### ⚡ 重构：cli.js 模块懒加载 + 故障隔离
+
+原来 cli.js 顶部静态引用 12 个项目模块（server / installer / mod_manager /
+scheme_manager / theme_manager / jre_manager / pack_generator / log_handler /
+mailer / web_service / terracotta / log），带来两个问题：
+
+- **启动慢**：哪怕只是 `wow set` 改个配置，也要把 express、陶瓦、整合包生成器
+  全部加载一遍
+- **一损俱损**：任何一个模块语法错误或依赖缺失，顶部 require 直接抛异常，
+  整个 CLI 进程起不来，连 `--help` 都打不出来
+
+现在顶部只保留 `config` / `utils`（外加 Node 内置与 commander），其余模块在
+各自的 action 回调里经 `load()` 动态加载：
+
+```js
+function load(modulePath) {
+    try {
+        return require(modulePath);
+    } catch (e) {
+        console.error(`❌ 模块加载失败 [${modulePath}]: ${e.message}`);
+        return null;
+    }
+}
+```
+
+- 单个模块加载失败**只报错当前命令**并返回 null，由调用方降级——其他命令照常可用
+  （实测：破坏 log_handler 后 `wow logs report` 报模块错误，`wow scheme list`、
+  `--help` 均正常，进程不退出）
+- `interactive.js` 各菜单分支原本就有空值保护，`buildMenuOptions` 对加载失败的
+  管理器传 null，菜单自动降级提示而不是崩溃
+- `lan host` 保留原有退出契约：模块损坏时报错并以 exit 1 退出
+- 事件日志模块同样懒加载：损坏时仅失去日志能力并告警，不阻断启动；
+  全局错误钩子仍尽早安装
+- 顺带清掉了从未使用的 `jre_manager` 死引用；`down` 的 axios / progress、
+  `config server` 系列的行内 require 也统一走 `load()`
+
+### 🧹 帮助菜单极简：非核心命令 `_hidden`
+
+`wow --help` 原来列出 14 个顶层命令。现按「核心工作流」只保留 8 个：
+
+| 处置 | 命令 |
+|------|------|
+| 保留可见 | `init` / `server` / `scheme` / `mod` / `web` / `lan` / `config` / `L` |
+| 改为隐藏 | `set` / `down` / `pack` / `logs` / `mail` / `theme`（`install` 原本已隐藏）|
+
+隐藏仅影响 `--help` 展示，命令本身全部照常可用；完整命令清单见 `docs/COMMANDS.md`。
+
+### 🧪 测试
+
+`interactive_menu.test.js` 新增 8 项源码级断言（32 → 40 项）：
+
+- 顶层除 config/utils 外无项目模块静态 require
+- `load()` 辅助函数以 try/catch 包裹 require 并降级返回 null
+- log 模块懒加载（`getLog` / `logger` 访问器）
+- 7 个非核心命令已 `_hidden`，且 mail/theme/pack/logs 定义后即设置
+- 核心命令保持注册；server 全部子命令 action 均经 `load()`
+- `buildMenuOptions` 各管理器懒加载且失败降级为 null
+
+全套测试 **13 个文件 / 425 项全部通过**，`core/wow.yaml` 与 `scheme/` 无污染。
+
+### ⬆️ 升级须知
+
+- **命令用法零变化**：所有命令（含隐藏的）行为与之前完全一致，只是 `--help` 变短了。
+- 写死 `wow m` 的脚本仍需按 V3.5.8 迁移（与本版无关，只是再次提醒）。
+- 若曾依赖「某个模块损坏时全局报错退出」的行为做监控，现在会变成只有对应命令报错，
+  告警规则可能需要相应调整。
+
+---
+
 ## [3.5.8-26.3g] — 2026-10-17
 
 > 主题：**修复 Forge 类型安装后核心路径找错**。

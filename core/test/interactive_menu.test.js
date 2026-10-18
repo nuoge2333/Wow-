@@ -1,8 +1,9 @@
 /**
- * V3.5.7 菜单改造 + V3.5.8 启动方式调整 静态校验
+ * V3.5.7 菜单改造 + V3.5.8 启动方式调整 + V3.5.9 懒加载重构 静态校验
  *
  * 背景：interactive.js 的菜单分发依赖 readline + 真实网络/文件副作用，难以端到端跑。
- * 这里用源码级断言，确保本次改造（菜单 2 = 新建方案、菜单 13 重编号）不会被后续改动无声破坏。
+ * 这里用源码级断言，确保本次改造（菜单 2 = 新建方案、菜单 13 重编号、
+ * cli.js 懒加载与非核心命令隐藏）不会被后续改动无声破坏。
  * 运行：cd core && node test/interactive_menu.test.js
  */
 const fs = require('fs');
@@ -18,7 +19,7 @@ function check(title, fn) {
     catch (e) { console.log(`  ❌ ${title}\n     ${e.message}`); failed++; }
 }
 
-console.log('\n菜单改造校验 (V3.5.7 + V3.5.8)\n');
+console.log('\n菜单改造校验 (V3.5.7 + V3.5.8 + V3.5.9)\n');
 
 // 提取顶层 case 体，便于精确断言
 // 注意：case 体内部有嵌套块，简单用 `^            }` 会在第一个嵌套 } 处提前截断，
@@ -150,6 +151,74 @@ console.log('\n— V3.5.8 启动方式（cli.js）—');
     });
     check('cli.js 提供 buildMenuOptions 供菜单使用', () => {
         assert.ok(/function buildMenuOptions\(\)/.test(cli));
+    });
+}
+
+// ─────────────────────────────────────────────
+// V3.5.9：cli.js 懒加载重构 —— 顶部仅 config/utils 静态引用，
+// 其余模块 action 内动态 require 并经 load() 降级；非核心命令 _hidden
+console.log('\n— V3.5.9 cli.js 懒加载重构 —');
+{
+    const CLI = path.join(__dirname, '..', 'src', 'cli.js');
+    const cli = fs.readFileSync(CLI, 'utf8');
+
+    check('顶层除 config/utils 外无项目模块静态 require', () => {
+        // 只匹配列头（顶层语句）的静态 require；函数体内的动态 require 不算
+        const staticRequires = cli.match(/^const\s+(?:\w+|\{[^}]*\})\s*=\s*require\('\.\/[^']+'\)/gm) || [];
+        for (const line of staticRequires) {
+            const mod = line.match(/require\('\.\/([^']+)'\)/)[1];
+            assert.ok(mod === 'config' || mod === 'utils', `存在多余的顶层静态引用: ${line.trim()}`);
+        }
+    });
+    check('提供 load() 懒加载辅助函数（try/catch 包裹 require）', () => {
+        assert.ok(/function load\(modulePath\)/.test(cli), '未找到 load() 定义');
+        assert.ok(
+            /try\s*\{\s*return require\(modulePath\);[\s\S]*?catch[\s\S]*?return null;/.test(cli),
+            'load() 未按要求包裹 try/catch 并降级返回 null'
+        );
+    });
+    check('log 模块改懒加载（getLog / logger 访问器）', () => {
+        assert.ok(/function getLog\(\)/.test(cli), '未找到 getLog()');
+        assert.ok(/function logger\(\)/.test(cli), '未找到 logger() 访问器');
+    });
+    check('7 个非核心命令已 _hidden（set/down/pack/logs/mail/theme/install）', () => {
+        const count = (cli.match(/_hidden = true/g) || []).length;
+        assert.ok(count >= 7, `_hidden 仅 ${count} 处，预期 ≥ 7`);
+    });
+    check('mail / theme / pack / logs 定义后即设 _hidden', () => {
+        for (const name of ['mail', 'theme', 'pack', 'logs']) {
+            assert.ok(
+                new RegExp(`const ${name}Cmd = program\\.command\\('${name}'\\)[\\s\\S]{0,120}?${name}Cmd\\._hidden = true`).test(cli),
+                `${name} 未隐藏`
+            );
+        }
+    });
+    check('核心命令保持注册（init/server/scheme/mod/web/lan/config/L）', () => {
+        for (const name of ['init', 'server', 'scheme', 'mod', 'web', 'lan', 'config', 'L']) {
+            const re = name === 'L'
+                ? /\.command\('L \[cmd\.\.\.\]'\)/
+                : new RegExp(`\\.command\\('${name}[ <']`);
+            assert.ok(re.test(cli), `核心命令 ${name} 未注册`);
+        }
+    });
+    check('server 全部子命令 action 均经 load() 懒加载', () => {
+        const serverBlock = cli.slice(
+            cli.indexOf("const serverCmd = program.command('server')"),
+            cli.indexOf('// ==================== install')
+        );
+        const actionCount = (serverBlock.match(/\.action\(/g) || []).length;
+        const loadCount = (serverBlock.match(/load\('\.\/server'\)/g) || []).length;
+        assert.strictEqual(loadCount, actionCount,
+            `server 的 ${actionCount} 个 action 中只有 ${loadCount} 个经 load()`);
+    });
+    check('buildMenuOptions 各管理器懒加载且失败降级为 null', () => {
+        const m = cli.match(/function buildMenuOptions\(\)[\s\S]*?\n\}/);
+        assert.ok(m, '未找到 buildMenuOptions 函数体');
+        const body = m[0];
+        for (const mod of ['server', 'installer', 'mod_manager', 'scheme_manager', 'theme_manager', 'pack_generator', 'log_handler']) {
+            assert.ok(body.includes(`load('./${mod}')`), `buildMenuOptions 未懒加载 ${mod}`);
+        }
+        assert.ok(/: null/.test(body), 'buildMenuOptions 未对加载失败降级为 null');
     });
 }
 
