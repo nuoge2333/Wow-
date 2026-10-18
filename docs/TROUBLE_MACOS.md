@@ -3,7 +3,7 @@
  适用于 macOS 10.15 (Catalina) 及以上版本
  包括 Intel 和 Apple Silicon (M1M2M3) 芯片
 
-> 📌 **命令引导词**：文档中的 `wow` 是简写 —— macOS / Linux 下实际写 `./wow.sh`（Windows 为 `wow.bat`）。例如 `wow mod install` 即 `./wow.sh mod install`。
+> 📌 **命令引导词**：文档中的 `wow` 是简写 —— macOS / Linux 下实际写 `./wow.sh`（Windows 为 `wow.bat`）。例如 `wow server start` 即 `./wow.sh server start`。
 
 ---
 
@@ -313,7 +313,7 @@ sudo usrbinupdate-certificates
 解决：
 - 检查网络代理设置
 - 尝试使用 Web 面板的搜索功能
-- 手动下载模组后使用 `wow mod install` 安装
+- 手动下载模组后，进入数字菜单第 10 项「模组/插件搜索下载」→「从本地安装模组」
 
 ---
 

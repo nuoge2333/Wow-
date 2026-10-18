@@ -16,7 +16,7 @@
 
 ```bash
 # 解压到任意目录
-unzip wow-3.0.0.zip
+unzip wow-3.5.8.zip
 cd wow
 ```
 
@@ -36,6 +36,10 @@ chmod +x wow.sh
 ```
 
 首次运行会询问是否下载 Node.js，输入 `y` 确认。
+
+> 💡 **不带参数直接运行启动脚本即进入数字选择菜单**（V3.5.8 起）。
+> 菜单内可完成启动服务器、新建方案、管理模组等大部分日常操作；
+> 熟悉命令后可用 `wow L` 进入长命令模式。
 
 ---
 
@@ -183,26 +187,37 @@ wow web start --port 8080 --host 0.0.0.0
 
 Web 面板提供以下功能：
 - 📊 仪表盘：服务器状态、控制台、玩家统计
-- 📦 方案管理：创建/切换/删除/拉取/瘦身
+- 📦 方案管理：查看方案列表（创建/切换/删除请在终端或菜单执行）
 - 📥 下载管理：搜索 CurseForge/Modrinth 模组，下载核心
 - 🛠️ 工具：AI 日志分析、压缩包处理、邮件设置
-- ⚙️ 设置：修改 wow.yaml、管理插件/主题
+- ⚙️ 设置：修改 wow.yaml、管理主题
 
 ---
 
 ## 8. 安装模组/插件
 
+模组没有 `mod install` 命令，安装途径有二：
+
+**方式一：数字菜单（推荐）**
+
+```bash
+wow            # 进入数字选择菜单
+# 选择第 10 项「模组/插件搜索下载」
+#   1. 从 URL 下载模组
+#   2. 从本地安装模组
+```
+
+**方式二：Web 面板**（`wow web start` 后访问 `http://localhost:8080`）
+
+在下载管理页搜索 Modrinth / CurseForge，或上传本地 jar。
+
+装好后的日常管理命令：
+
 ```bash
 # 列出已安装模组
 wow mod list
 
-# 安装模组（URL）
-wow mod install https://example.com/JEI.jar
-
-# 安装模组（本地文件）
-wow mod install ./JEI.jar
-
-# 启用/禁用模组
+# 启用/禁用模组（不删除文件，添加 DISABLED_ 前缀）
 wow mod toggle JEI
 
 # 卸载模组
@@ -238,8 +253,8 @@ wow init
 # 2. 创建并激活方案（自动下载 Forge 核心）
 wow scheme create modded -t forge -v 1.20.1
 
-# 3. 安装模组（通过 Web 面板或 CLI）
-wow mod install https://example.com/JEI.jar
+# 3. 安装模组：进入数字菜单第 10 项，或用 Web 面板搜索/上传
+wow            # 菜单 → 10. 模组/插件搜索下载
 
 # 4. 启动服务器
 wow server start --memory 6G
@@ -252,5 +267,5 @@ wow server start --memory 6G
 - 📖 [完整命令参考](COMMANDS.md)
 - 📦 [方案管理详解](SCHEMES.md)
 - 🎨 [主题包开发指南](THEMES.md)
-- 🔌 [插件开发指南](WOW-PLUGINS.md)
-- 🛠️ [故障排除](TROUBLE_*.md)
+- 🔌 [插件开发指南](WOW-PLUGINS.md)（插件系统尚未实装，详见文首说明）
+- 🛠️ [故障排除](TROUBLE_WINDOWS.md)（[macOS](TROUBLE_MACOS.md) / [Debian·Ubuntu](TROUBLE_DEBIAN.md) / [Arch](TROUBLE_ARCH.md) / [安卓 Termux](TROUBLE_ANDROID%28Termux%29.md)）

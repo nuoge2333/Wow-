@@ -1,5 +1,12 @@
 # 🔌 wow 插件开发指南
 
+> ⚠️ **插件系统尚未实装（规划中）**
+> 本文是插件系统的**设计文档与开发指南**。当前版本中：
+> `plugin install` 只是开发中的占位（执行后提示「功能开发中」），
+> CLI 没有任何插件加载逻辑，`wow plugin ...` 命令不存在，
+> Web 面板仅提供只读的插件列表（`GET /api/plugins`）。
+> 在插件系统正式发布前，请勿依据本文制作面向他人分发的插件。
+
 > wow 插件用于扩展 wow 工具本身的命令，不涉及 Minecraft 服务端插件。
 
 > 📌 **命令引导词**：文档中的 `wow` 是简写 —— Linux / macOS 请写 `./wow.sh`，Windows 请写 `wow.bat`。例如 `wow hello` 在 Linux 下即 `./wow.sh hello`。
@@ -250,32 +257,28 @@ function myHandler(args, context) {
 zip -r my-plugin.zip my-plugin-folder/
 ```
 
-### 安装
+### 安装（尚未开放）
 
 ```bash
 wow plugin install ./my-plugin.zip
 ```
 
-安装后会自动解压到 `wow-plugins/my-plugin/`，下次启动 CLI 时自动加载。
+> ⚠️ 上述命令**当前不可用**。`PluginManager.install()` 在代码中仍是
+> 「功能开发中」的占位实现，CLI 也未注册 `plugin` 命令组。
+> 发布前会提供：安装后自动解压到 `wow-plugins/my-plugin/`，下次启动 CLI 时自动加载。
 
-### 管理
+### 管理（部分可用）
 
 ```bash
-# 列出已安装插件
-wow plugin list
-
-# 查看插件详情
-wow plugin info my-plugin
-
-# 卸载插件
-wow plugin remove my-plugin
+# 列出已安装插件 —— Web 面板 GET /api/plugins 已可实现（只读）
+# 查看插件详情 / 卸载插件 —— PluginManager 已有实现，但未暴露 CLI 命令
 ```
 
 ---
 
-## 加载机制
+## 加载机制（设计目标）
 
-CLI 启动时，wow 会：
+插件系统发布后，CLI 启动时将：
 
 1. 扫描 `wow-plugins/` 目录
 2. 查找包含 `plugin.json` 和 `index.js` 的子目录
@@ -283,6 +286,8 @@ CLI 启动时，wow 会：
 4. 加载 `index.js`，绑定处理函数
 
 **加载顺序**：按目录名排序。插件间的执行顺序不可依赖。
+
+> ⚠️ 以上为设计目标，当前 CLI **尚未实现**任何插件加载逻辑。
 
 ---
 
@@ -373,6 +378,7 @@ $ wow hello -n Steve -c 3
 
 ## 发布与分享
 
-将你的插件 ZIP 文件分享给其他 wow 用户，他们可以通过 `wow plugin install` 安装。
+插件系统正式发布后，你可以把插件 ZIP 分享给其他 wow 用户，通过
+`wow plugin install` 安装。**在此之前，插件无法被其他人使用。**
 
 **祝你开发出有用的插件！🔌**

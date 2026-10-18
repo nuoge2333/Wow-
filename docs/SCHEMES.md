@@ -65,7 +65,7 @@
 创建方案
     │
     ▼
-minimal ──(scheme pull)──▶ full
+minimal ──(切换方案时自动补齐)──▶ full
     │                         │
     │                         │
     └──(auto_scheme)──────────┘
@@ -113,14 +113,16 @@ ref_count:
 | 设置 | 行为 |
 |------|------|
 | `auto_scheme: true` | ✅ 切换时自动补齐目标方案，自动瘦身旧方案<br>✅ 自动清理未被引用的 pool 资源 |
-| `auto_scheme: false` | ⚠️ 切换时仅更新链接，不操作资源<br>⚠️ 需要手动执行 `pull`/`prune` |
+| `auto_scheme: false` | ⚠️ 切换时仅更新当前方案指针，不操作资源<br>⚠️ 需要自行手动复制/删除资源文件 |
 
 ```yaml
 # wow.yaml
 auto_scheme: true   # 默认启用
 ```
 
-> 执行 `scheme pull` 或 `scheme prune` 时，`auto_scheme` 自动设为 `false`，进入手动管理模式。
+> 💡 补齐（pull）与瘦身（prune）目前是 `scheme switch` 的内部行为，由 `auto_scheme`
+> 自动触发，**没有对应的手动命令**。把 `auto_scheme` 设为 `false` 后，切换方案不再
+> 自动补齐/瘦身，资源需要你自己管理。
 
 ---
 
@@ -161,84 +163,25 @@ wow scheme switch survival
 
 ---
 
-### `scheme pull <name>`
+### 补齐与瘦身（`scheme switch` 的内部行为）
 
-强制将方案补齐为完整实例（`full` 状态）：
-
-```bash
-wow scheme pull survival
-```
-
-执行后 `auto_scheme` 自动设为 `false`。
-
----
-
-### `scheme prune <name>`
-
-强制瘦身方案（转为 `minimal` 状态）：
+补齐（pull）与瘦身（prune）没有独立命令，它们在 `scheme switch` 时按
+`auto_scheme` 设置自动执行：
 
 ```bash
-wow scheme prune survival
+# auto_scheme: true（默认）时，切换即自动完成补齐 + 瘦身
+wow scheme switch survival
+
+# 查看方案详情（含状态 minimal/partial/full）
+wow scheme info survival
 ```
 
-执行后 `auto_scheme` 自动设为 `false`。
+`scheme info` 的输出包含状态、版本、加载器、核心与资源引用信息，
+相当于早期文档中的 `scheme status`。
 
----
-
-### `scheme status [name]`
-
-查看方案的详细状态：
-
-```bash
-wow scheme status survival
-```
-
-**输出示例：**
-```
-📊 方案状态: survival
-============================================================
-  状态: minimal
-  版本: 1.20.1
-  加载器: vanilla
-  核心: minecraft_server.1.20.1.jar (🔄 共享)
-  模组: 0 个 (共享: 0, 独有: 0)
-  插件: 0 个 (共享: 0, 独有: 0)
-  世界: ✅ 存在
-  独有资源: 0 个
-============================================================
-```
-
----
-
-### `pool stats`
-
-查看资源池统计信息：
-
-```bash
-wow pool stats
-```
-
-**输出示例：**
-```
-📊 Pool 统计:
-  总资源数: 45
-  被引用资源数: 38
-  未引用资源数: 7
-  按类型分布:
-    cores: 5
-    mods: 28
-    plugins: 12
-```
-
----
-
-### `pool prune`
-
-手动清理未被引用的 pool 资源：
-
-```bash
-wow pool prune
-```
+> 📌 **尚未提供**：手动的 `scheme pull` / `scheme prune` / `scheme status` 命令，
+> 以及 `pool stats` / `pool prune`。资源统计可查看 `core/pool/index.yaml`，
+> 未引用资源在 `auto_scheme: true` 时会自动清理。
 
 ---
 
@@ -247,11 +190,13 @@ wow pool prune
 ```
 scheme/{scheme_name}/
 ├── scheme.yaml              # 方案元数据 (状态、资源引用)
-├── <核心>.jar                # 核心文件 (如 paper-1.20.1.jar，或共享自 pool)
+├── <核心>.jar                # 核心文件 (如 paper-1.20.1.jar；或共享自 pool)
 ├── mods/                    # 模组文件 (或指向 pool)
 │   └── JEI.jar
 ├── plugins/                 # 插件文件 (或指向 pool)
 │   └── Essentials.jar
+├── libraries/               # Forge / NeoForge 的核心与库文件位于此处 (深层)
+│   └── net/minecraftforge/forge/1.20.1-47.2.0/
 ├── world/                   # 存档 (方案独有)
 │   ├── region/
 │   └── level.dat
@@ -265,6 +210,9 @@ scheme/{scheme_name}/
 └── eula.txt                 # EULA (方案独有)
 ```
 
+> Forge / NeoForge 方案的核心在 `libraries/` 深层（1.21+ 甚至只有 args 文件、
+> 没有独立核心 jar），`scheme.yaml` 的 `resources.core.file` 记录的是**相对路径**。
+
 ---
 
 ## 方案元数据 (`scheme.yaml`)
@@ -272,13 +220,20 @@ scheme/{scheme_name}/
 ```yaml
 name: survival
 version: 1.20.1
-engine: vanilla
+loader: vanilla
+type: vanilla
+build: null
 state: minimal
 created_at: 2026-07-22T10:00:00.000Z
 updated_at: 2026-07-22T14:30:00.000Z
+compatibility:
+  java: 17
+  loaders: [vanilla]
 
 resources:
   core:
+    # V3.5.8 起记录「相对方案根目录」的完整路径（Forge 核心在 libraries/ 深层）；
+    # 老方案这里是纯文件名，读取端兼容两种格式
     file: minecraft_server.1.20.1.jar
     hash: abc123def456...
     in_pool: true
@@ -287,6 +242,9 @@ resources:
   plugins: []
 
 unique_resources: []
+world:
+  exists: false
+  size: 0
 ```
 
 ---
@@ -299,35 +257,32 @@ unique_resources: []
 # 1. 创建第一个方案 (所有资源未命中 pool → full)
 wow scheme create server_a -v 1.20.1 -t forge
 wow scheme switch server_a
-wow mod install https://example.com/JEI.jar
-wow mod install https://example.com/Create.jar
 
-# 2. 创建第二个方案 (部分资源命中 pool → partial)
+# 2. 安装模组：进入数字菜单第 10 项「模组/插件搜索下载」，
+#    或用 Web 面板上传（装进当前方案的 mods/ 并计入 pool）
+#    URL 下载 / 本地文件两种方式都支持
+
+# 3. 创建第二个方案 (部分资源命中 pool → partial)
 wow scheme create server_b -v 1.20.1 -t forge
 wow scheme switch server_b
-# JEI.jar 从 pool 自动复制 (无需重新下载)
-# Create.jar 从 pool 自动复制
-wow mod install https://example.com/WorldEdit.jar  # 新增，加入 pool
+# JEI.jar 等已入 pool 的模组会随切换自动补齐，无需重新下载
 ```
 
-### 手动管理方案
+### 手动管理资源
+
+`auto_scheme: false` 时，切换方案只更新指针，不自动补齐/瘦身：
 
 ```bash
-# 1. 切换方案 (auto_scheme: false)
+# 1. 关闭自动管理
 wow set auto_scheme false
+
+# 2. 切换方案（仅更新指针）
 wow scheme switch survival
 
-# 2. 手动补齐
-wow scheme pull survival
-
-# 3. 手动瘦身
-wow scheme prune survival
-
-# 4. 查看 pool 状态
-wow pool stats
-
-# 5. 清理未引用资源
-wow pool prune
+# 3. 资源需自行管理：
+#    补齐 = 从 core/pool/ 手动复制所需文件到 scheme/<方案名>/
+#    瘦身 = 手动删除方案目录中可共享的文件
+#    未引用资源清理 = 手动删除 core/pool/ 中的对应文件
 ```
 
 ---
@@ -336,17 +291,20 @@ wow pool prune
 
 ### 打包方案
 
-```bash
-wow scheme export survival
-# 生成 survival.zip (包含方案目录 + 所需 pool 资源)
-```
-
-### 导入方案
+直接打包 `scheme/<方案名>/` 目录即可完整迁移一个方案
+（核心、模组、配置、存档都在里面）：
 
 ```bash
-wow scheme import survival.zip
-# 自动解析并创建方案
+# 打包方案目录
+tar -czf survival.tar.gz scheme/survival/
+
+# 或使用 zip
+zip -r survival.zip scheme/survival/
 ```
+
+> 📌 `scheme export` / `scheme import` 命令**尚未提供**。
+> 若方案处于 `minimal` 状态（资源在 pool 中），迁移时需一并打包
+> `core/pool/`，或先切换到该方案让其自动补齐为 `full` 再打包。
 
 ---
 
@@ -357,5 +315,5 @@ wow scheme import survival.zip
 | 创建 3 个 Forge 1.20.1 服务器 | 3 份 Forge 核心 (约 1.5GB) | 1 份 Forge 核心 (约 500MB) |
 | 启动速度 | 直接启动 (快) | 补齐后启动 (接近快) |
 | 硬盘占用 | 大 | 小 |
-| 迁移 | 直接打包 | 使用 `scheme export` |
+| 迁移 | 直接打包 | 打包 `scheme/<方案名>/` 目录 |
 | 添加新模组 | 每个实例单独添加 | 一个实例添加，其他可同步 |

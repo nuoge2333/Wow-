@@ -1,6 +1,6 @@
 # 📋 完整命令参考
 
-> wow~ 所有命令按类别分组，共计 51 个命令
+> wow~ 所有命令按类别分组，共计 49 个命令
 
 > 📌 **命令引导词说明（重要）**
 > 本文档中的命令有两种写法：带前缀的（`wow server start`）与只写主干的（`### server start`）。无论哪种，**实际执行时都要加上启动脚本前缀**：
@@ -26,7 +26,8 @@
 > - 输入切换指令会**清屏并显示该视图最后 10 条日志**。
 > - 输入「不属于当前视图」的指令会提示「不支持」并引导切到对应控制台（例：在 Minecraft 视图输入 `lan host` → 提示先输入 `:lan`）。
 > - 元指令：`:log` 重新显示当前视图最后 10 条日志，`:help` 显示控制台帮助。
-> - **不可用**：会修改运行中的方案文件的指令（`scheme create`、各种 `edit`/`install`/`switch` 等）、交互菜单 `M`、`server start/restart`、`web start`、`logs tail` —— 这些会提示「请另开终端执行」。其余无法识别的输入一律当作 MC 指令转发给服务端。
+> - **不可用**：会修改运行中的方案文件的指令（`scheme create`、各种 `install`/`switch` 等）、长命令 REPL（`wow L`，会抢占 stdin）、`server start/restart`、`web start`、`logs tail` —— 这些会提示「请另开终端执行」。其余无法识别的输入一律当作 MC 指令转发给服务端。
+- **已移除**：旧的交互菜单命令 `wow m` / `M` 已取消。直接运行 `wow`（无参数）即进入数字选择菜单；在控制台输入 `m` 会收到对应指引。
 
 ---
 
@@ -121,7 +122,7 @@ wow server status
 
 ---
 
-## 二、方案管理 (12 个)
+## 二、方案管理 (5 个)
 
 方案是独立的 Minecraft 服务器实例，支持模板模式（自动资源共享）。
 
@@ -136,9 +137,8 @@ wow scheme create <name> [options]
 | 选项 | 说明 |
 |------|------|
 | `-v, --version <version>` | Minecraft 版本 (默认: 1.20.1) |
-| `-t, --type <type>` | 核心类型/加载器: vanilla/forge/fabric/neoforge/quilt/mohist/catserver/paper，同时决定加载器（已并入原 `--loader`） |
-| `-b, --build <number>` | 构建号（仅 Mohist 等需要） |
-| `--other-type <name>` | 自定义核心名称（当 type=other 时） |
+| `-t, --type <type>` | 核心类型/加载器: vanilla/forge/fabric/neoforge/quilt/paper/purpur/leaves/mohist/catserver（spigot/bukkit 暂不支持），同时决定加载器（已并入原 `--loader`） |
+| `-b, --build <id>` | 构建号（仅 Mohist 等需要） |
 
 > 💡 V3.4.1 起 `--loader` 已移除，加载器并入 `--type`（二者取值一致，如 `-t forge` 即 forge 核心 + forge 加载器）。
 
@@ -211,115 +211,6 @@ wow scheme info [name]
 
 ---
 
-### `scheme status [name]`
-
-查看方案状态（minimal/partial/full + 资源统计）。
-
-```bash
-wow scheme status [name]
-```
-
-**输出示例：**
-```
-📊 方案状态: survival
-============================================================
-  状态: minimal
-  版本: 1.20.1
-  加载器: forge
-  核心: forge-1.20.1.jar (🔄 共享)
-  模组: 12 个 (共享: 10, 独有: 2)
-  插件: 3 个 (共享: 3, 独有: 0)
-  世界: ✅ 存在
-  独有资源: 2 个
-    - pool/mods/forge/1.20.1/CustomMod.jar
-============================================================
-```
-
----
-
-### `scheme edit <name>`
-
-修改方案元数据。
-
-```bash
-wow scheme edit <name> --key <key> --value <value>
-```
-
-| 选项 | 说明 |
-|------|------|
-| `--key <key>` | 要修改的字段名 |
-| `--value <value>` | 新值 |
-
-**示例：**
-```bash
-wow scheme edit survival --key version --value 1.21
-# 警告: 核心版本变更，已清空 mods 和 plugins
-```
-
----
-
-### `scheme pull <name>`
-
-从 pool 拉取资源，强制补齐为完整实例。
-
-```bash
-wow scheme pull <name>
-```
-
-执行后 `auto_scheme` 自动设为 `false`。
-
----
-
-### `scheme prune <name>`
-
-强制瘦身方案（转为最小实例）。
-
-```bash
-wow scheme prune <name>
-```
-
-执行后 `auto_scheme` 自动设为 `false`。
-
----
-
-### `scheme register <other-type> <eco-list>`
-
-注册未知来源核心（other 字段）。
-
-```bash
-wow scheme register <other-type> <eco-list>
-```
-
-| 参数 | 说明 |
-|------|------|
-| `<other-type>` | 自定义核心名称 |
-| `<eco-list>` | 兼容生态列表，用逗号分隔 |
-
-**示例：**
-```bash
-wow scheme register MyFork forge,bukkit,spigot
-```
-
----
-
-### `scheme export <name>`
-
-导出方案为整合包。
-
-```bash
-wow scheme export <name>
-```
-
----
-
-### `scheme import <file>`
-
-导入整合包为方案。
-
-```bash
-wow scheme import <file>
-```
-
 ---
 
 ## 三、模组管理 (4 个)
@@ -335,7 +226,7 @@ wow mod list [options]
 | 选项 | 说明 |
 |------|------|
 | `--loader <loader>` | 过滤加载器 |
-| `--version <version>` | 过滤版本 |
+| `-v, --mc-version <version>` | 过滤版本 |
 
 ---
 
@@ -370,7 +261,7 @@ wow mod sync [options]
 | 选项 | 说明 |
 |------|------|
 | `--loader <loader>` | 加载器 (默认: forge) |
-| `--version <version>` | 版本 (默认: 1.20.1) |
+| `-v, --mc-version <version>` | 版本 (默认: 1.20.1) |
 
 ---
 
@@ -406,7 +297,7 @@ wow pack generate <name> [options]
 
 | 选项 | 说明 |
 |------|------|
-| `--version <version>` | Minecraft 版本 |
+| `-v, --mc-version <version>` | Minecraft 版本 |
 | `--loader <loader>` | 模组加载器 (forge/fabric) |
 | `--output <path>` | 输出目录 |
 
@@ -466,53 +357,7 @@ wow theme info <name>
 
 ---
 
-## 六、wow 插件管理 (4 个)
-
-> 注意：这是 wow 工具本身的插件（扩展命令），不是 Minecraft 服务端插件。
-
-### `plugin install <source>`
-
-安装 wow 插件（ZIP 文件路径或 URL）。
-
-```bash
-wow plugin install <source>
-```
-
-插件包必须包含 `plugin.json` 和 `index.js`。
-
----
-
-### `plugin list`
-
-列出已安装的 wow 插件。
-
-```bash
-wow plugin list
-```
-
----
-
-### `plugin remove <name>`
-
-卸载 wow 插件。
-
-```bash
-wow plugin remove <name>
-```
-
----
-
-### `plugin info <name>`
-
-查看插件详情。
-
-```bash
-wow plugin info <name>
-```
-
----
-
-## 七、Web 面板管理 (3 个)
+## 六、Web 面板管理 (3 个)
 
 ### `web start`
 
@@ -555,7 +400,7 @@ wow web status
 
 ---
 
-## 八、日志与 AI 分析 (3 个)
+## 七、日志与 AI 分析 (3 个)
 
 ### `logs tail`
 
@@ -595,7 +440,7 @@ wow logs report
 
 ---
 
-## 九、配置管理 (3 个)
+## 八、配置管理 (10 个)
 
 ### `config wow <key> [value]`
 
@@ -631,7 +476,77 @@ wow config white remove Steve
 
 ---
 
-## 十、邮件管理 (3 个)
+### `config mods list [options]`
+
+列出 `config/` 下所有模组配置文件。
+
+```bash
+wow config mods list
+```
+
+---
+
+### `config mods view <file>`
+
+查看指定配置文件内容。
+
+```bash
+wow config mods view jei.toml
+```
+
+---
+
+### `config mods get <file> <key>`
+
+读取配置文件中的嵌套键值（点号分隔）。
+
+```bash
+wow config mods get jei.toml general.enable
+```
+
+---
+
+### `config mods set <file> <key> <value>`
+
+设置配置文件中的嵌套键值（自动备份原文件）。
+
+```bash
+wow config mods set jei.toml general.enable true
+```
+
+---
+
+### `config server-list`
+
+分类列出所有 `server.properties` 属性及当前值。
+
+```bash
+wow config server-list
+```
+
+---
+
+### `config server-quick`
+
+`server.properties` 快速设置向导（交互式常用项）。
+
+```bash
+wow config server-quick
+```
+
+---
+
+### `config server-reset <key>`
+
+重置单个 `server.properties` 属性为默认值。
+
+```bash
+wow config server-reset motd
+```
+
+---
+
+## 九、邮件管理 (3 个)
 
 > 邮件功能有 15 分钟频率限制。
 
@@ -665,7 +580,61 @@ wow mail crash "测试崩溃消息"
 
 ---
 
-## 十一、工具与下载 (5 个)
+## 十、联机 / 内网穿透 (3 个)
+
+> 基于陶瓦 (Terracotta) 的联机方案，详见 [联机 / 内网穿透](LAN_TERRACOTTA.md)。
+
+### `lan host`
+
+我要当房主：开房让好友联机（自动下载并启动陶瓦）。
+
+```bash
+wow lan host [options]
+```
+
+### `lan stop`
+
+关闭联机房间（停止陶瓦）。
+
+```bash
+wow lan stop
+```
+
+### `lan status`
+
+查看联机房间状态 / 房间号。
+
+```bash
+wow lan status
+```
+
+---
+
+## 十一、长命令模式 (1 个)
+
+### `L [cmd...]`
+
+长命令模式（V3.5.8 起替代原 `wow m` 的长命令 REPL 定位）：
+
+| 用法 | 行为 |
+|------|------|
+| `wow L` | 进入交互式 REPL，逐条输入长命令（无需 `wow` 前缀，`exit` / `quit` 退出） |
+| `wow L server start` | 直接执行单条长命令后退出，适合脚本调用 |
+
+```bash
+# 交互式 REPL
+wow L
+
+# 单条执行
+wow L server status
+wow L scheme list
+```
+
+> ⚠️ REPL 会独占终端 stdin，**不能在开服控制台内使用**（控制台输入 `L` 会被拒绝并提示）。
+
+---
+
+## 十二、工具与下载 (3 个)
 
 ### `down <url>`
 
@@ -703,38 +672,6 @@ wow scheme create <方案名> -t <核心类型> -v <MC版本>
 
 ---
 
-### `pool stats`
-
-查看 pool 资源引用统计。
-
-```bash
-wow pool stats
-```
-
-**输出示例：**
-```
-📊 Pool 统计:
-  总资源数: 45
-  被引用资源数: 38
-  未引用资源数: 7
-  按类型分布:
-    cores: 5
-    mods: 28
-    plugins: 12
-```
-
----
-
-### `pool prune`
-
-手动清理未被引用的 pool 资源。
-
-```bash
-wow pool prune
-```
-
----
-
 ### `init`
 
 初始化环境（创建目录、检测 Java、生成默认配置）。
@@ -745,7 +682,7 @@ wow init
 
 ---
 
-## 十二、其他 (2 个)
+## 十三、其他 (2 个)
 
 ### `set <key> <value>`
 

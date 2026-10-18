@@ -25,7 +25,7 @@
 - 🔌 **模组与插件管理**：支持 Forge / Fabric / NeoForge / Quilt 模组，Bukkit / Spigot / Paper 插件
 - 📥 **整合包安装**：一键安装客户端整合包（含自动测试与不兼容模组清理）
 - 🎨 **主题包系统**：用户可完全替换 Web 界面，支持 ZIP 安装与切换
-- 🔌 **wow 插件系统**：通过 `plugin.json` + `index.js` 扩展新命令，无需修改核心代码
+- 🔌 **wow 插件系统**（规划中）：通过 `plugin.json` + `index.js` 扩展新命令，尚未实装
 - 🤖 **AI 日志分析**：对接 OpenAI/兼容 API，自动分析服务器错误并给出建议
 - 📧 **邮件通知**：登录验证码、崩溃报告、定时日志摘要（SMTP，15 分钟限流）
 - 🔐 **外置登录**：自动下载并注入 `authlib-injector`，支持 LittleSkin 等第三方认证
@@ -40,7 +40,7 @@
 
 ```bash
 # 解压到任意目录
-unzip wow-3.4.2.zip
+unzip wow-3.5.8.zip
 cd wow
 ```
 
@@ -95,20 +95,18 @@ wow web start
 | 类别 | 命令 |
 |------|------|
 | 数字选择菜单 | `wow`（无参数直接进入） |
-| 长命令模式 | `L [命令...]` |
+| 长命令模式 | `L [命令...]`（无参进 REPL，带参执行单条） |
 | 服务器管理 | `server start/stop/kill/restart/status` |
-| 方案管理 (模板模式) | `scheme create/list/switch/delete/info/status/edit/pull/prune/register` |
+| 方案管理 (模板模式) | `scheme create/list/switch/delete/info` |
 | 模组管理 | `mod remove/list/toggle/sync` |
 | 整合包 | `pack install/generate` |
 | 主题包 | `theme install/list/switch/delete/info` |
-| wow 插件 | `plugin install/list/remove/info` |
 | Web 面板 | `web start/stop/status` |
+| 联机 / 内网穿透 | `lan host/stop/status` |
 | 日志与 AI | `logs tail/analyze/report` |
-| 配置管理 | `config wow/server/white` |
-| 模组配置 (V3.1) | `config mods list/view/get/set` |
-| server.properties (V3.1) | `config server-list/server-quick/server-reset` |
+| 配置管理 | `config wow/server/white/mods/server-list/server-quick/server-reset` |
 | 邮件 | `mail test/send-code/crash` |
-| 工具 | `down/install/pool stats/prune` |
+| 工具 | `down/install` |
 
 > 完整命令参考请查看 [docs/COMMANDS.md](docs/COMMANDS.md)
 
@@ -145,7 +143,7 @@ wow/
 - [完整命令参考](docs/COMMANDS.md)
 - [方案管理详解 (模板模式)](docs/SCHEMES.md)
 - [主题包开发指南](docs/THEMES.md)
-- [插件开发指南](docs/WOW-PLUGINS.md)
+- [插件开发指南](docs/WOW-PLUGINS.md)（规划中，尚未实装）
 - [Web 面板使用说明](docs/WEB_PANEL.md)
 - [联机 / 内网穿透（陶瓦）](docs/LAN_TERRACOTTA.md)
 - [配置参考](docs/CONFIG.md)
@@ -158,7 +156,7 @@ wow/
 ### Linux
 - [Debian/Ubuntu 故障排除](docs/TROUBLE_DEBIAN.md)
 - [Arch/Manjaro 故障排除](docs/TROUBLE_ARCH.md)
-- [安卓 (Termux) 故障排除](docs/TROUBLE_ANDROID(Termux).md)
+- [安卓 (Termux) 故障排除](docs/TROUBLE_ANDROID%28Termux%29.md)
 
 ---
 

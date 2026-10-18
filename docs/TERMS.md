@@ -149,14 +149,16 @@
 ### pull (拉取)
 从 pool 复制资源到方案目录，将方案补齐为完整实例。
 
-**命令：** `wow scheme pull <name>`
+这是 `scheme switch` 的内部行为：`auto_scheme: true` 时切换方案会自动执行，
+**没有独立的手动命令**。
 
 ---
 
 ### prune (瘦身)
 从方案目录移除可共享的资源，将方案转为最小实例。
 
-**命令：** `wow scheme prune <name>`
+同样是 `scheme switch` 的内部行为：`auto_scheme: true` 时切换离开旧方案会自动执行，
+**没有独立的手动命令**。
 
 ---
 
@@ -164,7 +166,7 @@
 一个开关，控制是否自动管理方案状态。
 
 - `true`（默认）：切换方案时自动补齐/瘦身
-- `false`：需要手动执行 `pull` / `prune`
+- `false`：切换只更新当前方案指针，资源需自行管理
 
 **设置：** `wow set auto_scheme false`
 

@@ -427,7 +427,7 @@ jre:
 |--------|----------|
 | `server.jvm_args` | 下次启动服务器时生效 |
 | `server.java` | 下次启动服务器时生效 |
-| `web.port` / `web.host` | 重启 Web 服务生效 (`wow web restart`) |
+| `web.port` / `web.host` | 重启 Web 服务生效（`wow web stop` 后 `wow web start`） |
 | `web.theme` | 执行 `wow theme switch` 后立即生效 |
 | `download.mirror` | 下次下载时生效 |
 | `mail.*` | 下次发送邮件时生效 |

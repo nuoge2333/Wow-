@@ -57,9 +57,9 @@ wow web stop
 >
 > 名单外的邮箱在「获取验证码」这步就会被拒绝（HTTP 403），**不会生成验证码**；
 > 即便此前已发出过验证码，登录阶段还会再校验一次。留空 = 不限制。
-> 详见 [配置参考 · mail](docs/CONFIG.md#mail--邮件设置)。
+> 详见 [配置参考 · mail](CONFIG.md#mail--邮件设置)。
 
-相关配置项（见 [配置参考](docs/CONFIG.md)）：
+相关配置项（见 [配置参考](CONFIG.md)）：
 
 | 配置键 | 说明 | 默认值 |
 |--------|------|--------|
@@ -90,7 +90,7 @@ wow web stop
 
 ## 四、接口与实时通信
 
-- 数据接口以 `/api/` 开头，除认证接口外均需携带 JWT（详见 [Web API 参考](docs/API.md)）。
+- 数据接口以 `/api/` 开头，除认证接口外均需携带 JWT（详见 [Web API 参考](API.md)）。
 - 实时日志与命令结果通过 **Socket.IO** 推送，事件包括 `message`、`log`、`command`、`command_result`。
 
 ---
