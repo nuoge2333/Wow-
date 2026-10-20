@@ -642,12 +642,12 @@ class ServerManager {
             const anyJava = utils.detectJava(null, { allowMismatch: true });
             if (anyJava) {
                 console.warn(`⚠️ 未找到 Java ${required}（此版本 Minecraft 需要），当前将使用 ${anyJava}。`);
-                console.warn('   如果服务器启动失败，请在菜单 11 → 1 自动安装对应的 Java。');
+                console.warn('   如果服务器启动失败，请在菜单 8 → 1 自动安装对应的 Java。');
                 return anyJava;
             }
         }
 
-        throw new Error(`未找到 Java ${required || ''}，请在菜单 11 → 1 自动安装，或手动配置 server.java`);
+        throw new Error(`未找到 Java ${required || ''}，请在菜单 8 → 1 自动安装，或手动配置 server.java`);
     }
 
     /**

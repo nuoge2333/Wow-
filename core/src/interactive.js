@@ -114,9 +114,9 @@ async function showMainMenu(options = {}, directChoice = null) {
                 } else if (javaPath) {
                     console.log(`  当前 Java:  ${javaPath}`);
                 } else if (majors.length) {
-                    console.log('  当前 Java:  (未匹配到服务器需求的版本，可在菜单 11 → 1 安装)');
+                    console.log('  当前 Java:  (未匹配到服务器需求的版本，可在菜单 8 → 1 安装)');
                 } else {
-                    console.log('  当前 Java:  (未检测到，可在菜单 11 → 1 自动安装)');
+                    console.log('  当前 Java:  (未检测到，可在菜单 8 → 1 自动安装)');
                 }
             }
         } catch (e) {
@@ -125,23 +125,24 @@ async function showMainMenu(options = {}, directChoice = null) {
 
         console.log('─'.repeat(60));
 
-        // 主菜单（纯数字导航；长命令不在此处执行，请直接查阅文档使用命令行）
+        // 主菜单（纯数字导航；按功能分类排列，长命令不在此处执行，请直接查阅文档使用命令行）
+        // 分类：1-2 服务器启动（启动 / 方案）｜3-4 模组插件｜5-8 配置设置｜
+        //       9-10 整合包｜11-12 日志监控｜13 外观｜14 联机
         const menuItems = [
             ['1', '启动服务器'],
-            ['2', '新建方案'],
-            ['3', '变更配置 (server.properties)'],
-            ['4', '管理模组/插件'],
-            ['5', '错误日志分析'],
+            ['2', '方案管理 (新建/切换/列表/删除/信息)'],
+            ['3', '管理模组/插件'],
+            ['4', '模组/插件搜索下载'],
+            ['5', '变更配置 (server.properties)'],
             ['6', '认证设置 (外置登录)'],
             ['7', '下载管理器设置'],
-            ['8', '安装整合包'],
-            ['9', '生成客户端整合包'],
-            ['10', '模组/插件搜索下载'],
-            ['11', '系统设置'],
+            ['8', '系统设置'],
+            ['9', '安装整合包'],
+            ['10', '生成客户端整合包'],
+            ['11', '错误日志分析'],
             ['12', '服务器状态监控'],
-            ['13', '方案管理 (切换/列表/删除)'],
-            ['14', 'Web 主题更改'],
-            ['15', '联机 / 我要当房主 (陶瓦)']
+            ['13', 'Web 主题更改'],
+            ['14', '联机 / 我要当房主 (陶瓦)']
         ];
 
         for (const [num, desc] of menuItems) {
@@ -150,7 +151,7 @@ async function showMainMenu(options = {}, directChoice = null) {
         console.log(`   0. 退出程序`);
         console.log('─'.repeat(60));
 
-        const choice = (await ask(rl, '请选择操作 (输入数字 0-15，命令用法见 README.MD): ')).trim();
+        const choice = (await ask(rl, '请选择操作 (输入数字 0-14，命令用法见 README.MD): ')).trim();
 
         if (choice === '0') {
             const confirm = await ask(rl, '确定要退出吗? (y/N): ');
@@ -161,9 +162,9 @@ async function showMainMenu(options = {}, directChoice = null) {
             continue;
         }
 
-        // 纯数字导航：1-15 直接分发到对应菜单（数值比较，避免字符串比较误判）
+        // 纯数字导航：1-14 直接分发到对应菜单（数值比较，避免字符串比较误判）
         const num = parseInt(choice, 10);
-        if (!isNaN(num) && num >= 1 && num <= 15) {
+        if (!isNaN(num) && num >= 1 && num <= 14) {
             const label = menuItems[num - 1] ? menuItems[num - 1][1] : '';
             logger.impt(`菜单操作: ${num} ${label}`);
             await dispatchMenu(String(num), options, rl);
@@ -227,87 +228,132 @@ async function dispatchMenu(choice, options, rl) {
             }
 
             case '2': {
-                // 新建方案（V3.5.7）
-                // 旧实现是「下载/安装实例」：直接调 installer.install 装到当前目录，
-                // 既不建方案、也不问方案名，与「方案即服务器运行目录」的模型冲突，
-                // 且和菜单 13 的「创建方案」功能重叠。现改为统一入口。
-                printHeader('新建方案');
+                // 方案管理（V3.5.x：原主菜单「新建方案」与「方案管理」合并为单一入口）
+                // 子菜单：1. 新建方案  2. 切换方案  3. 列出方案  4. 删除方案  5. 方案信息
+                printHeader('方案管理');
                 if (!schemeManager) {
                     console.log('方案管理模块未加载');
                     break;
                 }
+                console.log('\n  1. 新建方案');
+                console.log('  2. 切换方案');
+                console.log('  3. 列出方案');
+                console.log('  4. 删除方案');
+                console.log('  5. 方案信息');
+                console.log('  0. 返回');
+                const sub = await ask(rl, '\n请选择 (0-5): ');
+                switch (sub) {
+                    case '1': {
+                        // 新建方案
+                        printHeader('新建方案');
+                        // 1) 方案名
+                        const sName = (await ask(rl, '方案名称: ')).trim();
+                        if (!sName) {
+                            console.log('未输入方案名，已取消。');
+                            break;
+                        }
 
-                // 1) 方案名
-                const sName = (await ask(rl, '方案名称: ')).trim();
-                if (!sName) {
-                    console.log('未输入方案名，已取消。');
-                    break;
-                }
+                        // 名称校验：复用 file_manager 的跨平台校验段（拒绝路径分隔符、
+                        // Windows 保留字符/保留设备名、以点或空格结尾等）
+                        let fm;
+                        try {
+                            fm = require('./file_manager');
+                        } catch (e) { fm = null; }
+                        if (fm && typeof fm.validateNameSegment === 'function') {
+                            const check = fm.validateNameSegment(sName);
+                            if (!check.ok) {
+                                console.log(`❌ 方案名不合法: ${check.reason}`);
+                                break;
+                            }
+                        }
 
-                // 名称校验：复用 file_manager 的跨平台校验段（拒绝路径分隔符、
-                // Windows 保留字符/保留设备名、以点或空格结尾等）
-                let fm;
-                try {
-                    fm = require('./file_manager');
-                } catch (e) { fm = null; }
-                if (fm && typeof fm.validateNameSegment === 'function') {
-                    const check = fm.validateNameSegment(sName);
-                    if (!check.ok) {
-                        console.log(`❌ 方案名不合法: ${check.reason}`);
+                        // 目录已存在则直接拒绝（避免 create 抛错后留下残缺目录）
+                        if (typeof schemeManager._schemeExists === 'function'
+                            && schemeManager._schemeExists(sName)) {
+                            console.log(`❌ 方案「${sName}」已存在。可用菜单 2 → 3 查看全部方案。`);
+                            break;
+                        }
+
+                        // 2) 核心类型
+                        const sTypes = ['vanilla', 'forge', 'fabric', 'paper', 'purpur', 'spigot', 'bukkit', 'mohist', 'leaves'];
+                        console.log('\n支持的服务器类型:');
+                        sTypes.forEach((t, i) => console.log(`  ${i + 1}. ${t}`));
+                        const stChoice = (await ask(rl, '\n选择类型 (默认 1 vanilla): ')).trim();
+                        let type = 'vanilla';
+                        if (stChoice) {
+                            const stIdx = parseInt(stChoice, 10) - 1;
+                            if (!(stIdx >= 0 && stIdx < sTypes.length)) {
+                                console.log('类型选择无效，已取消。');
+                                break;
+                            }
+                            type = sTypes[stIdx];
+                        }
+
+                        // 3) 版本 / 加载器 / 构建号
+                        const sVersion = (await ask(rl, 'Minecraft 版本 (默认 1.20.1): ')).trim() || '1.20.1';
+                        const sLoader = (await ask(rl, `加载器 (默认 ${type}): `)).trim() || type;
+                        const sBuild = (await ask(rl, '构建号 (留空自动选择最新): ')).trim() || null;
+
+                        // 4) 创建（务必用对象签名——旧实现曾用三个位置参数调用，
+                        //    导致用户输入的版本/加载器被静默忽略，这里已修正）
+                        console.log('');
+                        try {
+                            await schemeManager.create(sName, {
+                                type,
+                                version: sVersion,
+                                loader: sLoader,
+                                build: sBuild
+                            });
+                            console.log(`\n✅ 方案「${sName}」创建完成。`);
+                            const sDir = (schemeManager.schemesDir)
+                                ? require('path').join(schemeManager.schemesDir, sName)
+                                : `scheme/${sName}`;
+                            console.log(`   目录: ${sDir}`);
+                            console.log('   可在菜单 2 → 2 切换到此方案后启动服务器。');
+                        } catch (e) {
+                            console.log(`\n❌ 创建失败: ${e.message}`);
+                        }
                         break;
                     }
-                }
-
-                // 目录已存在则直接拒绝（避免 create 抛错后留下残缺目录）
-                if (typeof schemeManager._schemeExists === 'function'
-                    && schemeManager._schemeExists(sName)) {
-                    console.log(`❌ 方案「${sName}」已存在。可用菜单 13 → 2 查看全部方案。`);
-                    break;
-                }
-
-                // 2) 核心类型
-                const sTypes = ['vanilla', 'forge', 'fabric', 'paper', 'purpur', 'spigot', 'bukkit', 'mohist', 'leaves'];
-                console.log('\n支持的服务器类型:');
-                sTypes.forEach((t, i) => console.log(`  ${i + 1}. ${t}`));
-                const stChoice = (await ask(rl, '\n选择类型 (默认 1 vanilla): ')).trim();
-                let type = 'vanilla';
-                if (stChoice) {
-                    const stIdx = parseInt(stChoice, 10) - 1;
-                    if (!(stIdx >= 0 && stIdx < sTypes.length)) {
-                        console.log('类型选择无效，已取消。');
+                    case '2': {
+                        // 切换方案
+                        schemeManager.list();
+                        const name = await ask(rl, '要切换到的方案名: ');
+                        if (name) {
+                            await schemeManager.switch(name);
+                        }
                         break;
                     }
-                    type = sTypes[stIdx];
-                }
-
-                // 3) 版本 / 加载器 / 构建号
-                const sVersion = (await ask(rl, 'Minecraft 版本 (默认 1.20.1): ')).trim() || '1.20.1';
-                const sLoader = (await ask(rl, `加载器 (默认 ${type}): `)).trim() || type;
-                const sBuild = (await ask(rl, '构建号 (留空自动选择最新): ')).trim() || null;
-
-                // 4) 创建（务必用对象签名——旧菜单 13-1 用三个位置参数调用，
-                //    导致用户输入的版本/加载器被静默忽略，这里已修正）
-                console.log('');
-                try {
-                    await schemeManager.create(sName, {
-                        type,
-                        version: sVersion,
-                        loader: sLoader,
-                        build: sBuild
-                    });
-                    console.log(`\n✅ 方案「${sName}」创建完成。`);
-                    const sDir = (schemeManager.schemesDir)
-                        ? require('path').join(schemeManager.schemesDir, sName)
-                        : `scheme/${sName}`;
-                    console.log(`   目录: ${sDir}`);
-                    console.log('   可在菜单 13 → 1 切换到此方案后启动服务器。');
-                } catch (e) {
-                    console.log(`\n❌ 创建失败: ${e.message}`);
+                    case '3':
+                        // 列出方案
+                        schemeManager.list();
+                        break;
+                    case '4': {
+                        // 删除方案
+                        schemeManager.list();
+                        const name = await ask(rl, '要删除的方案名: ');
+                        if (name) {
+                            const confirm = await ask(rl, `确定删除方案 "${name}"? (y/N): `);
+                            if (confirm.toLowerCase() === 'y') {
+                                await schemeManager.delete(name);
+                            }
+                        }
+                        break;
+                    }
+                    case '5': {
+                        // 方案信息
+                        schemeManager.list();
+                        const name = await ask(rl, '方案名: ');
+                        if (name) {
+                            schemeManager.info(name);
+                        }
+                        break;
+                    }
                 }
                 break;
             }
 
-            case '4': {
+            case '3': {
                 // 管理模组/插件
                 printHeader('管理模组/插件');
                 if (!modManager) {
@@ -440,7 +486,7 @@ async function dispatchMenu(choice, options, rl) {
                 break;
             }
 
-            case '3': {
+            case '5': {
                 // 修改服务器配置 (server.properties)
                 printHeader('修改服务器配置 (server.properties)');
                 const ServerProperties = require('./config').ServerProperties;
@@ -482,7 +528,7 @@ async function dispatchMenu(choice, options, rl) {
                 break;
             }
 
-            case '5': {
+            case '11': {
                 // 错误日志分析
                 printHeader('错误日志分析');
                 if (!logHandler) {
@@ -582,7 +628,7 @@ async function dispatchMenu(choice, options, rl) {
                 break;
             }
 
-            case '8': {
+            case '9': {
                 // 安装整合包
                 printHeader('安装整合包');
                 if (!packGenerator) {
@@ -607,7 +653,7 @@ async function dispatchMenu(choice, options, rl) {
                 break;
             }
 
-            case '9': {
+            case '10': {
                 // 生成客户端整合包
                 printHeader('生成客户端整合包');
                 if (!packGenerator) {
@@ -620,7 +666,7 @@ async function dispatchMenu(choice, options, rl) {
                 break;
             }
 
-            case '10': {
+            case '4': {
                 // 模组/插件搜索下载
                 printHeader('模组/插件搜索下载');
                 if (!modManager) {
@@ -645,7 +691,7 @@ async function dispatchMenu(choice, options, rl) {
                 break;
             }
 
-            case '11': {
+            case '8': {
                 // 系统设置
                 printHeader('系统设置');
                 if (!config || !utils) {
@@ -713,56 +759,6 @@ async function dispatchMenu(choice, options, rl) {
             }
 
             case '13': {
-                // 备份/恢复（方案管理）
-                // V3.5.7：「创建方案」已上移到主菜单第 2 项，此处只保留日常管理操作，
-                // 原 2-5 项顺次重编号为 1-4。
-                printHeader('备份/恢复 (方案管理)');
-                if (!schemeManager) {
-                    console.log('方案管理模块未加载');
-                    break;
-                }
-                console.log('\n  1. 切换方案');
-                console.log('  2. 列出方案');
-                console.log('  3. 删除方案');
-                console.log('  4. 方案信息');
-                console.log('  0. 返回');
-                const subChoice = await ask(rl, '\n请选择 (0-4): ');
-                switch (subChoice) {
-                    case '1': {
-                        schemeManager.list();
-                        const name = await ask(rl, '要切换到的方案名: ');
-                        if (name) {
-                            schemeManager.switch(name);
-                        }
-                        break;
-                    }
-                    case '2':
-                        schemeManager.list();
-                        break;
-                    case '3': {
-                        schemeManager.list();
-                        const name = await ask(rl, '要删除的方案名: ');
-                        if (name) {
-                            const confirm = await ask(rl, `确定删除方案 "${name}"? (y/N): `);
-                            if (confirm.toLowerCase() === 'y') {
-                                await schemeManager.delete(name);
-                            }
-                        }
-                        break;
-                    }
-                    case '4': {
-                        schemeManager.list();
-                        const name = await ask(rl, '方案名: ');
-                        if (name) {
-                            schemeManager.info(name);
-                        }
-                        break;
-                    }
-                }
-                break;
-            }
-
-            case '14': {
                 // Web 主题更改
                 printHeader('Web 主题更改');
                 if (!themeManager) {
@@ -806,7 +802,7 @@ async function dispatchMenu(choice, options, rl) {
                 break;
             }
 
-            case '15': {
+            case '14': {
                 // 联机 / 我要当房主（陶瓦 Terracotta）
                 printHeader('联机 / 我要当房主 (陶瓦)');
                 const Terracotta = require('./terracotta');

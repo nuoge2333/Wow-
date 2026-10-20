@@ -188,9 +188,8 @@ for item in "$PROJECT_DIR"/*; do
     fi
 done
 
-# 确保启动脚本可执行（含 start.sh）
+# 确保启动脚本可执行（唯一入口 wow.sh / wow.bat）
 chmod +x "$SCRIPT_DIR/wow.sh" 2>/dev/null
-chmod +x "$SCRIPT_DIR/start.sh" 2>/dev/null
 chmod +x "$SCRIPT_DIR/update.sh" 2>/dev/null
 
 echo ""

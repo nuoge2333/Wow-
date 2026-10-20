@@ -164,7 +164,7 @@ echo Run wow.bat to launch wow~
 
 :cleanup
 rmdir /s /q "%TEMP_DIR%" 2>nul
-:: 仅在交互式终端（双击运行）才暂停；自动化平台（简幻欢等）/ 由 start.bat 调用时不阻塞
+:: 仅在交互式终端（双击运行）才暂停；自动化平台（简幻欢等）调用时不阻塞
 if "%WOW_NO_PAUSE%"=="1" goto :eof
 echo %CMDCMDLINE% | find /i "/c" >nul
 if errorlevel 1 pause

@@ -1,9 +1,9 @@
 /**
- * V3.5.7 菜单改造 + V3.5.8 启动方式调整 + V3.5.9 懒加载重构 静态校验
+ * V3.5.7 菜单改造 + V3.5.8 启动方式调整 + V3.5.9 懒加载重构 + V3.5.x 主菜单分类重排 静态校验
  *
  * 背景：interactive.js 的菜单分发依赖 readline + 真实网络/文件副作用，难以端到端跑。
- * 这里用源码级断言，确保本次改造（菜单 2 = 新建方案、菜单 13 重编号、
- * cli.js 懒加载与非核心命令隐藏）不会被后续改动无声破坏。
+ * 这里用源码级断言，确保本次改造（菜单 2 = 方案管理（合并原新建方案+方案管理）、
+ * 主菜单按功能分类重排为 1-14、cli.js 懒加载与非核心命令隐藏）不会被后续改动无声破坏。
  * 运行：cd core && node test/interactive_menu.test.js
  */
 const fs = require('fs');
@@ -37,8 +37,8 @@ const topCaseBodies = {};
 }
 
 console.log('— 顶层 case 完整性 —');
-check('顶层 case 1-15 全部存在', () => {
-    for (let i = 1; i <= 15; i++) {
+check('顶层 case 1-14 全部存在', () => {
+    for (let i = 1; i <= 14; i++) {
         assert.ok(topCaseBodies[String(i)], `缺少 case '${i}'`);
     }
 });
@@ -86,39 +86,53 @@ check('case 2 使用 schemesDir 输出真实目录', () => {
     assert.ok(/schemesDir/.test(c2));
 });
 
-// 菜单 13
-const c13 = topCaseBodies['13'] || '';
-console.log('\n— 菜单 13：方案管理重编号 —');
-check('case 13 存在', () => assert.ok(c13.length > 0));
-check('case 13 已移除「创建方案」子项', () => {
-    assert.ok(!/1\. 创建方案/.test(c13), '仍残留「1. 创建方案」');
+// 菜单 2：方案管理（V3.5.x 合并「新建方案」+「方案管理」为单一入口）
+const c2full = topCaseBodies['2'] || '';
+console.log('\n— 菜单 2：方案管理（合并原 13）—');
+check('case 2 标题为「方案管理」', () => {
+    assert.ok(/printHeader\('方案管理'\)/.test(c2full));
 });
-check('case 13 子项编号压缩为 1-4', () => {
-    assert.ok(/1\. 切换方案/.test(c13));
-    assert.ok(/2\. 列出方案/.test(c13));
-    assert.ok(/3\. 删除方案/.test(c13));
-    assert.ok(/4\. 方案信息/.test(c13));
+check('case 2 含方案管理子菜单 1-5（新建/切换/列出/删除/信息）', () => {
+    assert.ok(/1\. 新建方案/.test(c2full));
+    assert.ok(/2\. 切换方案/.test(c2full));
+    assert.ok(/3\. 列出方案/.test(c2full));
+    assert.ok(/4\. 删除方案/.test(c2full));
+    assert.ok(/5\. 方案信息/.test(c2full));
 });
-check('case 13 提示范围改为 (0-4)', () => {
-    assert.ok(/请选择 \(0-4\)/.test(c13));
+check('case 2 子菜单提示范围改为 (0-5)', () => {
+    assert.ok(/请选择 \(0-5\)/.test(c2full));
 });
-check('case 13 不再出现 5 号子项提示', () => {
-    assert.ok(!/5\. 方案信息/.test(c13));
+check('case 2 仍保留新建方案逻辑（方案名/校验/create 对象签名）', () => {
+    assert.ok(/ask\(rl, '方案名称: '\)/.test(c2full));
+    assert.ok(/validateNameSegment/.test(c2full));
+    assert.ok(/schemeManager\.create\(\s*sName\s*,\s*\{/.test(c2full));
 });
-check('case 13 delete 已 await（异步方法）', () => {
-    assert.ok(/await schemeManager\.delete\(/.test(c13));
+check('case 2 切换方案已 await switch（异步方法）', () => {
+    assert.ok(/await schemeManager\.switch\(/.test(c2full));
+});
+check('case 2 delete 已 await（异步方法）', () => {
+    assert.ok(/await schemeManager\.delete\(/.test(c2full));
+});
+check('case 2 含 schemeManager\.info（方案信息）', () => {
+    assert.ok(/schemeManager\.info\(/.test(c2full));
+});
+check('case 2 已移除原「备份/恢复」标题', () => {
+    assert.ok(!/printHeader\('备份\/恢复/.test(c2full));
 });
 
 // 主菜单文字
 console.log('\n— 主菜单文字 —');
-check('主菜单第 2 项显示「新建方案」', () => {
-    assert.ok(/\['2', '新建方案'\]/.test(src));
+check('主菜单第 2 项显示「方案管理」', () => {
+    assert.ok(/\['2', '方案管理/.test(src));
 });
 check('主菜单第 2 项不再显示「下载/安装实例」', () => {
     assert.ok(!/\['2', '下载\/安装实例'\]/.test(src));
 });
-check('主菜单第 13 项描述已更新', () => {
-    assert.ok(/\['13', '方案管理/.test(src));
+check('主菜单第 13 项现为「Web 主题更改」', () => {
+    assert.ok(/\['13', 'Web 主题更改'\]/.test(src));
+});
+check('主菜单不再存在「方案管理 (切换/列表/删除)」旧第 13 项', () => {
+    assert.ok(!/\['13', '方案管理 \(切换\/列表\/删除\)'\]/.test(src));
 });
 
 // ─────────────────────────────────────────────

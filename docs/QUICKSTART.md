@@ -253,8 +253,8 @@ wow init
 # 2. 创建并激活方案（自动下载 Forge 核心）
 wow scheme create modded -t forge -v 1.20.1
 
-# 3. 安装模组：进入数字菜单第 10 项，或用 Web 面板搜索/上传
-wow            # 菜单 → 10. 模组/插件搜索下载
+# 3. 安装模组：进入数字菜单第 4 项，或用 Web 面板搜索/上传
+wow            # 菜单 → 4. 模组/插件搜索下载
 
 # 4. 启动服务器
 wow server start --memory 6G

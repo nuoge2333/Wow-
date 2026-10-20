@@ -401,7 +401,7 @@ class JreManager {
                     const want = parseInt(version, 10);
                     if (actual && actual.major != null && actual.major !== want) {
                         console.log(`⚠️  配置指定的 Java 是 ${actual.major}，但该服务器需要 ${want}。`);
-                        console.log('   如启动失败，请在菜单 11 → 1 修改 Java 路径，或清除该项以启用自动选择。');
+                        console.log('   如启动失败，请在菜单 8 → 1 修改 Java 路径，或清除该项以启用自动选择。');
                     }
                 }
                 return userJava;

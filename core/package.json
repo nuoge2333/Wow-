@@ -1,6 +1,6 @@
 {
   "name": "wow",
-  "version": "3.5.9-26.3h",
+  "version": "3.5.10-26.3i",
   "description": "Minecraft 服务器管理工具 - 默认优先，可以修改",
   "main": "src/cli.js",
   "bin": {
