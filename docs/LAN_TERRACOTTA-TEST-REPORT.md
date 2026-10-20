@@ -37,7 +37,7 @@
 
 ### 3.1 服务端启动
 
-1. 在 Windows 10 上启动 Wow~ V3.5.6-26.3e
+1. 在 Windows 10 上启动 Wow~ V3.5.6-26.2d
 2. 执行 `wow server start`，启动 Vanilla 1.16 服务端
 3. 服务端成功启动，日志输出 `Done (13.587s)! For help, type "help"`
 
