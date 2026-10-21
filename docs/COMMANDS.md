@@ -154,17 +154,17 @@ wow scheme create <name> [options]
 | 选项 | 说明 |
 |------|------|
 | `-v, --version <version>` | Minecraft 版本 (默认: 1.20.1) |
-| `-t, --type <type>` | 核心类型/加载器: vanilla/forge/fabric/neoforge/quilt/paper/purpur/leaves/mohist/catserver（spigot/bukkit 暂不支持），同时决定加载器（已并入原 `--loader`） |
+| `-t, --type <type>` | 核心类型: vanilla/forge/fabric/neoforge/quilt/paper/purpur/leaves/mohist/catserver（spigot/bukkit 暂不支持），模组加载器随类型自动确定，不再单独询问 |
 | `-b, --build <id>` | 构建号（仅 Mohist 等需要） |
 
-> 💡 V3.4.1 起 `--loader` 已移除，加载器并入 `--type`（二者取值一致，如 `-t forge` 即 forge 核心 + forge 加载器）。
+> 💡 V3.4.1 起 `--loader` 已移除；**V3.5.11 起引导菜单与 Web 方案表单同样不再询问加载器**——统一由核心类型自动确定（如 `-t fabric` 即 fabric 核心 + fabric 加载器，且自动装配 Fabric API）。
 
 **示例：**
 ```bash
 # 创建原版方案
 wow scheme create survival -v 1.20.1 -t vanilla
 
-# 创建模组方案（加载器并入 --type）
+# 创建模组方案（加载器随类型自动确定）
 wow scheme create modded -t forge
 
 # 创建混合服方案

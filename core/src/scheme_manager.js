@@ -122,6 +122,15 @@ class SchemeManager {
         const mods = [];
         const plugins = [];
 
+        // 5.1 Fabric 方案自动装配 Fabric API（V3.5.11）
+        // 绝大多数 Fabric 模组硬依赖 Fabric API，空方案启动即缺依赖。
+        // 整合包导入（fromPack）通常自带 Fabric API，不重复装配。
+        // 解析/下载失败只警告不阻断建方案（与「自更新失败不阻断启动」同一原则）。
+        if (!fromPack && String(loader).toLowerCase() === 'fabric') {
+            const fabricApi = await this._autoInstallFabricApi(schemePath, version);
+            if (fabricApi) mods.push(fabricApi);
+        }
+
         // 6. 生成默认配置文件
         this._generateDefaultFiles(schemePath, version);
 
@@ -204,6 +213,49 @@ class SchemeManager {
         }
 
         return name;
+    }
+
+    /**
+     * V3.5.11：Fabric 方案自动装配 Fabric API。
+     * 绝大多数 Fabric 模组硬依赖 Fabric API，空方案启动即缺依赖。
+     * 这里按 MC 版本从 Modrinth（项目 P7dR8mSH = fabric-api）解析最新兼容版本，
+     * 装入方案 mods/ 并同步入资源池（与模组安装路径一致，切换方案时可补齐/瘦身）。
+     * 解析或下载失败只警告、返回 null，绝不阻断方案创建。
+     *
+     * @param {string} schemePath 新方案目录
+     * @param {string} mcVersion  Minecraft 版本
+     * @returns {Promise<{path:string,name:string,version:string}|null>}
+     */
+    async _autoInstallFabricApi(schemePath, mcVersion) {
+        const FABRIC_API_PROJECT = 'P7dR8mSH'; // Modrinth: fabric-api
+        const modsDir = path.join(schemePath, 'mods');
+        fs.ensureDirSync(modsDir);
+        try {
+            const modSearch = require('./mod_search');
+            const file = await modSearch.pickModrinthFile(FABRIC_API_PROJECT, 'fabric', mcVersion);
+            if (!file || !file.url) {
+                console.log('  ⚠️ 未找到适配当前版本的 Fabric API，跳过自动装配');
+                return null;
+            }
+            const dest = path.join(modsDir, file.filename);
+            if (fs.existsSync(dest)) {
+                console.log(`  Fabric API 已存在: ${file.filename}`);
+            } else {
+                console.log(`  🧩 正在获取 Fabric API (${file.version_number})...`);
+                await this.modManager._downloadMod(file.url, dest);
+            }
+            // 入池共享，供切换方案时补齐/瘦身（与 create() 中核心入池同一机制；
+            // 池内布局与 ModManager.getModStoragePath 一致：mods/<loader>/<版本>/<文件名>）
+            const modHash = await this._computeHash(dest);
+            if (!this._isResourceInPool(modHash)) {
+                await this._addToPool(dest, 'mods', `fabric/${mcVersion}`, modHash, file.filename);
+            }
+            console.log(`  ✅ Fabric API 已自动装配: ${file.filename}`);
+            return { path: dest, name: 'Fabric API', version: file.version_number };
+        } catch (e) {
+            console.log(`  ⚠️ Fabric API 自动装配失败（不影响方案创建）: ${e.message}`);
+            return null;
+        }
     }
 
     /**

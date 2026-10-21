@@ -361,4 +361,6 @@ function describeAxiosError(e) {
     return e.message || '未知错误';
 }
 
-module.exports = { search, getInfo, normalizeLoader, formatNumber };
+// pickModrinthFile 同时供「模组搜索」与「建方案时自动装配 Fabric API」使用——
+// 按 projectId + loader + MC 版本解析出可下载的文件直链。
+module.exports = { search, getInfo, normalizeLoader, formatNumber, pickModrinthFile };

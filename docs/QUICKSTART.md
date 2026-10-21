@@ -83,7 +83,7 @@ wow 支持四大类服务端核心，根据你的需求选择：
 | 核心 | 加载器 | 说明 | 安装命令示例 |
 |------|--------|------|-------------|
 | **Forge** | Forge | 最成熟的模组加载器，模组数量最多 | `wow scheme create myserver -t forge -v 1.20.1` |
-| **Fabric** | Fabric | 轻量级模组加载器，更新快 | `wow scheme create myserver -t fabric -v 1.20.1` |
+| **Fabric** | Fabric | 轻量级模组加载器，更新快；创建方案时自动装配 Fabric API | `wow scheme create myserver -t fabric -v 1.20.1` |
 | **NeoForge** | NeoForge | Forge 的分支，1.20.1+ 兼容 Forge 模组 | `wow scheme create myserver -t neoforge -v 1.20.1` |
 | **Quilt** | Quilt | Fabric 的分支，兼容 Fabric 模组 | `wow scheme create myserver -t quilt -v 1.20.1` |
 

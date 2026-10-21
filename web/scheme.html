@@ -286,23 +286,14 @@
         <div class="modal-overlay" id="create-modal">
             <div class="modal">
                 <h3>📦 创建新方案</h3>
-                <div class="form-group">
-                    <label>方案名称</label>
-                    <input type="text" id="new-name" placeholder="例如: survival_1" />
-                </div>
                 <div class="form-row">
+                    <div class="form-group">
+                        <label>方案名称</label>
+                        <input type="text" id="new-name" placeholder="例如: survival_1" />
+                    </div>
                     <div class="form-group">
                         <label>Minecraft 版本</label>
                         <input type="text" id="new-version" placeholder="1.20.1" value="1.20.1" />
-                    </div>
-                    <div class="form-group">
-                        <label>模组加载器</label>
-                        <select id="new-loader">
-                            <option value="forge">Forge</option>
-                            <option value="fabric">Fabric</option>
-                            <option value="neoforge">NeoForge</option>
-                            <option value="quilt">Quilt</option>
-                        </select>
                     </div>
                 </div>
                 <div class="form-row">
@@ -390,7 +381,6 @@
             // 表单字段
             const newName = document.getElementById('new-name');
             const newVersion = document.getElementById('new-version');
-            const newLoader = document.getElementById('new-loader');
             const newType = document.getElementById('new-type');
             const newOtherType = document.getElementById('new-other-type');
             const newBuild = document.getElementById('new-build');
@@ -585,7 +575,6 @@
                     return;
                 }
                 const version = newVersion.value.trim() || '1.20.1';
-                const loader = newLoader.value;
                 let type = newType.value;
                 const build = newBuild.value.trim() || undefined;
                 let otherType = newOtherType.value.trim();

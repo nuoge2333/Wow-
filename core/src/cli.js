@@ -87,7 +87,7 @@ function logger() {
 program
     .name('wow')
     .description('Minecraft 服务器管理工具 - 默认优先，可以修改')
-    .version('3.5.10-26.31', '-V');
+    .version('3.5.11-26.32', '-V');
 
 // ==================== init ====================
 
@@ -231,7 +231,7 @@ serverCmd
 program
     .command('install <target> [version]')
     .description('彩蛋 / 下载任意 URL 文件（核心安装请改用 scheme create --type）')
-    .option('-b, --build <id>', '构建标识（Mohist 为 git sha）/ 加载器版本（forge/fabric/neoforge/quilt）')
+    .option('-b, --build <id>', '构建标识（Mohist 为 git sha；留空自动选择最新）')
     .option('-o, --output <path>', '输出路径（仅 URL 下载时有效）')
     .action(async (target, version, options) => {
         // ============ 彩蛋入口 ============
@@ -326,8 +326,8 @@ schemeCmd
     .command('create <name>')
     .description('创建新方案')
     .option('-v, --version <version>', 'Minecraft 版本 (默认: 1.20.1)')
-    .option('-t, --type <type>', '核心类型/加载器 (vanilla/forge/fabric/neoforge/quilt/mohist/catserver/paper)，同时决定加载器')
-    .option('-b, --build <id>', '构建标识（Mohist 为 git sha，可省略以自动取最新）')
+    .option('-t, --type <type>', '核心类型 (vanilla/forge/fabric/neoforge/quilt/mohist/catserver/paper)，模组加载器随类型自动确定，不再单独询问')
+    .option('-b, --build <id>', '构建标识（Mohist 为 git sha；留空自动选择最新）')
     .action(async (name, options) => {
         const SchemeManager = load('./scheme_manager');
         if (!SchemeManager) return;

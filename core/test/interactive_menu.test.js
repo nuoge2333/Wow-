@@ -1,9 +1,11 @@
 /**
- * V3.5.7 菜单改造 + V3.5.8 启动方式调整 + V3.5.9 懒加载重构 + V3.5.x 主菜单分类重排 静态校验
+ * V3.5.7 菜单改造 + V3.5.8 启动方式调整 + V3.5.9 懒加载重构 + V3.5.x 主菜单分类重排
+ * + V3.5.11 加载器自动确定（不再单独询问）/ 引导菜单补充 neoforge 静态校验
  *
  * 背景：interactive.js 的菜单分发依赖 readline + 真实网络/文件副作用，难以端到端跑。
  * 这里用源码级断言，确保本次改造（菜单 2 = 方案管理（合并原新建方案+方案管理）、
- * 主菜单按功能分类重排为 1-14、cli.js 懒加载与非核心命令隐藏）不会被后续改动无声破坏。
+ * 主菜单按功能分类重排为 1-14、cli.js 懒加载与非核心命令隐藏、
+ * 建方案不再询问模组加载器——加载器随核心类型自动确定）不会被后续改动无声破坏。
  * 运行：cd core && node test/interactive_menu.test.js
  */
 const fs = require('fs');
@@ -273,6 +275,57 @@ console.log('\n— V3.5.8 事件日志按天单文件（log.js）—');
     });
     check('超长行截断保护并发写原子性', () => {
         assert.ok(/MAX_LINE_BYTES/.test(lg));
+    });
+}
+
+// ─────────────────────────────────────────────
+// V3.5.11：不再单独询问模组加载器（引导界面 / CLI -help / web 表单）+ neoforge 入口
+console.log('\n— V3.5.11 加载器随类型自动确定（interactive.js）—');
+check('引导菜单类型列表包含 neoforge', () => {
+    assert.ok(/sTypes = \[[^\]]*'neoforge'/.test(src), 'sTypes 缺少 neoforge');
+});
+check('新建方案不再询问「加载器 (默认 ...)」', () => {
+    assert.ok(!/ask\(rl, [`']加载器/.test(src), '仍存在加载器提问');
+});
+check('loader 随核心类型自动确定（create 传入 loader: type）', () => {
+    assert.ok(/loader: type/.test(c2full), 'create 未传 loader: type');
+});
+
+console.log('\n— V3.5.11 scheme create 帮助文案（cli.js）—');
+{
+    const CLI = path.join(__dirname, '..', 'src', 'cli.js');
+    const cli = fs.readFileSync(CLI, 'utf8');
+
+    check('-t 帮助不再宣称「核心类型/加载器 … 同时决定加载器」', () => {
+        assert.ok(!/同时决定加载器/.test(cli), '仍存在「同时决定加载器」表述');
+        assert.ok(!/核心类型\/加载器/.test(cli), '仍存在「核心类型/加载器」表述');
+    });
+    check('-t 帮助说明加载器随类型自动确定', () => {
+        assert.ok(/核心类型 \(vanilla\/forge\/fabric\/neoforge\/quilt\/mohist\/catserver\/paper\)/.test(cli),
+            '-t 帮助缺少核心类型枚举');
+        assert.ok(/模组加载器随类型自动确定/.test(cli), '-t 帮助未说明自动确定');
+    });
+    check('-b 帮助不再枚举加载器版本', () => {
+        assert.ok(!/加载器版本（forge\/fabric\/neoforge\/quilt）/.test(cli),
+            '-b 帮助仍枚举加载器版本');
+    });
+}
+
+console.log('\n— V3.5.11 web 方案创建表单（web/ + themes/default）—');
+for (const p of [
+    path.join(__dirname, '..', '..', 'web', 'scheme.html'),
+    path.join(__dirname, '..', '..', 'themes', 'default', 'scheme.html')
+]) {
+    const where = p.includes('themes') ? 'themes/default' : 'web';
+    const html = fs.readFileSync(p, 'utf8');
+    check(`${where}/scheme.html 已移除「模组加载器」下拉`, () => {
+        assert.ok(!/id="new-loader"/.test(html), '仍存在 new-loader 下拉');
+        assert.ok(!/newLoader/.test(html), '仍存在 newLoader JS 引用');
+        assert.ok(!/>模组加载器</.test(html), '仍存在「模组加载器」标签');
+    });
+    check(`${where}/scheme.html 创建命令仅传 --type（加载器不再单传）`, () => {
+        assert.ok(/scheme create \$\{name\} --version \$\{version\} --type \$\{type\}/.test(html),
+            '创建命令构造被改坏');
     });
 }
 

@@ -274,8 +274,8 @@ async function dispatchMenu(choice, options, rl) {
                             break;
                         }
 
-                        // 2) 核心类型
-                        const sTypes = ['vanilla', 'forge', 'fabric', 'paper', 'purpur', 'spigot', 'bukkit', 'mohist', 'leaves'];
+                        // 2) 核心类型（V3.5.11：补充 neoforge——安装器层早已支持，此处补齐入口）
+                        const sTypes = ['vanilla', 'forge', 'fabric', 'neoforge', 'paper', 'purpur', 'spigot', 'bukkit', 'mohist', 'leaves'];
                         console.log('\n支持的服务器类型:');
                         sTypes.forEach((t, i) => console.log(`  ${i + 1}. ${t}`));
                         const stChoice = (await ask(rl, '\n选择类型 (默认 1 vanilla): ')).trim();
@@ -289,9 +289,10 @@ async function dispatchMenu(choice, options, rl) {
                             type = sTypes[stIdx];
                         }
 
-                        // 3) 版本 / 加载器 / 构建号
+                        // 3) 版本 / 构建号
+                        // V3.5.11：不再单独询问模组加载器——加载器随核心类型自动确定
+                        // （选 fabric 即 fabric 核心 + fabric 加载器，与 CLI -t 行为一致）
                         const sVersion = (await ask(rl, 'Minecraft 版本 (默认 1.20.1): ')).trim() || '1.20.1';
-                        const sLoader = (await ask(rl, `加载器 (默认 ${type}): `)).trim() || type;
                         const sBuild = (await ask(rl, '构建号 (留空自动选择最新): ')).trim() || null;
 
                         // 4) 创建（务必用对象签名——旧实现曾用三个位置参数调用，
@@ -301,7 +302,7 @@ async function dispatchMenu(choice, options, rl) {
                             await schemeManager.create(sName, {
                                 type,
                                 version: sVersion,
-                                loader: sLoader,
+                                loader: type,
                                 build: sBuild
                             });
                             console.log(`\n✅ 方案「${sName}」创建完成。`);
