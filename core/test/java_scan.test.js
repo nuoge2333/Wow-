@@ -284,5 +284,152 @@ check('兼容旧签名 getJavaExecutable(ver, true)', () => {
     assert.ok(r === null || typeof r === 'string');
 });
 
-console.log(`\n结果: ${passed} 通过, ${failed} 失败\n`);
-process.exit(failed ? 1 : 0);
+// ─────────────────────────────────────────────
+console.log('\n— V3.5.12：JRE 国内镜像源（macOS 优先，清华 TUNA）—');
+
+const readSrc = () => fs.readFileSync(path.join(__dirname, '..', 'src', 'jre_manager.js'), 'utf8');
+
+check('JRE_SOURCES 含 tuna 国内镜像源配置', () => {
+    const src = readSrc();
+    assert.ok(/tuna:\s*{/.test(src), '缺少 tuna 源定义');
+    assert.ok(/mirrors\.tuna\.tsinghua\.edu\.cn\/Adoptium/.test(src), '缺少 TUNA 镜像地址');
+    assert.ok(/macos:\s*'mac'/.test(src), 'tuna 平台映射缺 macos→mac');
+    assert.ok(/arm64:\s*'aarch64'/.test(src), 'tuna 架构映射缺 arm64→aarch64');
+});
+check('config.js 默认配置含 jre.mirror（置空可跳过镜像）', () => {
+    const cfg = fs.readFileSync(path.join(__dirname, '..', 'src', 'config.js'), 'utf8');
+    assert.ok(/mirror:\s*'https:\/\/mirrors\.tuna\.tsinghua\.edu\.cn\/Adoptium'/.test(cfg),
+        'config.js 缺 jre.mirror 默认值');
+});
+check('_resolveTunaLatestUrl / _getDownloadUrls 为 async 方法', () => {
+    assert.strictEqual(jre._resolveTunaLatestUrl.constructor.name, 'AsyncFunction');
+    assert.strictEqual(jre._getDownloadUrls.constructor.name, 'AsyncFunction');
+});
+check('ensureJre 下载段为候选链遍历（国内镜像优先，官方兜底）', () => {
+    const src = readSrc();
+    assert.ok(/for \(const cand of candidates\)/.test(src), '未按候选链遍历');
+    assert.ok(/国内镜像\(清华TUNA\)/.test(src), '缺国内镜像标签');
+    assert.ok(/官方源\(Adoptium\)/.test(src), '缺官方源标签');
+    assert.ok(/所有下载源均失败/.test(src), '缺全源失败报错');
+});
+
+// ─────────────────────────────────────────────
+console.log('\n— V3.5.12：镜像解析 / 候选链行为（stub axios，无网络）—');
+
+// jre_manager 模块级 require('axios')，打补丁同一实例即可拦截
+const axios = require('axios');
+const realAxiosGet = axios.get;
+let stubHtml = '';
+let stubThrow = false;
+axios.get = async (url) => {
+    if (stubThrow) throw new Error('stub: 镜像不可达');
+    if (!String(url).includes('mirrors.tuna.tsinghua.edu.cn')) {
+        throw new Error(`stub: 镜像解析不应请求外部地址 ${url}`);
+    }
+    return { status: 200, data: stubHtml };
+};
+
+const asyncChecks = [];
+function checkAsync(title, fn) { asyncChecks.push({ title, fn }); }
+
+checkAsync('_resolveTunaLatestUrl 取目录内最高版本（21.0.12.1_1 胜出）', async () => {
+    stubHtml = `
+    <a href="OpenJDK21U-jdk_aarch64_mac_hotspot_21.0.10.7_6.tar.gz">older</a>
+    <a href="OpenJDK21U-jdk_aarch64_mac_hotspot_21.0.12.1_1.tar.gz">newest</a>
+    <a href="OpenJDK21U-jdk_aarch64_mac_hotspot_21.0.11.10_9.tar.gz">mid</a>
+    `;
+    const url = await jre._resolveTunaLatestUrl('21', 'mac', 'aarch64');
+    assert.ok(url, '应返回直链');
+    assert.ok(url.endsWith('OpenJDK21U-jdk_aarch64_mac_hotspot_21.0.12.1_1.tar.gz'),
+        `取错了版本: ${url}`);
+    assert.ok(url.startsWith('https://mirrors.tuna.tsinghua.edu.cn/Adoptium/21/jdk/aarch64/mac/'),
+        `直链路径不对: ${url}`);
+});
+checkAsync('_resolveTunaLatestUrl 兼容 JDK 8 特殊版本格式（8u512b08 胜出）', async () => {
+    stubHtml = `
+    <a href="OpenJDK8U-jdk_x64_mac_hotspot_8u502b01.tar.gz">a</a>
+    <a href="OpenJDK8U-jdk_x64_mac_hotspot_8u504b01.tar.gz">b</a>
+    <a href="OpenJDK8U-jdk_x64_mac_hotspot_8u512b08.tar.gz">c</a>
+    `;
+    const url = await jre._resolveTunaLatestUrl('8', 'mac', 'x64');
+    assert.ok(url && url.endsWith('OpenJDK8U-jdk_x64_mac_hotspot_8u512b08.tar.gz'),
+        `取错了版本: ${url}`);
+});
+checkAsync('_resolveTunaLatestUrl 忽略其他 feature / 平台 / 后缀的文件', async () => {
+    stubHtml = `
+    <a href="OpenJDK17U-jdk_aarch64_mac_hotspot_17.0.99.9_9.tar.gz">wrong feature</a>
+    <a href="OpenJDK21U-jdk_x64_mac_hotspot_21.0.99.9_9.tar.gz">wrong arch</a>
+    <a href="OpenJDK21U-jdk_aarch64_mac_hotspot_21.0.12.1_1.tar.gz">target</a>
+    `;
+    const url = await jre._resolveTunaLatestUrl('21', 'mac', 'aarch64');
+    assert.ok(url && url.endsWith('OpenJDK21U-jdk_aarch64_mac_hotspot_21.0.12.1_1.tar.gz'),
+        `误选了无关文件: ${url}`);
+});
+checkAsync('_resolveTunaLatestUrl 无匹配文件时返回 null', async () => {
+    stubHtml = '<a href="README.html">readme</a>';
+    assert.strictEqual(await jre._resolveTunaLatestUrl('21', 'mac', 'aarch64'), null);
+});
+checkAsync('_resolveTunaLatestUrl 网络失败返回 null（由调用方回退官方）', async () => {
+    stubThrow = true;
+    assert.strictEqual(await jre._resolveTunaLatestUrl('21', 'mac', 'aarch64'), null);
+    stubThrow = false;
+});
+checkAsync('jre.mirror 置空时跳过镜像（返回 null，不请求外部）', async () => {
+    const cfg = require('../src/config');
+    const origGet = cfg.getConfig.bind(cfg);
+    cfg.getConfig = (key, def) => (key === 'jre.mirror' ? '' : origGet(key, def));
+    try {
+        assert.strictEqual(await jre._resolveTunaLatestUrl('21', 'mac', 'aarch64'), null,
+            '置空 mirror 后仍解析了镜像');
+    } finally {
+        cfg.getConfig = origGet; // 还原，避免污染同进程其他用例
+    }
+});
+checkAsync('_getDownloadUrls：macOS 候选链为 国内镜像 → 官方', async () => {
+    stubHtml = '<a href="OpenJDK17U-jdk_aarch64_mac_hotspot_17.0.16.8_1.tar.gz">x</a>';
+    const list = await jre._getDownloadUrls('17', 'macos', 'arm64');
+    assert.strictEqual(list.length, 2, `候选数应为 2: ${JSON.stringify(list)}`);
+    assert.strictEqual(list[0].from, 'tuna', 'macOS 应国内镜像优先');
+    assert.strictEqual(list[1].from, 'temurin', '官方源应兜底');
+    assert.ok(list[0].url.includes('mirrors.tuna.tsinghua.edu.cn'), 'tuna 直链不对');
+    assert.ok(list[1].url.includes('api.adoptium.net'), '官方直链不对');
+    assert.ok(list[1].url.includes('/ga/mac/aarch64/'), '官方直链平台段不对');
+});
+checkAsync('_getDownloadUrls：Linux / Windows 仅官方源（行为不变）', async () => {
+    stubHtml = '';
+    for (const os of ['linux', 'windows']) {
+        const list = await jre._getDownloadUrls('17', os, 'x64');
+        assert.strictEqual(list.length, 1, `${os} 应仅 1 个候选`);
+        assert.strictEqual(list[0].from, 'temurin', `${os} 不应走镜像`);
+    }
+});
+checkAsync('_getDownloadUrls：锁定 jre.version 时跳过镜像', async () => {
+    const cfg = require('../src/config');
+    const origGet = cfg.getConfig.bind(cfg);
+    cfg.getConfig = (key, def) => (key === 'jre.version' ? 'jdk-17.0.12+7' : origGet(key, def));
+    try {
+        const list = await jre._getDownloadUrls('17', 'macos', 'arm64');
+        assert.strictEqual(list.length, 1, '锁定版本后应仅官方源');
+        assert.strictEqual(list[0].from, 'temurin');
+        assert.ok(list[0].url.includes('/version/jdk-17.0.12+7/'), '锁定版本未走 version 路径');
+    } finally {
+        cfg.getConfig = origGet;
+    }
+});
+checkAsync('_getDownloadUrls：TUNA 不可达时 macOS 回退官方（不抛错）', async () => {
+    stubThrow = true;
+    const list = await jre._getDownloadUrls('17', 'macos', 'arm64');
+    stubThrow = false;
+    assert.strictEqual(list.length, 1, `应仅剩官方源: ${JSON.stringify(list)}`);
+    assert.strictEqual(list[0].from, 'temurin');
+});
+
+(async () => {
+    for (const { title, fn } of asyncChecks) {
+        try { await fn(); console.log(`  ✅ ${title}`); passed++; }
+        catch (e) { console.log(`  ❌ ${title}\n     ${e.message}`); failed++; }
+    }
+    axios.get = realAxiosGet; // 还原 axios，避免影响同进程后续模块
+    console.log(`\n结果: ${passed} 通过, ${failed} 失败\n`);
+    process.exit(failed ? 1 : 0);
+})();

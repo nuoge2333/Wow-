@@ -40,8 +40,43 @@ const JRE_SOURCES = {
             linux: 'linux',
             macos: 'macos'
         }
+    },
+    // 国内镜像源：清华大学 TUNA Adoptium 镜像（V3.5.12）
+    // 官方 api.adoptium.net 会 307 跳 GitHub Release 对象存储，国内下载慢且常中断；
+    // TUNA 直接镜像静态文件，与官方产物同源（Eclipse Temurin）。
+    // 布局：/Adoptium/{feature}/jdk/{arch}/{os}/OpenJDK{feature}U-jdk_{arch}_{os}_hotspot_{ver}.tar.gz
+    // 注意：静态镜像没有「latest」API，需拉目录列表自行取最高版本。
+    tuna: {
+        baseUrl: 'https://mirrors.tuna.tsinghua.edu.cn/Adoptium',
+        platformMap: {
+            windows: 'windows',
+            linux: 'linux',
+            macos: 'mac'
+        },
+        archMap: {
+            x64: 'x64',
+            arm64: 'aarch64'
+        }
     }
 };
+
+// V3.5.12：Temurin 静态文件版本号 → 可比较的键。
+// 形如 '21.0.12.1_1'（11+）与 '8u504b01'（JDK 8 专用格式：update 号 + 构建字母 + 构建号）。
+// 按「数字/字母串」切片后逐段比较：数字按数值、字母按字符码。
+function _tunaVerKey(ver) {
+    return String(ver).match(/\d+|[a-zA-Z]+/g).map(tok =>
+        /^\d+$/.test(tok) ? parseInt(tok, 10) : tok.charCodeAt(0)
+    );
+}
+function _cmpTunaVerKey(a, b) {
+    const n = Math.max(a.length, b.length);
+    for (let i = 0; i < n; i++) {
+        const x = i < a.length ? a[i] : -1;
+        const y = i < b.length ? b[i] : -1;
+        if (x !== y) return x < y ? -1 : 1;
+    }
+    return 0;
+}
 
 // V3.5.7：MC 版本号必须按「点分整数」比较，不能用 parseFloat
 // （parseFloat('1.8.9')=1.8 会被当成 1.80，比 1.16 还大 → 误判 Java 版本）
@@ -124,6 +159,76 @@ class JreManager {
     }
 
     /**
+     * V3.5.12：解析清华 TUNA 国内镜像上指定特征版本的最新文件直链。
+     * TUNA 为静态目录，无 latest API——拉目录列表，按文件名中的版本号取最高。
+     * 失败（网络不通 / 目录不存在 / 无匹配文件）一律返回 null，由调用方回退官方源。
+     *
+     * @param {string} feature 特征版本（8/11/17/21）
+     * @param {string} osName TUNA 平台名（windows/linux/mac）
+     * @param {string} archName TUNA 架构名（x64/aarch64）
+     * @returns {Promise<string|null>} 直链或 null
+     */
+    async _resolveTunaLatestUrl(feature, osName, archName) {
+        // 镜像地址可经 jre.mirror 配置覆盖；置空 = 跳过镜像直连官方
+        const configured = this.config.getConfig('jre.mirror', JRE_SOURCES.tuna.baseUrl);
+        const base = String(configured || '').trim().replace(/\/+$/, '');
+        if (!base) return null;
+        const dir = `${base}/${feature}/jdk/${archName}/${osName}/`;
+        try {
+            const resp = await axios.get(dir, {
+                timeout: 15000,
+                headers: { 'User-Agent': 'wow-server-panel/3.5.12 (+https://gitee.com/nuoge233/wow)' }
+            });
+            const html = String(resp.data || '');
+            // 文件名：OpenJDK21U-jdk_x64_mac_hotspot_21.0.12.1_1.tar.gz
+            //       OpenJDK8U-jdk_x64_mac_hotspot_8u504b01.tar.gz（JDK 8 专用格式）
+            const re = new RegExp(
+                `OpenJDK${feature}U-jdk_${archName}_${osName}_hotspot_([0-9a-zA-Z._]+)\\.tar\\.gz`, 'g'
+            );
+            let m;
+            let bestFile = null;
+            let bestKey = null;
+            while ((m = re.exec(html)) !== null) {
+                const key = _tunaVerKey(m[1]);
+                if (!bestKey || _cmpTunaVerKey(key, bestKey) > 0) {
+                    bestFile = m[0];
+                    bestKey = key;
+                }
+            }
+            return bestFile ? `${dir}${bestFile}` : null;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    /**
+     * V3.5.12：按优先级返回 JRE 下载候选链。
+     * macOS 优先国内镜像（TUNA），失败回退 Adoptium 官方 API；
+     * Windows / Linux 维持官方源不变（用户未要求改动，保持行为稳定）。
+     * 用户锁定完整版本（jre.version）时跳过镜像——精确版本由官方 API 解析。
+     *
+     * @returns {Promise<Array<{url:string, from:string}>>}
+     */
+    async _getDownloadUrls(version, os, arch) {
+        const official = this._getDownloadUrl(version, os, arch);
+        const candidates = [];
+        if (!official) return candidates;
+
+        const userPinned = this.config.getConfig('jre.version', null);
+        const feature = this._getFeatureVersion(version);
+        if (os === 'macos' && !userPinned && feature) {
+            const tunaUrl = await this._resolveTunaLatestUrl(
+                feature,
+                JRE_SOURCES.tuna.platformMap[os],
+                JRE_SOURCES.tuna.archMap[arch] || 'x64'
+            );
+            if (tunaUrl) candidates.push({ url: tunaUrl, from: 'tuna' });
+        }
+        candidates.push({ url: official, from: 'temurin' });
+        return candidates;
+    }
+
+    /**
      * 获取特征版本号
      * V3.5.7：入参归一化为字符串。旧实现只与字符串字面量比较，
      * 传入数字 8（getJavaExecutable(8) 这类调用很自然）会返回 null，
@@ -168,17 +273,38 @@ class JreManager {
         // 下载
         console.log(`正在下载 JRE ${version} (${this.os}-${this.arch})...`);
         logger.impt(`下载 JRE: ${version} (${this.os}-${this.arch})`);
-        const downloadUrl = this._getDownloadUrl(featureVersion, this.os, this.arch);
-        if (!downloadUrl) {
+        // V3.5.12：国内镜像优先的候选链（macOS：清华TUNA → Adoptium 官方）
+        const candidates = await this._getDownloadUrls(featureVersion, this.os, this.arch);
+        if (!candidates.length) {
             throw new Error(`无法获取 JRE ${version} 的下载链接`);
         }
 
         const tempDir = path.join(this.jreDir, `temp_${featureVersion}`);
         fs.ensureDirSync(tempDir);
 
+        // 依次尝试各源，全部失败才抛错
+        let archivePath = null;
+        const failures = [];
+        for (const cand of candidates) {
+            const label = cand.from === 'tuna' ? '国内镜像(清华TUNA)' : '官方源(Adoptium)';
+            try {
+                console.log(`  尝试${label}: ${cand.url}`);
+                archivePath = await this._downloadFile(cand.url, tempDir, `jre-${featureVersion}`);
+                console.log(`  ✅ 下载成功（${label}）`);
+                logger.info(`JRE 下载成功(${label}): ${version}`);
+                break;
+            } catch (e) {
+                failures.push(`${label}: ${e.message}`);
+                logger.warn(`JRE 下载失败(${label}): ${version} -> ${e.message}`);
+                console.log(`  ❌ 失败（${label}），尝试下一个源...`);
+            }
+        }
+        if (!archivePath) {
+            try { fs.removeSync(tempDir); } catch (err) { /* ignore */ }
+            throw new Error(`JRE ${version} 所有下载源均失败: ${failures.join('; ')}`);
+        }
+
         try {
-            // 下载 JRE 包
-            const archivePath = await this._downloadFile(downloadUrl, tempDir, `jre-${featureVersion}`);
 
             // 解压到临时目录（而不是直接解到 versionDir）：
             // Temurin 的归档内层会再套一层 jdk-17.0.12+7/，直接解到 versionDir 会得到

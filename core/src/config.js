@@ -85,7 +85,11 @@ const DEFAULT_CONFIG = {
     },
     jre: {
         dir: 'jre',
-        auto_download: true
+        auto_download: true,
+        // V3.5.12：JRE 国内镜像源（清华 TUNA Adoptium 镜像，静态文件与官方同源）。
+        // macOS 下载 JRE 时优先使用；不可达自动回退 Adoptium 官方 API。
+        // 置空则跳过镜像直连官方。
+        mirror: 'https://mirrors.tuna.tsinghua.edu.cn/Adoptium'
     },
     auto_scheme: true,
     // 联机 / 内网穿透（陶瓦 Terracotta）配置 V3.3.0

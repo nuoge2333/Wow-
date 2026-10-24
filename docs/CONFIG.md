@@ -292,6 +292,7 @@ auth:
 |------|------|--------|------|
 | `dir` | string | `jre` | JRE 存储路径（位于 core/ 内） |
 | `auto_download` | boolean | `true` | 是否按需自动下载 JRE |
+| `mirror` | string | `https://mirrors.tuna.tsinghua.edu.cn/Adoptium` | JRE 国内镜像源（清华 TUNA，与官方产物同源）。**仅 macOS 下载时优先使用**，失败自动回退 Adoptium 官方；置空则跳过镜像直连官方（V3.5.12 新增） |
 | `version` | string | `null` | 锁定 Temurin 完整版本号（如 `17.0.12+7`）；`null` 自动取该特征版本的最新 GA |
 
 #### Java 版本选择逻辑（V3.5.7）
@@ -303,6 +304,7 @@ auth:
    按 `Minecraft 版本 → 所需 Java 版本` 精确匹配
 3. **内置 JRE** — `core/jre/<特征版本>/bin/java`
 4. **自动下载** — 以上都没有时，从 Eclipse Temurin 下载对应版本
+   （macOS 优先走 `jre.mirror` 国内镜像，失败自动回退官方源，V3.5.12 起）
 
 **Minecraft 版本与 Java 要求的对应关系：**
 
@@ -417,6 +419,7 @@ pool:
 jre:
   dir: jre
   auto_download: true
+  mirror: https://mirrors.tuna.tsinghua.edu.cn/Adoptium   # 置空则跳过镜像直连官方
 ```
 
 ---
