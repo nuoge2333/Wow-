@@ -532,15 +532,32 @@ async function startDaemon() {
     const child = spawn(bin, ['--hmcl', PORT_FILE], {
         cwd: LAN_DIR,
         windowsHide: true,
-        stdio: ['ignore', 'ignore', 'ignore']
+        // V3.5.14：此前为 'ignore'，陶瓦崩溃时的真实原因被完全丢弃，
+        // 用户只能看到「请检查网络 / 防火墙」这种无从下手的提示。
+        // 现改为 pipe 并留存输出，失败时原样回显给用户。
+        stdio: ['ignore', 'pipe', 'pipe']
     });
+    // 收集子进程输出（上限 20KB，防止异常刷屏撑爆内存）
+    let childOut = '';
+    const collect = d => {
+        childOut += d.toString();
+        if (childOut.length > 20000) childOut = childOut.slice(-20000);
+    };
+    if (child.stdout) child.stdout.on('data', collect);
+    if (child.stderr) child.stderr.on('data', collect);
+    // spawn 失败的信号（ENOENT / EACCES / noexec 挂载等）
+    let spawnError = null;
+    child.on('error', e => {
+        spawnError = e;
+        console.error(`[lan] 启动陶瓦失败: ${e.message}`);
+    });
+    // 进程提前退出（崩溃 / 架构不匹配 / 缺少依赖）
+    let exitInfo = null;
+    child.on('exit', (code, signal) => { exitInfo = { code, signal }; });
     // 守护进程是长驻服务：unref 使其不阻止本 Node 进程退出（如 lan host 子进程、
     // 或 auto_host 所在的 server start 主进程）。父进程退出时陶瓦会被托管继续运行，
     // 关房时由 stopHost 依据 .lan.json 中的 pid 显式清理。
     if (typeof child.unref === 'function') child.unref();
-    child.on('error', e => {
-        console.error(`[lan] 启动陶瓦失败: ${e.message}`);
-    });
 
     // 轮询端口文件，等待陶瓦写入 {"port": N}
     const deadline = Date.now() + 20000;
@@ -556,12 +573,44 @@ async function startDaemon() {
                 }
             }
         } catch (e) { /* 文件尚未写好，继续等 */ }
+        // V3.5.14：先读端口再判断退出——进程可能「写完端口文件后立即退出」（如某个
+        // 中间版本的行为），若先检查 exitInfo 会漏掉已写好的有效端口。
+        if (spawnError || exitInfo) break;
         await sleep(200);
     }
 
     if (!port) {
         try { child.kill(); } catch (e) {}
-        throw new Error('启动陶瓦超时：未能读取本地 API 端口。请检查网络 / 防火墙，或查看陶瓦日志。');
+        // V3.5.14：给出可执行的诊断，而不是笼统地「请检查网络 / 防火墙」
+        const lines = ['启动陶瓦失败：未能读取本地 API 端口'];
+        if (spawnError) {
+            lines.push(`  无法执行陶瓦二进制：${spawnError.message}`);
+            if (spawnError.code === 'EACCES') {
+                lines.push('  常见原因：所在分区挂载了 noexec（无法执行程序），或文件缺少执行权限。');
+                lines.push(`  可将 wow 放到允许执行的分区（如用户主目录下的普通目录）后重试。`);
+            } else if (spawnError.code === 'ENOENT') {
+                lines.push('  二进制文件不存在或已被清理，可删除 core/lan/terracotta 后重试。');
+            }
+        } else if (exitInfo) {
+            const how = exitInfo.signal
+                ? `被信号 ${exitInfo.signal} 终止`
+                : `退出码 ${exitInfo.code}`;
+            lines.push(`  陶瓦进程启动后立即退出（${how}）。`);
+            lines.push('  常见原因：二进制与当前系统架构不符、依赖库缺失、临时目录不可写或磁盘已满。');
+        } else {
+            lines.push('  陶瓦进程已启动，但 20 秒内未写入端口文件。');
+            lines.push('  常见原因：杀毒软件 / 安全策略拦截、临时目录（$TMPDIR）不可写、磁盘已满。');
+        }
+        const out = childOut.trim();
+        if (out) {
+            lines.push('  ── 陶瓦输出 ──');
+            lines.push(out.split('\n').slice(-12).join('\n'));
+        } else {
+            lines.push('  （陶瓦没有任何输出，通常是进程未能真正执行）');
+        }
+        lines.push(`  完整日志一般位于: ${path.join(os.tmpdir(), 'terracotta')}/<时间戳>/application.log`);
+        lines.push(`  二进制: ${bin}`);
+        throw new Error(lines.join('\n'));
     }
 
     writeState({ pid: child.pid, port, binaryPath: bin, portFile: PORT_FILE, running: true });
