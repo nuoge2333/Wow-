@@ -104,6 +104,13 @@ check('进程提前退出时不再空等满 20 秒（且先读端口再判退出
     assert.ok(readIdx >= 0 && readIdx < breakIdx,
         '应先读取端口文件再判断进程退出，否则漏掉已写好的端口');
 });
+check('陶瓦以 detached 方式启动（不被终端 Ctrl+C 连坐）', () => {
+    const src = fs.readFileSync(SRC, 'utf8');
+    const spawnCall = src.slice(src.indexOf("spawn(bin, ['--hmcl', PORT_FILE]"), src.indexOf("spawn(bin, ['--hmcl', PORT_FILE]") + 600);
+    assert.ok(/detached:\s*true/.test(spawnCall),
+        '陶瓦未设置 detached:true —— 终端 SIGINT 会连带杀死它，' +
+        '表现为日志出现 Received SIGINT 而 wow 报「未能读取本地 API 端口」');
+});
 
 // ─────────────────────────────────────────────
 console.log('\n— 行为级：真实子进程 —');

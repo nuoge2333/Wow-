@@ -532,6 +532,14 @@ async function startDaemon() {
     const child = spawn(bin, ['--hmcl', PORT_FILE], {
         cwd: LAN_DIR,
         windowsHide: true,
+        // V3.5.15：陶瓦是长驻守护进程，必须脱离 wow 的进程组。
+        // 否则终端把 Ctrl+C（SIGINT）发给整个前台进程组时，陶瓦会被一并杀掉——
+        // 实际表现为日志里「Rocket has launched from ...」之后紧跟
+        // 「Warning: Received SIGINT. Requesting shutdown.」，而 wow 侧只看到
+        // 「未能读取本地 API 端口」，完全误导。
+        // detached 后陶瓦自成会话/进程组，不再接收终端的控制信号；
+        // 关房仍由 stopHost 依据 .lan.json 中的 pid 显式清理。
+        detached: true,
         // V3.5.14：此前为 'ignore'，陶瓦崩溃时的真实原因被完全丢弃，
         // 用户只能看到「请检查网络 / 防火墙」这种无从下手的提示。
         // 现改为 pipe 并留存输出，失败时原样回显给用户。
