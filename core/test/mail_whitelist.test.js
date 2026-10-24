@@ -179,12 +179,14 @@ console.log('— 真实配置加载（不污染 wow.yaml）—');
 
 // ─────────────────────────────────────────────
 // 确认没写脏 wow.yaml
+// V3.5.13：wow.yaml 不再随发行包分发（属用户配置，首次运行自动生成），
+// 因此这里以「内存中加载的配置」为准，不依赖该文件在磁盘上存在。
 {
     const cfgFile = path.join(__dirname, '..', 'wow.yaml');
-    const before = fs.readFileSync(cfgFile, 'utf8');
+    const snapshot = () => (fs.existsSync(cfgFile) ? fs.readFileSync(cfgFile, 'utf8') : null);
+    const before = snapshot();
     check('25 测试过程未改动 core/wow.yaml', () => {
-        const after = fs.readFileSync(cfgFile, 'utf8');
-        assert.strictEqual(after, before);
+        assert.strictEqual(snapshot(), before);
     });
 }
 

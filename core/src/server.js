@@ -543,6 +543,31 @@ class ServerManager {
     }
 
     /**
+     * V3.5.13：诊断并报告「配置指向的方案目录不存在」。
+     *
+     * getServerDir() 在方案目录缺失时会静默回退到 scheme 根目录，导致原本的
+     * 「未找到服务器核心」提示严重误导——用户会以为方案还在、只是核心丢了，
+     * 从而被引导去执行 scheme switch <方案>（对不存在的方案只会再报一次错）。
+     *
+     * @returns {boolean} true 表示确实缺失（已输出诊断），false 表示目录存在、不该报错
+     */
+    _reportMissingSchemeDir(schemeName) {
+        const schemeDir = utils.resolvePath(path.join('../scheme', schemeName));
+        if (fs.existsSync(schemeDir)) return false;
+        console.error('未找到服务器核心（.jar）');
+        console.error(`当前配置指向的方案「${schemeName}」目录不存在`);
+        console.error('配置位置: core/wow.yaml -> server.scheme');
+        console.error(`期望目录: ${schemeDir}`);
+        console.error(`当前实际使用: ${this.serverDir}（已回退到 scheme 根目录）`);
+        console.error('');
+        console.error('常见原因：换了新的解压目录（旧方案仍在旧目录里），或方案已删除。');
+        console.error(`若方案在旧目录：复制 ${path.join('旧目录', 'scheme', schemeName)} 到 ${path.join('本目录', 'scheme', schemeName)}`);
+        console.error(`若需重新建方案: scheme create ${schemeName} --type <类型> --version <MC版本>`);
+        logger.erro(`启动服务器失败：方案目录不存在（方案=${schemeName}，期望目录=${schemeDir}）`);
+        return true;
+    }
+
+    /**
      * 获取服务器核心文件
      */
     _getServerJar() {
@@ -756,6 +781,9 @@ class ServerManager {
         // 缺少核心/模组文件，必须先 materialize 才能启动。
         const activeScheme = this.config.getConfig('server.scheme', null);
         if (activeScheme) {
+            // V3.5.13：方案目录不存在时后续步骤必然失败（getServerDir 已回退到 scheme 根目录），
+            // 立刻中止并明确说明原因，避免把「目录不存在」误报成「核心丢失」。
+            if (this._reportMissingSchemeDir(activeScheme)) return;
             try {
                 const SchemeManager = require('./scheme_manager');
                 const sm = new SchemeManager();
@@ -784,6 +812,8 @@ class ServerManager {
         } catch (e) {
             // V3.5.2 起核心安装统一走 scheme create，不再存在 install <类型> <版本> 命令
             const activeScheme = this.config.getConfig('server.scheme', null);
+            // V3.5.13：兜底——正常流程已在补齐检查前拦下「方案目录不存在」，此处仅在异常路径下复用同一诊断。
+            if (activeScheme && this._reportMissingSchemeDir(activeScheme)) return;
             console.error('未找到服务器核心（.jar）');
             if (activeScheme) {
                 console.error(`当前方案「${activeScheme}」目录内没有可运行的核心`);
