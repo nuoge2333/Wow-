@@ -171,6 +171,7 @@ for item in "$PROJECT_DIR"/*; do
     #   scheme  = V3.5.2 起的服务器运行目录（含用户方案/存档，绝不可覆盖）
     #   logs    = 运行日志
     #   update.sh = 正在执行的自更新脚本本体，覆盖会导致运行中的字节流被改写而报错
+    #   core/tunnel = V3.5.16 起 cloudflared 二进制的落地目录（几十 MB，不必随包更新）
     case "$name" in
         scheme|node_modules|.git|.gitignore|logs|update.sh)
             continue

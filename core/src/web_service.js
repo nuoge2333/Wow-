@@ -29,6 +29,8 @@ let wsServer = null;
 let ioServer = null;
 let isRunning = false;
 let logTailProcess = null;
+// V3.5.16：Cloudflare Tunnel 句柄（用于 stopWeb 时一并关闭）
+let tunnelHandle = null;
 
 // PID 文件路径（跨进程状态持久化）
 const WEB_PID_FILE = path.join(__dirname, '../.web.pid');
@@ -38,6 +40,37 @@ const WEB_PORT_FILE = path.join(__dirname, '../.web.port');
 
 // 内存中的验证码存储: { email: { code, expires } }
 const verificationCodes = new Map();
+
+/**
+ * V3.5.16：Web 端是否需要登录才能进入（mail.login_verify）
+ * ---------------------------------------------------------------
+ * 配置项在主预期位置 mail.login_verify；同时兜底识别 web.login_verify，
+ * 避免用户按直觉写到 web 段时「设了却没生效」。
+ * 默认 true（保持既有行为：必须登录）。只有显式 false / "false" / 0 / "0" 才关闭。
+ */
+function isLoginVerifyEnabled() {
+    let v = config.getConfig('mail.login_verify', undefined);
+    if (v === undefined || v === null || v === '') {
+        v = config.getConfig('web.login_verify', true);
+    }
+    if (v === false || v === 0) return false;
+    if (typeof v === 'string') {
+        const s = v.trim().toLowerCase();
+        if (s === 'false' || s === '0' || s === 'no' || s === 'off') return false;
+    }
+    return true;
+}
+
+/**
+ * V3.5.16：判断当前绑定地址是否把面板暴露到本机之外
+ * 127.0.0.1 / ::1 / localhost 之外的任何绑定（含 0.0.0.0、局域网 IP）都算对外暴露。
+ */
+function isExposedHost(host) {
+    const h = String(host || '').trim().toLowerCase();
+    if (!h) return false;
+    if (h === '127.0.0.1' || h === 'localhost' || h === '::1' || h === '[::1]') return false;
+    return true;
+}
 
 // JWT 密钥
 function getJwtSecret() {
@@ -105,10 +138,15 @@ function generateAndSendCode(email) {
  */
 function authMiddleware(req, res, next) {
     try {
+        // V3.5.16：mail.login_verify=false 时，面板整体免登录。
+        // 只在「未对外暴露」时才允许这么做（对外暴露的强制校验见 startWeb）。
+        if (!isLoginVerifyEnabled()) {
+            return next();
+        }
         // 白名单路径（无需认证）
         // 注：/api/download 允许通过 ?token= 认证（浏览器 window.open 无法带 Authorization 头），
         //     故在中间件层放行，由路由内部完成校验。
-        const publicPaths = ['/api/auth/request-code', '/api/auth/login', '/api/auth/verify', '/api/download'];
+        const publicPaths = ['/api/auth/request-code', '/api/auth/login', '/api/auth/verify', '/api/auth/config', '/api/download'];
         if (publicPaths.includes(req.path)) {
             return next();
         }
@@ -142,13 +180,64 @@ function authMiddleware(req, res, next) {
  */
 function startWeb(options = {}) {
     const port = options.port || config.getConfig('web.port', 8080);
-    const host = options.host || config.getConfig('web.host', '127.0.0.1');
+
+    // V3.5.16：--public / --host 0.0.0.0 显式对外暴露
+    // 优先级：显式 --host > --public（等价 0.0.0.0）> 配置 web.host > 默认回环
+    let host = options.host;
+    if (!host && options.public) host = '0.0.0.0';
+    if (!host) host = config.getConfig('web.host', '127.0.0.1');
+    host = String(host).trim() || '127.0.0.1';
+
     const theme = config.getConfig('web.theme', 'default');
 
     // 如果已启动，先停止
     if (isRunning) {
         console.log('Web 服务已在运行中');
         return;
+    }
+
+    // ===== V3.5.16 安全闸门 =====
+    // 1) 对外暴露 + 没有任何凭据 => 强制拒绝启动。
+    //    「凭据」= web.auth_token（JWT 签名密钥）或 web.auth_password（离线密码）。
+    //    两者都为空时，暴露到公网等同把服务器控制权无条件交出。
+    // 2) 对外暴露 + login_verify=false => 同样拒绝。
+    //    免登录只允许在回环地址上生效，否则等于给公网开了个无锁后门。
+    if (isExposedHost(host)) {
+        const authToken = config.getConfig('web.auth_token', null);
+        const authPassword = config.getConfig('web.auth_password', null);
+        const hasToken = !!(authToken && String(authToken).trim());
+        const hasPassword = !!(authPassword && String(authPassword).trim());
+
+        if (!hasToken && !hasPassword) {
+            console.error('');
+            console.error('❌ 拒绝启动：暴露公网必须设置 auth_token 或管理员密码！');
+            console.error('');
+            console.error(`   当前绑定地址: ${host}${host === '0.0.0.0' ? '（所有网卡，等于对外暴露）' : '（非回环地址，可被外部访问）'}`);
+            console.error('   但 wow.yaml 里 web.auth_token 与 web.auth_password 都为空。');
+            console.error('');
+            console.error('   任选一种方式补齐后再启动：');
+            console.error('     wow config set web.auth_password 你的密码    # 推荐，Web 登录用');
+            console.error('     wow config set web.auth_token  一串足够长的随机字符');
+            console.error('');
+            console.error('   若只想本机访问，去掉 --public / --host 参数即可（默认 127.0.0.1）。');
+            console.error('');
+            logger.warn(`Web 启动被拒绝：绑定 ${host} 但未配置任何认证凭据`);
+            return;
+        }
+
+        if (!isLoginVerifyEnabled()) {
+            console.error('');
+            console.error('❌ 拒绝启动：对外暴露时不能关闭登录校验。');
+            console.error('');
+            console.error(`   当前绑定地址: ${host}`);
+            console.error('   但 wow.yaml 里 mail.login_verify = false（面板免登录）。');
+            console.error('   免登录只允许在 127.0.0.1 上使用，否则公网任何人都能直接操作你的服务器。');
+            console.error('');
+            console.error('   解决：把 mail.login_verify 改回 true，或去掉 --public / --host 参数。');
+            console.error('');
+            logger.warn(`Web 启动被拒绝：绑定 ${host} 且 mail.login_verify=false`);
+            return;
+        }
     }
 
     // 确保主题已应用
@@ -325,9 +414,31 @@ function startWeb(options = {}) {
     });
 
     /**
+     * V3.5.16：前端启动时拉取认证策略
+     * loginVerify=false 时前端应跳过登录页直接进入面板；
+     * 同时告知前端是否处于对外暴露状态，便于显示安全提示。
+     */
+    app.get('/api/auth/config', (req, res) => {
+        res.json({
+            success: true,
+            loginVerify: isLoginVerifyEnabled(),
+            // 未开登录校验时，前端直接拿到一个可用 token，避免其余接口 401
+            token: isLoginVerifyEnabled() ? null : jwt.sign(
+                { email: 'guest@local', guest: true, iat: Math.floor(Date.now() / 1000) },
+                getJwtSecret(),
+                { expiresIn: 86400 }
+            )
+        });
+    });
+
+    /**
      * 验证 token 是否有效
      */
     app.get('/api/auth/verify', (req, res) => {
+        // V3.5.16：免登录模式下所有请求都视为已认证
+        if (!isLoginVerifyEnabled()) {
+            return res.json({ valid: true, email: 'guest@local', guest: true, loginVerify: false });
+        }
         const authHeader = req.headers['authorization'];
         if (!authHeader || !authHeader.startsWith('Bearer ')) {
             return res.json({ valid: false });
@@ -1058,9 +1169,47 @@ function startWeb(options = {}) {
 
     server.listen(port, host, () => {
         isRunning = true;
-        console.log(`Web 服务已启动: http://${host}:${port}`);
+        const shownHost = (host === '0.0.0.0' || host === '::') ? '127.0.0.1' : host;
+        console.log(`Web 服务已启动: http://${shownHost}:${port}`);
+        if (host === '0.0.0.0' || host === '::') {
+            console.log(`  绑定地址: ${host}（所有网卡，局域网/公网可访问）`);
+        } else if (host !== '127.0.0.1' && host !== 'localhost') {
+            console.log(`  绑定地址: ${host}`);
+        }
         console.log(`  主题: ${theme}`);
         console.log(`  静态目录: ${webDir}`);
+
+        // V3.5.16：对外暴露时的额外提示
+        if (isExposedHost(host)) {
+            console.log('');
+            console.log('  🔒 安全提示：面板已对外暴露，登录校验已启用。');
+            console.log('     请确认 web.auth_password（或 web.auth_token）足够复杂。');
+            // 列出可用访问地址（局域网 IP），方便用户复制
+            try {
+                const nets = os.networkInterfaces();
+                const addrs = [];
+                for (const list of Object.values(nets || {})) {
+                    for (const info of list || []) {
+                        const isV4 = info.family === 'IPv4' || info.family === 4;
+                        if (isV4 && !info.internal) addrs.push(info.address);
+                    }
+                }
+                if (addrs.length) {
+                    console.log('     本机可用访问地址：');
+                    for (const a of addrs) console.log(`       http://${a}:${port}`);
+                }
+            } catch (e) { /* 枚举网卡失败不影响启动 */ }
+            console.log('');
+        }
+
+        // V3.5.16：检测到陶瓦联机已开启 -> 打印虚拟局域网 IP
+        try {
+            if (Terracotta.isRunning()) {
+                require('./netinfo').buildLanAccessHint({ port }).then(lines => {
+                    for (const line of lines) console.log(line);
+                }).catch(() => {});
+            }
+        } catch (e) { /* 探测失败不影响启动 */ }
 
         // V3.5.7：危险配置自检（仅提示，不阻断）
         try {
@@ -1102,7 +1251,64 @@ function startWeb(options = {}) {
         }
     }
 
+    // V3.5.16：Cloudflare Tunnel（--tunnel）
+    // 服务先起来再拉隧道，避免隧道抢在 listen 之前连不上 127.0.0.1。
+    if (options.tunnel) {
+        startTunnelForLocal(port).catch(e => {
+            console.error('');
+            console.error(`❌ Cloudflare Tunnel 启动失败: ${e.message}`);
+            console.error('   Web 面板本身仍在本地正常运行，可继续用本机地址访问。');
+            console.error('');
+            logger.erro(`Cloudflare Tunnel 启动失败: ${e.message}`);
+        });
+    }
+
     return server;
+}
+
+/**
+ * V3.5.16：为已启动的本地面板拉一条 Cloudflare 快速隧道
+ * 独立成函数，便于 web start --tunnel 与 web tunnel 复用。
+ */
+async function startTunnelForLocal(port) {
+    const Tunnel = require('./tunnel');
+    const localUrl = `http://127.0.0.1:${port}`;
+    console.log('');
+    console.log(`  ☁️  正在建立 Cloudflare 隧道 -> ${localUrl}`);
+    console.log('     首次使用需下载 cloudflared，请稍候...');
+
+    const t = await Tunnel.startTunnel(localUrl);
+    tunnelHandle = t;
+
+    // 高亮打印公网地址
+    const bar = '═'.repeat(58);
+    console.log('');
+    console.log(bar);
+    console.log('  🌍  公网地址已就绪（任何人可访问，请勿泄露给不受信任的人）');
+    console.log('');
+    console.log(`      ${t.url}`);
+    console.log('');
+    console.log(bar);
+    console.log('  提示：该地址每次启动都会变化；关闭 wow 后隧道随即失效。');
+    console.log(`  日志: ${t.logFile}`);
+    console.log('');
+
+    try {
+        logger.impt(`Cloudflare Tunnel 已建立: ${t.url} -> ${localUrl}`);
+    } catch (e) { /* 日志失败不影响 */ }
+
+    // 进程退出时收尾，避免 cloudflared 变孤儿
+    const cleanup = () => {
+        if (tunnelHandle) {
+            try { tunnelHandle.stop(); } catch (e) {}
+            tunnelHandle = null;
+        }
+    };
+    process.once('exit', cleanup);
+    process.once('SIGINT', () => { cleanup(); process.exit(0); });
+    process.once('SIGTERM', () => { cleanup(); process.exit(0); });
+
+    return t;
 }
 
 /**
@@ -1146,9 +1352,14 @@ function stopWeb() {
 
     // 方式 2：同进程内存模式（fallback）
     if (!isRunning || !httpServer) {
+        // V3.5.16：即便 HTTP 服务不在本进程，也要顺手关掉残留隧道
+        stopTunnelHandle();
         console.log('Web 服务未运行');
         return;
     }
+
+    // V3.5.16：先关隧道，再关 HTTP
+    stopTunnelHandle();
 
     // 停止日志推送
     stopLogTail();
@@ -1169,6 +1380,18 @@ function stopWeb() {
         httpServer = null;
         console.log('Web 服务已停止');
     });
+}
+
+/**
+ * V3.5.16：关闭隧道句柄（幂等，未开启时静默）
+ */
+function stopTunnelHandle() {
+    if (!tunnelHandle) return;
+    try {
+        tunnelHandle.stop();
+        console.log('Cloudflare 隧道已关闭');
+    } catch (e) { /* 已退出 */ }
+    tunnelHandle = null;
 }
 
 /**
@@ -1501,5 +1724,10 @@ module.exports = {
     startWeb,
     stopWeb,
     webStatus,
+    // V3.5.16
+    startTunnelForLocal,
+    stopTunnelHandle,
+    isLoginVerifyEnabled,
+    isExposedHost,
     isRunning: () => isRunning
 };

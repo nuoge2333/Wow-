@@ -57,6 +57,10 @@ const DEFAULT_CONFIG = {
         // V3.5.8：Web 面板登录邮箱白名单。只有名单内的邮箱才能获取验证码并登录面板。
         // 空数组 = 不限制（向后兼容，保持 V3.5.7 行为）。支持 "*" 通配所有邮箱。
         whitelist: [],
+        // V3.5.16：Web 端是否需要登录才能进入面板。默认 true（必须登录）。
+        // 设为 false 时面板免登录，但**仅在 127.0.0.1 上生效**；
+        // 一旦对外暴露（0.0.0.0 / 局域网 IP），wow 会拒绝启动以免变成无锁后门。
+        login_verify: true,
         send_on_crash: true,
         send_logs_interval: 0
     },

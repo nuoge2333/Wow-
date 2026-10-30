@@ -170,6 +170,25 @@ web:
 
 > ⚠️ 将 `host` 设为 `0.0.0.0` 会允许外部 IP 访问，请确保已配置防火墙或设置 `auth_token`。
 
+> 🛡️ **V3.5.16 起是强制闸门，不再是「建议」**
+>
+> 只要绑定地址不是回环（`0.0.0.0`、`::`、局域网 IP 等），且 **`web.auth_token` 与
+> `web.auth_password` 同时为空**，`wow web start` 会直接拒绝启动：
+>
+> ```
+> ❌ 拒绝启动：暴露公网必须设置 auth_token 或管理员密码！
+> ```
+>
+> 同理，对外暴露时若 `mail.login_verify = false`（面板免登录），也会被拒绝——
+> 否则等于给公网开了个无锁后门。
+>
+> 该检查在 `server.listen()` **之前**执行，不占端口。先补齐凭据再启动：
+>
+> ```bash
+> wow config set web.auth_password 你的密码
+> wow web start --public
+> ```
+
 > 🔒 **关于 `allow_scheme_ops` / `allow_remote_install`**
 > 默认均为 `false`，保持安全基线。开启 `allow_remote_install` 相当于把任意代码执行入口
 > 暴露给 Web 面板访问者，请仅在完全可信的网络环境中开启。
@@ -191,6 +210,7 @@ web:
 | `smtp.from` | string | `null` | 发件人邮箱地址 |
 | `admin_email` | string | `null` | 管理员邮箱（接收崩溃报告） |
 | `whitelist` | array | `[]` | **Web 面板登录邮箱白名单**（V3.5.8）。仅名单内邮箱可获取验证码并登录；空数组 = 不限制；含 `"*"` = 放开所有 |
+| `login_verify` | boolean | `true` | 🔺 **V3.5.16** Web 端是否需要登录才能进入面板。`false` = 免登录，但**仅在绑定 `127.0.0.1` 时生效**；对外暴露时设为 `false` 会被拒绝启动 |
 | `send_on_crash` | boolean | `true` | 是否在服务器崩溃时发送邮件通知 |
 | `send_logs_interval` | integer | `0` | 定时发送日志摘要（小时），`0` 禁用 |
 
@@ -207,9 +227,22 @@ mail:
   whitelist:
     - admin@example.com
     - friend@example.com
+  login_verify: true
   send_on_crash: true
   send_logs_interval: 24
 ```
+
+> 🔓 **`login_verify` 用法**（V3.5.16 新增）
+>
+> - 默认 `true`：沿用既有行为，进入面板必须登录（验证码或离线密码）。
+> - 设为 `false`：面板免登录，适合只在本机自用、不想每次输密码的场景。
+> - **免登录只在 `127.0.0.1` 上生效**。一旦用 `--public` / `--host` 对外暴露，
+>   wow 会拒绝启动，不会出现「公网可匿名操作服务器」的情况。
+> - 前端可通过公开接口 `GET /api/auth/config` 读取该开关：
+>   ```json
+>   { "success": true, "loginVerify": false, "token": "<guest-token>" }
+>   ```
+> - 兼容写法：写在 `web.login_verify` 下也会被识别（主位置是 `mail` 段）。
 
 > 🔐 **`whitelist` 用法**（V3.5.8 新增）
 >
@@ -391,6 +424,7 @@ mail:
     from: null
   admin_email: null
   whitelist: []
+  login_verify: true
   send_on_crash: true
   send_logs_interval: 0
 

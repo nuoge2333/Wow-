@@ -87,7 +87,7 @@ function logger() {
 program
     .name('wow')
     .description('Minecraft 服务器管理工具 - 默认优先，可以修改')
-    .version('3.5.15-26.36', '-V');
+    .version('3.5.16-26.37', '-V');
 
 // ==================== init ====================
 
@@ -526,14 +526,39 @@ webCmd
     .command('start')
     .description('启动 Web 服务')
     .option('-p, --port <port>', '端口')
-    .option('--host <host>', '绑定地址')
+    .option('--host <host>', '绑定地址（默认 127.0.0.1；填 0.0.0.0 表示所有网卡）')
+    // V3.5.16
+    .option('--public', '等价于 --host 0.0.0.0，允许局域网/公网访问（强制要求已配置认证凭据）')
+    .option('--tunnel', '同时建立 Cloudflare 快速隧道，生成公网 https 地址')
     .action((options) => {
         const webService = load('./web_service');
         if (!webService) return;
         webService.startWeb({
             port: options.port,
-            host: options.host
+            host: options.host,
+            // V3.5.16
+            public: options.public === true,
+            tunnel: options.tunnel === true
         });
+    });
+
+// V3.5.16：单独建立隧道（面板已在运行时使用）
+webCmd
+    .command('tunnel')
+    .description('为当前的 Web 面板建立 Cloudflare 隧道（生成公网 https 地址）')
+    .option('-p, --port <port>', '要暴露的本地端口（默认取 web.port）')
+    .action(async (options) => {
+        const webService = load('./web_service');
+        if (!webService) return;
+        const config = load('./config');
+        const port = options.port || (config && config.getConfig('web.port', 8080));
+        try {
+            const t = await webService.startTunnelForLocal(port);
+            console.log(`公网地址: ${t.url}`);
+        } catch (e) {
+            console.error(`❌ 隧道启动失败: ${e.message}`);
+            process.exitCode = 1;
+        }
     });
 
 webCmd

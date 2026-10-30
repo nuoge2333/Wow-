@@ -893,6 +893,9 @@ async function hostRoom(opts = {}) {
         console.log(`\n✅ 开房成功！房间号: ${roomCode}`);
         console.log(`   把房间号发给好友，对方在 PCL / HMCL / BakaXL / FCL 中选择「加入陶瓦房间」并输入该房间号即可联机。`);
         console.log(`   ${TERRA_COPYRIGHT}`);
+        // V3.5.16：联机网络开启后，提示可用虚拟局域网 IP 访问 Web 面板。
+        // 只有在 Web 面板也在跑时才提示，否则对用户是噪音。
+        await printWebAccessHintIfNeeded();
         return { roomCode, port };
     } finally {
         // 陶瓦拿到端口后即进入 host-starting 并释放 scanner，广播不再需要；
@@ -902,10 +905,26 @@ async function hostRoom(opts = {}) {
 }
 
 /**
+ * V3.5.16：开房成功后，若 Web 面板正在运行，打印 EasyTier 虚拟局域网 IP。
+ * 面板没开就什么都不做 —— 避免用户只玩 MC 联机时被无关提示干扰。
+ */
+async function printWebAccessHintIfNeeded() {
+    try {
+        const WebService = require('./web_service');
+        const status = WebService.webStatus && WebService.webStatus();
+        if (!status || !status.running) return;
+        const port = parseInt(status.port, 10) || config.getConfig('web.port', 8080);
+        const lines = await require('./netinfo').buildLanAccessHint({ port });
+        for (const line of lines) console.log(line);
+    } catch (e) {
+        // 提示失败绝不影响开房结果
+    }
+}
+
+/**
  * 服务器启动时自动开房（非阻塞、尽力而为，用于 auto_room 钩子）
  */
-async function autoHost() {
-    try {
+async function autoHost() {    try {
         const res = await hostRoom({});
         if (!res) return; // 非交互下不会走到放弃开服分支，这里仅作兜底
         console.log(`\n[lan] 自动开房完成，房间号: ${res.roomCode}`);
@@ -979,6 +998,8 @@ module.exports = {
     isRunning,
     getServerPort,
     readApiLog,
+    // V3.5.16：联机网络开启时提示可用虚拟局域网 IP 访问面板
+    printWebAccessHintIfNeeded,
     API_LOG_FILE,
     TERRA_VERSION_DEFAULT,
     TERRA_MIRROR_DEFAULT

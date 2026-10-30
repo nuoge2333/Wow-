@@ -374,7 +374,7 @@ wow theme info <name>
 
 ---
 
-## 六、Web 面板管理 (3 个)
+## 六、Web 面板管理 (4 个)
 
 ### `web start`
 
@@ -388,18 +388,60 @@ wow web start [options]
 |------|------|
 | `-p, --port <port>` | 端口 (默认: 8080) |
 | `--host <host>` | 绑定地址 (默认: 127.0.0.1) |
+| `--public` | 🔺 **V3.5.16** 等价于 `--host 0.0.0.0`，局域网 / 公网可访问 |
+| `--tunnel` | 🔺 **V3.5.16** 同时建立 Cloudflare 快速隧道，生成公网 https 地址 |
 
 **示例：**
 ```bash
-# 允许远程访问
+# 允许远程访问（需先配置认证凭据，否则会被拒绝启动）
 wow web start --host 0.0.0.0 --port 8080
+
+# 等价写法
+wow web start --public
+
+# 一步到位：对外暴露 + 公网 https 地址
+wow web start --public --tunnel
+```
+
+> 🛡️ **强制安全闸门**（V3.5.16）
+>
+> 绑定地址非回环且 `web.auth_token`、`web.auth_password` 都为空时，**直接拒绝启动**：
+> `❌ 拒绝启动：暴露公网必须设置 auth_token 或管理员密码！`
+> 同时，对外暴露时若 `mail.login_verify = false`（面板免登录）也会被拒绝。
+> 检查发生在 `server.listen()` 之前，不占端口。
+
+> ☁️ **`--tunnel` 说明**
+>
+> - 首次使用会自动下载 `cloudflared` 到 `core/tunnel/`（约 20~40MB，GitHub 慢时自动切换镜像）；
+> - 成功后高亮打印 `https://xxx.trycloudflare.com`，该地址**每次启动都会变化**；
+> - `web stop` 或进程退出时自动关闭隧道，不留孤儿进程；
+> - 起不来时会回显 cloudflared 的真实输出，日志在 `core/tunnel/cloudflared.log`。
+
+---
+
+### `web tunnel`
+
+🔺 **V3.5.16** 为**已经在运行**的面板单独建立 Cloudflare 隧道。
+
+```bash
+wow web tunnel [-p <port>]
+```
+
+| 选项 | 说明 |
+|------|------|
+| `-p, --port <port>` | 要暴露的本地端口（默认取 `web.port`） |
+
+**示例：**
+```bash
+wow web tunnel
+wow web tunnel -p 8080
 ```
 
 ---
 
 ### `web stop`
 
-停止 Web 服务。
+停止 Web 服务（同时关闭 Cloudflare 隧道）。
 
 ```bash
 wow web stop
@@ -608,6 +650,24 @@ wow mail crash "测试崩溃消息"
 ```bash
 wow lan host [options]
 ```
+
+| 选项 | 说明 |
+|------|------|
+| `-r, --room <code>` | 指定固定房间号（留空则自动生成） |
+
+> 🌐 **与 Web 面板联动**（V3.5.16）
+>
+> 若 `lan host` 时 Web 面板已在运行（或反之），控制台会提示本机的
+> **EasyTier 虚拟局域网 IP（10.144.x.x）**，好友在同一个房间里可以直接用它访问面板：
+>
+> ```
+> 🌐 检测到联机网络已开启，你可以通过虚拟局域网 IP 访问面板。
+>    虚拟局域网 IP: 10.144.7.23  (网卡 easytier0)
+>    面板地址:      http://10.144.7.23:8080
+> ```
+>
+> 注意：面板默认绑定 `127.0.0.1`，虚拟 IP 访问不到。要用这个地址，
+> 需以 `wow web start --host 0.0.0.0`（或 `--public`）启动，并配置好认证凭据。
 
 ### `lan stop`
 

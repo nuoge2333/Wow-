@@ -11,6 +11,7 @@ core/pool/
 core/jre/
 core/node/
 core/lan/
+core/tunnel/
 scheme/
 core/down/
 core/temp/
