@@ -42,26 +42,6 @@ const WEB_PORT_FILE = path.join(__dirname, '../.web.port');
 const verificationCodes = new Map();
 
 /**
- * V3.5.16：Web 端是否需要登录才能进入（mail.login_verify）
- * ---------------------------------------------------------------
- * 配置项在主预期位置 mail.login_verify；同时兜底识别 web.login_verify，
- * 避免用户按直觉写到 web 段时「设了却没生效」。
- * 默认 true（保持既有行为：必须登录）。只有显式 false / "false" / 0 / "0" 才关闭。
- */
-function isLoginVerifyEnabled() {
-    let v = config.getConfig('mail.login_verify', undefined);
-    if (v === undefined || v === null || v === '') {
-        v = config.getConfig('web.login_verify', true);
-    }
-    if (v === false || v === 0) return false;
-    if (typeof v === 'string') {
-        const s = v.trim().toLowerCase();
-        if (s === 'false' || s === '0' || s === 'no' || s === 'off') return false;
-    }
-    return true;
-}
-
-/**
  * V3.5.16：判断当前绑定地址是否把面板暴露到本机之外
  * 127.0.0.1 / ::1 / localhost 之外的任何绑定（含 0.0.0.0、局域网 IP）都算对外暴露。
  */
@@ -138,15 +118,10 @@ function generateAndSendCode(email) {
  */
 function authMiddleware(req, res, next) {
     try {
-        // V3.5.16：mail.login_verify=false 时，面板整体免登录。
-        // 只在「未对外暴露」时才允许这么做（对外暴露的强制校验见 startWeb）。
-        if (!isLoginVerifyEnabled()) {
-            return next();
-        }
         // 白名单路径（无需认证）
         // 注：/api/download 允许通过 ?token= 认证（浏览器 window.open 无法带 Authorization 头），
         //     故在中间件层放行，由路由内部完成校验。
-        const publicPaths = ['/api/auth/request-code', '/api/auth/login', '/api/auth/verify', '/api/auth/config', '/api/download'];
+        const publicPaths = ['/api/auth/request-code', '/api/auth/login', '/api/auth/verify', '/api/download'];
         if (publicPaths.includes(req.path)) {
             return next();
         }
@@ -197,45 +172,26 @@ function startWeb(options = {}) {
     }
 
     // ===== V3.5.16 安全闸门 =====
-    // 1) 对外暴露 + 没有任何凭据 => 强制拒绝启动。
-    //    「凭据」= web.auth_token（JWT 签名密钥）或 web.auth_password（离线密码）。
-    //    两者都为空时，暴露到公网等同把服务器控制权无条件交出。
-    // 2) 对外暴露 + login_verify=false => 同样拒绝。
-    //    免登录只允许在回环地址上生效，否则等于给公网开了个无锁后门。
+    // 对外暴露 + web.auth_token 为空 => 强制拒绝启动。
+    // 没有签名密钥时，JWT 校验形同虚设，暴露到公网等同于把服务器控制权交出去。
     if (isExposedHost(host)) {
         const authToken = config.getConfig('web.auth_token', null);
-        const authPassword = config.getConfig('web.auth_password', null);
         const hasToken = !!(authToken && String(authToken).trim());
-        const hasPassword = !!(authPassword && String(authPassword).trim());
 
-        if (!hasToken && !hasPassword) {
+        if (!hasToken) {
             console.error('');
             console.error('❌ 拒绝启动：暴露公网必须设置 auth_token 或管理员密码！');
             console.error('');
             console.error(`   当前绑定地址: ${host}${host === '0.0.0.0' ? '（所有网卡，等于对外暴露）' : '（非回环地址，可被外部访问）'}`);
-            console.error('   但 wow.yaml 里 web.auth_token 与 web.auth_password 都为空。');
+            console.error('   但 wow.yaml 里 web.auth_token 为空。');
             console.error('');
             console.error('   任选一种方式补齐后再启动：');
-            console.error('     wow config set web.auth_password 你的密码    # 推荐，Web 登录用');
             console.error('     wow config set web.auth_token  一串足够长的随机字符');
+            console.error('     wow config set web.auth_password 你的密码    # 离线密码登录');
             console.error('');
             console.error('   若只想本机访问，去掉 --public / --host 参数即可（默认 127.0.0.1）。');
             console.error('');
-            logger.warn(`Web 启动被拒绝：绑定 ${host} 但未配置任何认证凭据`);
-            return;
-        }
-
-        if (!isLoginVerifyEnabled()) {
-            console.error('');
-            console.error('❌ 拒绝启动：对外暴露时不能关闭登录校验。');
-            console.error('');
-            console.error(`   当前绑定地址: ${host}`);
-            console.error('   但 wow.yaml 里 mail.login_verify = false（面板免登录）。');
-            console.error('   免登录只允许在 127.0.0.1 上使用，否则公网任何人都能直接操作你的服务器。');
-            console.error('');
-            console.error('   解决：把 mail.login_verify 改回 true，或去掉 --public / --host 参数。');
-            console.error('');
-            logger.warn(`Web 启动被拒绝：绑定 ${host} 且 mail.login_verify=false`);
+            logger.warn(`Web 启动被拒绝：绑定 ${host} 但未配置 web.auth_token`);
             return;
         }
     }
@@ -414,31 +370,9 @@ function startWeb(options = {}) {
     });
 
     /**
-     * V3.5.16：前端启动时拉取认证策略
-     * loginVerify=false 时前端应跳过登录页直接进入面板；
-     * 同时告知前端是否处于对外暴露状态，便于显示安全提示。
-     */
-    app.get('/api/auth/config', (req, res) => {
-        res.json({
-            success: true,
-            loginVerify: isLoginVerifyEnabled(),
-            // 未开登录校验时，前端直接拿到一个可用 token，避免其余接口 401
-            token: isLoginVerifyEnabled() ? null : jwt.sign(
-                { email: 'guest@local', guest: true, iat: Math.floor(Date.now() / 1000) },
-                getJwtSecret(),
-                { expiresIn: 86400 }
-            )
-        });
-    });
-
-    /**
      * 验证 token 是否有效
      */
     app.get('/api/auth/verify', (req, res) => {
-        // V3.5.16：免登录模式下所有请求都视为已认证
-        if (!isLoginVerifyEnabled()) {
-            return res.json({ valid: true, email: 'guest@local', guest: true, loginVerify: false });
-        }
         const authHeader = req.headers['authorization'];
         if (!authHeader || !authHeader.startsWith('Bearer ')) {
             return res.json({ valid: false });
@@ -1727,7 +1661,6 @@ module.exports = {
     // V3.5.16
     startTunnelForLocal,
     stopTunnelHandle,
-    isLoginVerifyEnabled,
     isExposedHost,
     isRunning: () => isRunning
 };

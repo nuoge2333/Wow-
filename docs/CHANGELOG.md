@@ -8,7 +8,8 @@
 
 | 版本 | 状态 | 发布时间 |
 |------|------|------|
-| **3.5.16-26.37** | 当前版本 |2026-10-30|
+| **3.5.17-26.38** | 当前版本 |2026-10-31|
+| **3.5.16-26.37** | 上一版本 |2026-10-30|
 | **3.5.15-26.36** | 上一版本 |2026-10-24|
 | **3.5.14-26.35** | 上一版本 |2026-10-24|
 | **3.5.13-26.34** | 上一版本 |2026-10-24|
@@ -71,6 +72,57 @@
 
 ---
 
+## [3.5.17-26.38] — 2026-10-31
+
+> 主题：**回滚 `mail.login_verify`——该需求与既有登录机制重复，不应实现**。
+
+### 🔙 回滚内容
+
+3.5.16 里实现了 `mail.login_verify`（控制 Web 端是否需要登录）。但该需求原文附带
+「如果之前的配置或代码已经有了，请忽略此条」，而 wow 早已有完整的登录控制机制：
+
+| 既有能力 | 作用 |
+|----------|------|
+| `web.auth_token` | JWT 签名密钥，缺失时校验形同虚设 |
+| `web.auth_password` | 离线密码登录（不配 SMTP 时的替代方式） |
+| `mail.whitelist` | 登录邮箱白名单 |
+| `web.dev_mode` | 开发模式下回显验证码 |
+
+判断「功能已存在」时只搜了 `login_verify` 字面键名便下了结论，属于核对不到位。
+本次整条移除：
+
+- 删除 `DEFAULT_CONFIG.mail.login_verify`
+- 删除 `isLoginVerifyEnabled()` 及其在 `authMiddleware` 中的免登录短路
+- 删除 `GET /api/auth/config` 路由与 `publicPaths` 中的对应项
+- 删除 `/api/auth/verify` 的免登录分支
+- 删除「对外暴露 + `login_verify=false`」这道附加闸门
+
+### 🔧 安全闸门回归原始要求
+
+V3.5.16 曾把判断放宽为「`auth_token` **或** `auth_password` 任一有值即放行」，
+这不是需求里写的。现恢复为**只看 `web.auth_token` 是否为空**：
+
+```
+❌ 拒绝启动：暴露公网必须设置 auth_token 或管理员密码！
+```
+
+提示中仍提及「管理员密码」，因为 `web.auth_password` 同样是可用凭据，一并配置更稳妥。
+
+### ✅ 保持不变
+
+`--public` / `--host`、Cloudflare Tunnel、EasyTier 内网访问提示三项功能不受影响。
+
+### 🧪 测试
+
+- `web_public_tunnel.test.js` 由 50 项调整为 **49 项**：移除 login_verify 相关断言，
+  新增「既有登录机制未被改动」与「不残留多余配置项」两条守护性断言；
+- 全套 **17 个测试文件通过**。
+
+实测：`auth_token` 为空 + `--public` 拒绝启动；配置 `auth_token` 后正常启动；
+回环地址不受闸门影响，`login_verify` 已彻底不在配置与代码中。
+
+---
+
 ## [3.5.16-26.37] — 2026-10-30
 
 > 主题：**Web 面板对外可达——公网暴露、Cloudflare 隧道、联机内网访问，以及一道强制安全闸门**。
@@ -126,30 +178,17 @@ wow 会自动：
 
 #### 4. 强制安全闸门
 
-**只要绑定地址不是回环（`0.0.0.0`、局域网 IP、`::`），且 `web.auth_token` 与 `web.auth_password` 都为空，直接拒绝启动：**
+**只要绑定地址不是回环（`0.0.0.0`、局域网 IP、`::`），且 `web.auth_token` 为空，直接拒绝启动：**
 
 ```
 ❌ 拒绝启动：暴露公网必须设置 auth_token 或管理员密码！
 ```
 
-同理，**对外暴露时也不允许 `mail.login_verify = false`**（否则等于给公网开了个无锁后门），同样拒绝启动。
-
 闸门在 `server.listen()` **之前**执行，端口不会被占用。
 
-#### 5. `mail.login_verify`：Web 端是否需要登录
-
-```yaml
-mail:
-  login_verify: true    # 默认 true：进入面板必须登录
-```
-
-设为 `false` 时面板免登录，但**仅在 `127.0.0.1` 上生效**；一旦对外暴露，启动会被上面那道闸门拦下。
-
-配套新增 `GET /api/auth/config`（公开路径），返回 `{ loginVerify, token }`：
-`loginVerify=false` 时前端可跳过登录页，`token` 直接给出一个 guest 令牌，避免其余接口 401。
-`/api/auth/verify` 在免登录时也返回 `valid: true`。
-
-> 兼容：此前若把该键写在 `web.login_verify` 下，也会被识别（主位置仍是 `mail` 段）。
+> 说明：判断依据是 `web.auth_token`（JWT 签名密钥）。没有它，`authMiddleware` 的
+> 签名校验形同虚设，暴露到公网等同把控制权交出。提示里同时提到「管理员密码」，
+> 是因为 `web.auth_password`（离线密码）也是可用的登录凭据，一并配置更稳妥。
 
 ### 🔧 新增模块
 
@@ -160,22 +199,20 @@ mail:
 
 ### 🧪 测试
 
-- 新增 `core/test/web_public_tunnel.test.js`，**50 项**断言（纯逻辑 + 源码级，不真下二进制、不真监听端口）；
+- 新增 `core/test/web_public_tunnel.test.js`，**49 项**断言（纯逻辑 + 源码级，不真下二进制、不真监听端口）；
 - 全套 **17 个测试文件通过**。
 
 实测记录（沙箱内）：
 
-- 无凭据 + `--public` → 正确拒绝并给出可执行指引；
-- 有凭据 + `--public` → 正常启动并列出局域网地址；
-- `--public` + `login_verify=false` → 正确拒绝；
-- 回环 + `login_verify=false` → 免登录，`/api/status` 无 token 返回 200；
+- `auth_token` 为空 + `--public` → 正确拒绝并给出可执行指引；
+- `auth_token` 已配置 + `--public` → 正常启动并列出局域网地址；
 - 用桩 cloudflared 验证：域名被拆成两个数据块输出时仍能拼出完整地址，`stop` 后无残留进程；
 - 桩 cloudflared 崩溃时，wow 回显其真实错误行；
 - 创建 `10.144.7.23/24` 的 dummy 网卡，两条探测路径都能正确识别。
 
 ### ⚠️ 使用提醒
 
-- **不要把 `--public` 当作省事选项**。公网可达意味着登录页会被人扫到，请务必先设 `web.auth_password`。
+- **不要把 `--public` 当作省事选项**。公网可达意味着登录页会被人扫到，请务必先设 `web.auth_token`（或 `web.auth_password`）。
 - `--tunnel` 给出的地址是公开的，任何人拿到即可访问登录页，同样依赖上面的认证。
 - 隧道与陶瓦均以 `detached` 方式启动，`Ctrl+C` 不会误杀；用 `wow web stop` / `wow lan stop` 关闭。
 

@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 /**
- * V3.5.16 新增能力测试：Web 对外暴露 / 认证闸门 / login_verify / 隧道输出解析 / EasyTier IP 探测
+ * V3.5.16 新增能力测试：Web 对外暴露 / 认证闸门 / 隧道输出解析 / EasyTier IP 探测
  * ----------------------------------------------------------------
  * 全部为纯逻辑 + 源码级断言，不真正监听端口、不真下 cloudflared，
  * 因此可在 CI 与离线环境安全运行。
+ *
+ * 注：mail.login_verify 一需求已判定与既有登录机制重复，未实现，故无相关断言。
  *
  * 运行：node test/web_public_tunnel.test.js
  */
@@ -47,20 +49,34 @@ const read = f => fs.readFileSync(path.join(SRC, f), 'utf8');
 console.log('\n===== V3.5.16 Web 对外暴露 / 隧道 / 联机提示 =====\n');
 
 // ---------- 1. 配置项 ----------
-console.log('[配置] mail.login_verify');
+console.log('[配置] 未引入多余配置项');
 
-check('01 DEFAULT_CONFIG 含 mail.login_verify 且默认 true', () => {
+check('01 DEFAULT_CONFIG 不含 mail.login_verify（该需求已由既有登录机制覆盖）', () => {
     delete require.cache[require.resolve(path.join(SRC, 'config.js'))];
     const config = require(path.join(SRC, 'config.js'));
-    assert.strictEqual(config.DEFAULT_CONFIG.mail.login_verify, true);
+    assert.strictEqual(config.DEFAULT_CONFIG.mail.login_verify, undefined,
+        'mail.login_verify 不应存在');
 });
 
-check('02 config.js 源码中 login_verify 位于 mail 段（不是 web 段）', () => {
-    const src = read('config.js');
-    const mailIdx = src.indexOf('mail: {');
-    const verifyIdx = src.indexOf('login_verify: true');
-    assert.ok(mailIdx > 0, '未找到 mail 段');
-    assert.ok(verifyIdx > mailIdx, 'login_verify 应在 mail 段之后');
+check('02 既有登录配置项仍在（auth_token / auth_password / whitelist）', () => {
+    delete require.cache[require.resolve(path.join(SRC, 'config.js'))];
+    const config = require(path.join(SRC, 'config.js'));
+    assert.ok('auth_token' in config.DEFAULT_CONFIG.web);
+    assert.ok('auth_password' in config.DEFAULT_CONFIG.web);
+    assert.ok(Array.isArray(config.DEFAULT_CONFIG.mail.whitelist));
+});
+
+check('03 authMiddleware 未加入免登录短路分支', () => {
+    const src = read('web_service.js');
+    const mwStart = src.indexOf('function authMiddleware');
+    const mwBody = src.slice(mwStart, mwStart + 900);
+    assert.ok(!/return next\(\);\s*\}\s*\/\/ 白名单路径/.test(mwBody) ||
+        !/isLoginVerifyEnabled/.test(mwBody), '中间件不应有免登录分支');
+});
+
+check('04 不存在 /api/auth/config 路由', () => {
+    const src = read('web_service.js');
+    assert.ok(!src.includes("/api/auth/config"), '不应保留 auth/config 路由');
 });
 
 // ---------- 2. isExposedHost ----------
@@ -103,31 +119,29 @@ check('09 大小写不敏感（LOCALHOST）', () => {
 // ---------- 3. 安全闸门源码断言 ----------
 console.log('\n[安全] startWeb 强制闸门');
 
-check('10 startWeb 在暴露且无凭据时拒绝启动', () => {
+check('10 startWeb 在暴露且 auth_token 为空时拒绝启动', () => {
     const src = read('web_service.js');
     assert.ok(/拒绝启动：暴露公网必须设置 auth_token 或管理员密码/.test(src),
         '缺少「暴露公网必须设置 auth_token」提示文案');
-    assert.ok(/if \(!hasToken && !hasPassword\)/.test(src), '缺少 hasToken/hasPassword 判断');
+    assert.ok(/if \(!hasToken\)/.test(src), '闸门应只判 auth_token');
 });
 
-check('11 startWeb 在暴露且 login_verify=false 时拒绝启动', () => {
+check('11 startWeb 不再有 login_verify 相关拒绝分支', () => {
     const src = read('web_service.js');
-    assert.ok(/对外暴露时不能关闭登录校验/.test(src), '缺少 login_verify 拒绝文案');
+    assert.ok(!src.includes('isLoginVerifyEnabled'), '不应残留 login_verify 逻辑');
 });
 
 check('12 拒绝分支出现在 server.listen 之前', () => {
     const src = read('web_service.js');
-    const gate = src.indexOf('if (!hasToken && !hasPassword)');
+    const gate = src.indexOf('if (!hasToken)');
     const listen = src.indexOf('server.listen(port, host');
     assert.ok(gate > 0 && listen > 0, '未找到关键位置');
     assert.ok(gate < listen, '闸门必须早于 listen，否则端口已被占用');
 });
 
-check('13 闸门判断是「token 或 password 任一存在即放行」', () => {
+check('13 auth_token 判空时先 trim（空字符串视为未配置）', () => {
     const src = read('web_service.js');
-    // 空字符串应视为「未配置」
     assert.ok(/String\(authToken\)\.trim\(\)/.test(src), 'auth_token 需 trim 后判空');
-    assert.ok(/String\(authPassword\)\.trim\(\)/.test(src), 'auth_password 需 trim 后判空');
 });
 
 // ---------- 4. --public / --host 解析 ----------
@@ -161,43 +175,32 @@ check('18 显式 --host 优先级高于 --public', () => {
     assert.ok(hostFirst > 0 && pubNext > hostFirst, '优先级顺序错误：应先取 options.host');
 });
 
-// ---------- 5. login_verify 生效 ----------
-console.log('\n[认证] login_verify 行为');
+// ---------- 5. 既有认证机制未被改动 ----------
+console.log('\n[认证] 既有登录机制保持不变');
 
-check('19 isLoginVerifyEnabled 默认返回 true', () => {
-    assert.strictEqual(typeof webService.isLoginVerifyEnabled(), 'boolean');
-    assert.strictEqual(webService.isLoginVerifyEnabled(), true);
-});
-
-check('20 authMiddleware 在 login_verify=false 时直接放行', () => {
+check('19 authMiddleware 仍要求 Bearer token', () => {
     const src = read('web_service.js');
-    const mwStart = src.indexOf('function authMiddleware');
-    const mwBody = src.slice(mwStart, mwStart + 1200);
-    assert.ok(/if \(!isLoginVerifyEnabled\(\)\) \{\s*return next\(\);/.test(mwBody),
-        '中间件未对 login_verify=false 放行');
+    assert.ok(/authHeader\.startsWith\('Bearer '\)/.test(src), 'Bearer 校验被移除');
+    assert.ok(/未登录/.test(src), '缺少未登录响应');
 });
 
-check('21 /api/auth/config 是公开路径（无需 token）', () => {
+check('20 publicPaths 仅保留原有三项认证接口 + download', () => {
     const src = read('web_service.js');
     const m = src.match(/const publicPaths = \[([^\]]+)\]/);
     assert.ok(m, '未找到 publicPaths');
-    assert.ok(m[1].includes('/api/auth/config'), 'publicPaths 缺 /api/auth/config');
+    const list = m[1];
+    assert.ok(list.includes('/api/auth/request-code'));
+    assert.ok(list.includes('/api/auth/login'));
+    assert.ok(list.includes('/api/auth/verify'));
+    assert.ok(list.includes('/api/download'));
 });
 
-check('22 /api/auth/config 返回 loginVerify 字段', () => {
+check('21 /api/auth/verify 无 token 时返回 valid:false', () => {
     const src = read('web_service.js');
-    assert.ok(/loginVerify: isLoginVerifyEnabled\(\)/.test(src));
-});
-
-check('23 /api/auth/verify 免登录时返回 valid:true', () => {
-    const src = read('web_service.js');
-    assert.ok(/loginVerify: false \}\)/.test(src), 'verify 未处理免登录场景');
-});
-
-check('24 支持 web.login_verify 兜底读取', () => {
-    const src = read('web_service.js');
-    assert.ok(/config\.getConfig\('web\.login_verify', true\)/.test(src),
-        '缺少 web.login_verify 兜底');
+    const idx = src.indexOf("app.get('/api/auth/verify'");
+    const body = src.slice(idx, idx + 700);
+    assert.ok(/if \(!authHeader \|\| !authHeader\.startsWith\('Bearer '\)\) \{\s*return res\.json\(\{ valid: false \}\);/.test(body),
+        'verify 的未登录分支被改动');
 });
 
 // ---------- 6. 隧道模块 ----------

@@ -405,9 +405,8 @@ wow web start --public --tunnel
 
 > 🛡️ **强制安全闸门**（V3.5.16）
 >
-> 绑定地址非回环且 `web.auth_token`、`web.auth_password` 都为空时，**直接拒绝启动**：
+> 绑定地址非回环且 `web.auth_token` 为空时，**直接拒绝启动**：
 > `❌ 拒绝启动：暴露公网必须设置 auth_token 或管理员密码！`
-> 同时，对外暴露时若 `mail.login_verify = false`（面板免登录）也会被拒绝。
 > 检查发生在 `server.listen()` 之前，不占端口。
 
 > ☁️ **`--tunnel` 说明**
