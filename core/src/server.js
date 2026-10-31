@@ -139,6 +139,21 @@ const MODE_ALIASES = {
 // 切换后显示的日志条数（用户需求：最后十条）
 const CONSOLE_TAIL_LINES = 10;
 
+// ==================== Web 控制台指令中继（V3.5.19）====================
+// 背景：Web 面板与 Minecraft 进程通常不在同一个 Node 进程里（面板由 `wow web start`
+// 拉起的进程托管，服务端由 `wow server start` 拉起的子进程托管）。面板进程拿不到
+// MC 子进程的 stdin 管道，于是「在网页控制台敲 list」只能退化成执行 `wow list`，
+// 最终报 unknown command。
+//
+// 方案：用两个小文件做单向中继——
+//   .console.queue  面板追加待执行的 MC 指令（每行一条）
+//   .console.alive  持有 stdin 的那个进程定时刷新心跳，面板据此判断「有没有人在收」
+// 持有 stdin 的进程每 250ms 取走队列并写入 MC stdin。纯文件实现，跨平台且无端口占用。
+const CONSOLE_QUEUE_FILE = path.join(__dirname, '../.console.queue');
+const CONSOLE_ALIVE_FILE = path.join(__dirname, '../.console.alive');
+const CONSOLE_RELAY_INTERVAL = 250;
+
+
 /**
  * 读取文本文件最后 n 行（不存在或读取失败返回空数组）。
  * 只读取文件尾部若干字节，避免整份日志载入内存（latest.log 可能很大）。
@@ -969,6 +984,9 @@ class ServerManager {
         console.log(`日志文件: ${this.logFile}`);
         logger.impt(`服务器已启动 | PID ${this.process.pid} | 核心 ${cmd.jarFile} | 内存 ${memory}`);
 
+        // V3.5.19：拉起 Web 控制台指令中继（交互 / 非交互模式都需要，Web 面板才知道该把指令交给谁）
+        this._startConsoleRelay();
+
         // V3.3.0 联机 / 内网穿透（陶瓦 Terracotta）：若开启 auto_room，服务器启动后自动开房
         if (config.getConfig('lan.auto_room', false)) {
             const Terracotta = require('./terracotta');
@@ -988,6 +1006,8 @@ class ServerManager {
                 this._rl = null;
             }
             this._stopLanWatch();
+            // V3.5.19：进程没了，中继与心跳一并收掉，避免面板误判「还能发指令」
+            this._stopConsoleRelay();
             if (logStream) logStream.end();
             if (code && code !== 0) {
                 logger.erro(`Minecraft 进程异常退出（退出码 ${code}），疑似崩溃`);
@@ -1051,6 +1071,62 @@ class ServerManager {
         };
         // 放到下一个 tick，避免与 exit 回调内的清理竞争
         setTimeout(run, 0);
+    }
+
+    /**
+     * V3.5.19：启动「Web 控制台指令中继」。
+     * 每 250ms 刷新一次心跳文件，并取走 .console.queue 里待执行的 MC 指令写入 stdin。
+     * 只有持有 MC stdin 的进程才需要跑这个中继，因此由 start() 负责拉起。
+     */
+    _startConsoleRelay() {
+        this._stopConsoleRelay();
+
+        const tick = () => {
+            try {
+                // 心跳：让 Web 面板知道「有人在收指令」
+                fs.writeFileSync(CONSOLE_ALIVE_FILE, String(Date.now()), 'utf8');
+                if (!this.process || !this.process.stdin || !this.process.stdin.writable) return;
+                if (!fs.existsSync(CONSOLE_QUEUE_FILE)) return;
+
+                let raw = '';
+                try {
+                    raw = fs.readFileSync(CONSOLE_QUEUE_FILE, 'utf8');
+                } catch (e) {
+                    return;
+                }
+                // 先删再写：即使写入 stdin 抛错，也不会把同一条指令反复投递
+                try { fs.unlinkSync(CONSOLE_QUEUE_FILE); } catch (e) { return; }
+
+                for (const line of raw.split(/\r?\n/)) {
+                    const t = line.trim();
+                    if (!t) continue;
+                    try {
+                        this.process.stdin.write(t + '\n');
+                        logger.info(`Web 控制台指令已转发给 MC: ${t}`);
+                    } catch (e) {
+                        // MC 正在退出 / 管道已关闭，丢弃即可
+                    }
+                }
+            } catch (e) {
+                // 中继失败绝不影响服务端本身
+            }
+        };
+
+        this._consoleRelayTimer = setInterval(tick, CONSOLE_RELAY_INTERVAL);
+        // 不让中继单独吊住事件循环（服务端进程退出后本进程应能正常结束）
+        if (this._consoleRelayTimer.unref) this._consoleRelayTimer.unref();
+        tick();
+    }
+
+    /** V3.5.19：停止中继并清掉心跳文件 */
+    _stopConsoleRelay() {
+        if (this._consoleRelayTimer) {
+            clearInterval(this._consoleRelayTimer);
+            this._consoleRelayTimer = null;
+        }
+        try {
+            if (fs.existsSync(CONSOLE_ALIVE_FILE)) fs.unlinkSync(CONSOLE_ALIVE_FILE);
+        } catch (e) { /* 忽略 */ }
     }
 
     /**
@@ -1273,4 +1349,42 @@ function _stopLanIfRunning() {
     }
 }
 
+/**
+ * V3.5.19：是否有进程正在接收 Web 控制台指令。
+ * 判据是心跳文件在 maxAgeMs 内被刷新过——比「PID 存在」更准确：
+ * 服务端跑着但没人读 stdin 时，指令发过去只会石沉大海。
+ * @param {number} [maxAgeMs]
+ * @returns {boolean}
+ */
+function isConsoleRelayAlive(maxAgeMs = 3000) {
+    try {
+        if (!fs.existsSync(CONSOLE_ALIVE_FILE)) return false;
+        const t = parseInt(fs.readFileSync(CONSOLE_ALIVE_FILE, 'utf8').trim(), 10);
+        if (!Number.isFinite(t)) return false;
+        return Date.now() - t <= maxAgeMs;
+    } catch (e) {
+        return false;
+    }
+}
+
+/**
+ * V3.5.19：把一条 MC 指令追加进中继队列（由持有 stdin 的进程取走执行）。
+ * @param {string} line
+ * @returns {boolean} 是否成功落盘
+ */
+function enqueueConsoleCommand(line) {
+    try {
+        const text = String(line == null ? '' : line).replace(/[\r\n]+/g, ' ').trim();
+        if (!text) return false;
+        fs.appendFileSync(CONSOLE_QUEUE_FILE, text + '\n', 'utf8');
+        return true;
+    } catch (e) {
+        return false;
+    }
+}
+
 module.exports = ServerManager;
+// V3.5.19：Web 面板需要判断中继是否在线、并往队列里投递指令
+ServerManager.isConsoleRelayAlive = isConsoleRelayAlive;
+ServerManager.enqueueConsoleCommand = enqueueConsoleCommand;
+ServerManager.CONSOLE_QUEUE_FILE = CONSOLE_QUEUE_FILE;

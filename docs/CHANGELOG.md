@@ -8,7 +8,8 @@
 
 | 版本 | 状态 | 发布时间 |
 |------|------|------|
-| **3.5.18-26.39** | 当前版本 |2026-10-31|
+| **3.5.19-26.3a** | 当前版本 |2026-10-31|
+| **3.5.18-26.39** | 上一版本 |2026-10-31|
 | **3.5.17-26.38** | 上一版本 |2026-10-31|
 | **3.5.16-26.37** | 上一版本 |2026-10-30|
 | **3.5.15-26.36** | 上一版本 |2026-10-24|
@@ -70,6 +71,93 @@
 | **3.0.0** | 上一版本 |2026-07-23|
 | **2.0.0** | 内部迭代 |2026-02-27|
 | **1.0.0** | 内部迭代 |2026-02-07|
+
+---
+
+## [3.5.19-26.3a] — 2026-10-31
+
+> 主题：**Web 面板不再是「另一套系统」**——页面上的每个动作都代理成对应的 CLI 指令，
+> 并在 CLI 终端与控制台里以 `[WebCLI]` / `[System]` 回显；同时把长任务改成异步队列。
+
+### 最高原则的落地
+
+Web 端任何操作本质上都是「代理发送一条 CLI 指令」，CLI 端优先级永远高于 Web 端。
+本版把这条原则显式化：所有从 Web 发出的指令，都会带前缀打进 wow 日志与 Web 控制台。
+
+- 新增 `webCliEcho()` / `systemEcho()`：`[WebCLI] wow scheme pull demo`、`[System] mv a.txt b.txt`
+- 文件管理器的每个动作映射为对应的模拟系统命令（`mkdir` / `mv` / `cp -r` / `rm -rf` / `zip -r` / `unzip` / `cat >`）
+- 跨方案操作在回显末尾追加 `@方案名`，避免多方案场景下分不清改的是谁
+
+### 模块一：交互与状态监控
+
+- **仪表盘状态修复**：`/api/status` 补齐 `running` / `pid` / `scheme` / `startedAt` / `consoleRelay`；
+  前端新增 `#server-pid`、`#console-relay`，不再显示空白
+- **`/api/metrics` 长期恒 0 的根因**：旧实现调用 `ServerManager.isRunning()`（类上根本没有这个静态方法），
+  改为实例方法后 CPU / 内存 / 运行时长 / 在线人数恢复
+- **`wow web start` 不再阻塞终端**：启动面板后自动进入 `startRepl({ webMode: true })`，
+  等价于 `wow L` 长命令模式，可继续敲指令；`exit` 同时关闭面板
+- **控制台防脏数据**：前端发送前 `trim()`；后端 `sanitizeCommandText()` 统一剥离 `\r\n\t\0`、
+  零宽空格与 BOM，并把连续空白折叠为单空格
+- **新增 `POST /api/console`**：专用于发送 Minecraft 控制台指令。
+  历史 bug —— 仪表盘把 `list` 发到 `/api/exec`，后端当成 `wow list` 执行，回一句 unknown command
+- **跨进程控制台中继**：面板进程拿不到 MC 子进程的 stdin，改用文件队列 `.console.queue` +
+  心跳文件 `.console.alive`，由持有 stdin 的进程每 250ms 消费一次
+- **日志推送改为 WebSocket**：旧实现给每个 socket 各开一个 500ms 定时器且从文件开头读；
+  改为全局单定时器 250ms 增量广播，日志轮转时游标自动归零
+
+### 模块二：方案创建与下载队列
+
+- **异步创建**：新增 `core/src/web_task.js`。`POST /api/tasks/run` 毫秒级返回 `task_id`，
+  Forge 安装器跑几分钟也不会再让浏览器超时
+- **白名单约束**：只放行 `scheme create` / `scheme pull` / `scheme prune` /
+  `install <具名核心>` / `down` / `mod sync`，不成为绕过 `command_policy` 的后门
+- **阶段化进度**：逐行解析子进程输出，映射为「初始化方案目录 → 下载服务端核心 →
+  运行安装器 → 核心就绪 → 装配前置模组 → 收尾」，`Math.max` 保证进度不倒退
+- **提交即跳转**：方案页创建/拉取/瘦身成功后立刻切到「下载页-任务队列」标签，
+  通过 `postMessage({ type:'navigate', page:'down', tab:'queue' })`，
+  父框架拼成 `/down.html?tab=queue`，左侧菜单同步高亮
+- **任务队列页重写**：数据完全来自 `/api/tasks`（不再用刷新即丢的前端数组），
+  每条任务显示进度条、当前阶段、尾部日志，WebSocket `task` 事件实时刷新
+
+### 模块三：配置表单
+
+- 新增 `core/src/config_schema.js`（约 46 个配置项）：声明 `key / type / label / desc / options / group / advanced / danger`
+- 新增 `GET /api/config/schema`（必须注册在 `/api/config/:key` 之前）、`POST /api/config/batch`
+- **设置页丢弃纯文本框**：按类型渲染 Switch（`auto_scheme`）／Input／Select（枚举）／
+  逐行 textarea（`list`）／password（`secret`），每项下方固定显示中文说明
+- `advanced` 收进折叠区，`danger` 标红 + 保存前二次确认
+- 「原始 JSON」模式保留；`POST /api/config` 无 `key` 时按 schema 白名单落盘
+  （旧实现直接 400，用户在原始模式保存永远静默失败）
+- `secret` 字段只返回 `hasValue`，不回传明文
+
+### 模块四：文件管理器增强
+
+- 新增 `GET /api/file/read`、`POST|PUT /api/file/write`；双击 `.txt .json .properties .yml .yaml .cfg .toml .ini .conf`
+  等文本文件弹出编辑器覆盖层，`Ctrl+S` 保存、`Esc` 关闭，超 2MB 不再尝试编辑
+- **图标区分**：文件夹 `📁`，并按扩展名给文件不同图标（`.json` 🧾、`.yml` ⚙️、`.jar` 📦、`.zip` 🗜️、`.log` 📝 …）
+- **方案下拉框**：右上角 `<select>` 调 `/api/schemes` 填充，初始化默认选中当前激活方案，
+  切换后所有文件接口都带 `?scheme=`。后端 `file_manager.getRoot(scheme)` 做二次校验
+  （拒绝 `..` / 路径分隔符 / 盘符，要求方案目录内含 `scheme.yaml`）
+
+### 模块五：补齐拉取与瘦身
+
+- 前端修复：`handleSchemeAction` 不再拼字符串，改用 `argv` 数组提交，
+  彻底消除 `scheme pull  test_scheme`（双空格）导致的 unknown command
+- 后端核实：`scheme_manager` 的 `_materializeScheme` / `_pruneScheme` 逻辑完整，本版仅补测试断言
+
+### 其他修复
+
+- `/api/scheme/:name/status` 此前从未实现（前端「方案详情」永远失败），本版补上，
+  且不调 `sm.status()`（它会往 stdout 打整块表格）
+- `execCommand` 用 `command.split(' ')` 拆参数会拆出空串，改为 `split(/\s+/).filter(Boolean)`
+- `stopWeb` 同进程分支不清理 `.web.pid` / `.web.port`，导致 `wow web status` 误判
+- 新增 `wow web start` 遇到 `EADDRINUSE` 时的友好提示
+
+### 测试
+
+- 新增 `core/test/web_v3519.test.js`（39 项）：指令清洗、配置 schema 与类型转换、
+  异步任务白名单与阶段映射、方案路径越权校验、控制台中继工具
+- 全量 19 个测试文件全部通过
 
 ---
 

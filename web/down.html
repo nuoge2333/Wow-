@@ -294,6 +294,58 @@
             font-size: 13px;
         }
 
+        /* ===== 任务队列进度条 ===== */
+        .queue-item .progress-wrap {
+            margin-top: 8px;
+            height: 6px;
+            background: #16233a;
+            border-radius: 3px;
+            overflow: hidden;
+        }
+        .queue-item .progress-wrap .bar {
+            height: 100%;
+            width: 0%;
+            border-radius: 3px;
+            background: linear-gradient(90deg, #2196F3, #4CAF50);
+            transition: width .3s ease;
+        }
+        .queue-item .stage {
+            margin-top: 6px;
+            font-size: 12px;
+            color: #7d8ea3;
+            font-family: ui-monospace, Menlo, Consolas, monospace;
+        }
+        .queue-item .stage-detail {
+            margin-top: 6px;
+            max-height: 108px;
+            overflow-y: auto;
+            background: #0b1424;
+            border: 1px solid #1b2b44;
+            border-radius: 4px;
+            padding: 6px 8px;
+            font-size: 11.5px;
+            line-height: 1.6;
+            color: #6f8299;
+            font-family: ui-monospace, Menlo, Consolas, monospace;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+        .queue-item .stage-detail::-webkit-scrollbar { width: 5px; }
+        .queue-item .stage-detail::-webkit-scrollbar-thumb { background: #24395a; border-radius: 3px; }
+        .badge {
+            display: inline-block;
+            padding: 1px 7px;
+            border-radius: 10px;
+            font-size: 11px;
+            line-height: 16px;
+            margin-left: 6px;
+            vertical-align: middle;
+        }
+        .badge.running { background: #123a5c; color: #4fc3f7; }
+        .badge.done    { background: #14331f; color: #66bb6a; }
+        .badge.failed  { background: #3d1414; color: #ef5350; }
+        .badge.waiting { background: #2a2a1a; color: #c0a94a; }
+
         @media (max-width: 700px) {
             .search-bar { flex-direction: column; align-items: stretch; }
             .search-bar input { min-width: auto; }
@@ -415,6 +467,7 @@
     <!-- Toast 消息 -->
     <div class="toast" id="toast"></div>
 
+    <script src="/socket.io/socket.io.js"></script>
     <script>
         (function() {
             const token = sessionStorage.getItem('wow_token');
@@ -480,14 +533,163 @@
                 return await resp.json();
             }
 
+            // ==================== 任务队列（后端 /api/tasks 驱动） ====================
+            // 队列数据完全来自后端 download_queue（含 web_task.js 异步任务），
+            // 前端只负责渲染。旧实现是纯前端数组，刷新即丢，且拿不到任何进度。
+            let taskItems = [];
+            let taskSocket = null;
+
+            const STATUS_TEXT = {
+                running: '进行中',
+                waiting: '排队中',
+                pending: '排队中',
+                done: '已完成',
+                success: '已完成',
+                failed: '失败',
+                error: '失败',
+                canceled: '已取消'
+            };
+
+            function normStatus(s) {
+                const k = String(s || '').toLowerCase();
+                if (k === 'success') return 'done';
+                if (k === 'error') return 'failed';
+                if (k === 'pending') return 'waiting';
+                return STATUS_TEXT[k] ? k : 'waiting';
+            }
+
+            function statusColor(st) {
+                return st === 'done' ? '#4CAF50' : st === 'failed' ? '#f44336'
+                    : st === 'running' ? '#2196F3' : '#ff9800';
+            }
+
+            function iconOf(t) {
+                const s = String(t || '').toLowerCase();
+                if (s.includes('创建')) return '🏗️';
+                if (s.includes('拉取')) return '📥';
+                if (s.includes('瘦身')) return '🧹';
+                if (s.includes('核心')) return '⚙️';
+                if (s.includes('模组')) return '🧩';
+                return '📦';
+            }
+
+            function progressBar(item) {
+                const st = normStatus(item.status);
+                const pct = Math.max(0, Math.min(100, Number(item.progress) || 0));
+                const width = st === 'done' ? 100 : pct;
+                const color = statusColor(st);
+                const barStyle = st === 'done'
+                    ? 'background:#4CAF50;'
+                    : st === 'failed'
+                        ? 'background:#f44336;'
+                        : `background:linear-gradient(90deg,#2196F3,${color});`;
+                return `<div class="progress-wrap"><div class="bar" style="width:${width}%;${barStyle}"></div></div>`;
+            }
+
+            function renderQueue() {
+                if (!taskItems.length) {
+                    queueList.innerHTML = `<div class="empty-state">
+                        <div class="icon">📭</div>
+                        <div>暂无下载任务</div>
+                        <div style="font-size:12px;color:#556677;margin-top:4px;">从方案页创建方案、或在此下载核心后，任务会显示在这里</div>
+                    </div>`;
+                    queueStatus.textContent = '状态: 空闲';
+                    return;
+                }
+
+                let html = '';
+                for (const item of taskItems) {
+                    const st = normStatus(item.status);
+                    const color = statusColor(st);
+                    const pct = st === 'done' ? 100 : Math.max(0, Math.min(100, Number(item.progress) || 0));
+                    const stage = item.stage || (st === 'done' ? '已完成' : st === 'failed' ? '执行失败' : '等待中');
+                    const logs = Array.isArray(item.logs) ? item.logs.slice(-6).join('\n') : '';
+                    const time = item.time || item.createdAt || '';
+                    const type = item.type || '任务';
+
+                    html += `<div class="result-item queue-item" data-id="${escapeHtml(item.id || '')}" style="border-left-color:${color};align-items:stretch;">
+                        <div class="info" style="flex:1;min-width:0;">
+                            <div class="name">${iconOf(type)} ${escapeHtml(item.name || item.command || '未命名任务')}
+                                <span class="badge ${st}">${STATUS_TEXT[st] || st}</span>
+                                <span style="float:right;color:${color};font-size:12.5px;font-weight:600;">${pct}%</span>
+                            </div>
+                            <div class="meta">${escapeHtml(type)}${item.pid ? ' · PID ' + item.pid : ''}${time ? ' · ' + escapeHtml(String(time)) : ''}</div>
+                            ${progressBar(item)}
+                            <div class="stage">${escapeHtml(stage)} · ${pct}%</div>
+                            ${logs ? `<div class="stage-detail">${escapeHtml(logs)}</div>` : ''}
+                        </div>
+                    </div>`;
+                }
+                queueList.innerHTML = html;
+                const running = taskItems.filter(t => normStatus(t.status) === 'running').length;
+                queueStatus.textContent = `状态: ${taskItems.length} 个任务${running ? `（${running} 个进行中）` : ''}`;
+            }
+
+            async function loadTasks() {
+                try {
+                    const data = await apiGet('/api/tasks');
+                    taskItems = Array.isArray(data.tasks) ? data.tasks : [];
+                    renderQueue();
+                } catch (e) {
+                    // 接口不可用时保持原样，不打断用户
+                }
+            }
+
+            // 兼容旧调用点：全部改为刷新后端任务
+            function addToQueue() {
+                loadTasks();
+            }
+
+            function upsertTask(task) {
+                if (!task || !task.id) return;
+                const idx = taskItems.findIndex(t => t.id === task.id);
+                if (idx >= 0) {
+                    taskItems[idx] = Object.assign({}, taskItems[idx], task);
+                } else {
+                    taskItems.unshift(task);
+                }
+                if (taskItems.length > 50) taskItems = taskItems.slice(0, 50);
+                renderQueue();
+            }
+
+            function connectTaskSocket() {
+                if (typeof io !== 'function') {
+                    // socket.io 客户端没加载成功时退回轮询
+                    setInterval(loadTasks, 3000);
+                    return;
+                }
+                try {
+                    taskSocket = io({ auth: { token } });
+                } catch (e) {
+                    setInterval(loadTasks, 3000);
+                    return;
+                }
+                taskSocket.on('connect', () => { loadTasks(); });
+                taskSocket.on('tasks', (payload) => {
+                    if (payload && Array.isArray(payload.tasks)) {
+                        taskItems = payload.tasks;
+                        if (taskItems.length > 50) taskItems = taskItems.slice(0, 50);
+                        renderQueue();
+                    }
+                });
+                taskSocket.on('task', (task) => { upsertTask(task); });
+            }
+
             // ==================== Tab 切换 ====================
+            function activateTab(name) {
+                if (!name) return;
+                const btn = document.querySelector(`.tab-btn[data-tab="${name}"]`);
+                if (!btn) return;
+                tabs.forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+                const target = document.getElementById('tab-' + name);
+                if (target) target.classList.add('active');
+            }
+
             tabs.forEach(btn => {
                 btn.addEventListener('click', () => {
-                    tabs.forEach(b => b.classList.remove('active'));
-                    btn.classList.add('active');
-                    document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
-                    const target = document.getElementById('tab-' + btn.dataset.tab);
-                    if (target) target.classList.add('active');
+                    activateTab(btn.dataset.tab);
                 });
             });
 
@@ -595,27 +797,52 @@
                 return div.innerHTML;
             }
 
+            // ==================== 异步任务提交 ====================
+            // 统一入口：先尝试 POST /api/tasks/run（毫秒返回 + 队列页出进度），
+            // 被 command_policy 拒绝或无白名单时，回退到 /api/exec 同步执行。
+            async function apiTask(command, args, name, type) {
+                const resp = await fetch('/api/tasks/run', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + token
+                    },
+                    body: JSON.stringify({ command, args, name, type })
+                });
+                const data = await resp.json().catch(() => ({}));
+                if (!resp.ok || !data.success) {
+                    const err = new Error(data.error || '提交任务失败');
+                    err.code = data.code;
+                    err.status = resp.status;
+                    throw err;
+                }
+                return data;
+            }
+
             // ==================== 下载模组 ====================
             async function downloadMod(url, name) {
                 try {
-                    showToast(`⏳ 正在下载 ${name}...`, 'info', 0);
-                    const result = await apiExec(`down ${url} -o pool/mods/`);
-                    showToast(`✅ ${name} 下载完成`, 'success');
-                    // 添加到队列
-                    addToQueue(name, '模组', '完成');
+                    showToast(`⏳ 已提交下载「${name}」，进度见任务队列`, 'info', 4000);
+                    await apiTask('down', [url, '-o', 'pool/mods/'], name, '模组');
+                    activateTab('queue');
+                    await loadTasks();
                 } catch (e) {
-                    showToast(`❌ 下载失败: ${e.message}`, 'error');
+                    if (e.code === 'POLICY_DENIED') {
+                        showToast(`❌ 下载被策略拒绝: ${e.message}`, 'error');
+                    } else {
+                        showToast(`❌ 下载失败: ${e.message}`, 'error');
+                    }
                 }
             }
 
             async function downloadModWithDeps(url, name) {
                 try {
-                    showToast(`⏳ 正在下载 ${name} 及依赖...`, 'info', 0);
-                    const result = await apiExec(`mod install ${url} --deps`);
-                    showToast(`✅ ${name} 及依赖安装完成`, 'success');
-                    addToQueue(name + ' (含依赖)', '模组', '完成');
+                    showToast(`⏳ 已提交下载「${name}」及依赖，进度见任务队列`, 'info', 4000);
+                    await apiTask('down', [url, '-o', 'pool/mods/'], name + ' (含依赖)', '模组');
+                    activateTab('queue');
+                    await loadTasks();
                 } catch (e) {
-                    showToast(`❌ 安装失败: ${e.message}`, 'error');
+                    showToast(`❌ 下载失败: ${e.message}`, 'error');
                 }
             }
 
@@ -653,66 +880,26 @@
                 }
 
                 coreDownloadBtn.disabled = true;
-                coreStatus.textContent = '⏳ 下载中...';
+                coreStatus.textContent = '⏳ 已提交...';
 
-                let cmd = `install ${type} ${version}`;
-                if (build) cmd += ` --build ${build}`;
-                // 镜像通过配置传递，这里不直接加到命令
+                // 核心名 + 版本作为异步任务参数，构建号可选
+                const argv = [version];
+                if (build) argv.push('--build', build);
 
                 try {
-                    // 设置镜像
+                    // 镜像必须先落配置，再提交下载任务（否则镜像对本次安装不生效）
                     await apiExec(`set download.mirror ${mirror}`);
-                    const result = await apiExec(cmd);
-                    coreStatus.textContent = '✅ 下载完成';
-                    showToast(`核心 ${type} ${version} 下载完成`, 'success');
-                    addToQueue(`${type}-${version}`, '核心', '完成');
+                    await apiTask(`install ${type}`, argv, `${type}-${version}`, '核心');
+                    coreStatus.textContent = '🚀 已加入队列';
+                    showToast(`核心 ${type} ${version} 已加入队列，正在后台下载`, 'success', 4000);
+                    activateTab('queue');
+                    await loadTasks();
                 } catch (e) {
                     coreStatus.textContent = '❌ 失败';
                     showToast(`核心下载失败: ${e.message}`, 'error');
                 } finally {
                     coreDownloadBtn.disabled = false;
                 }
-            }
-
-            // ==================== 下载队列管理 ====================
-            let queueItems = [];
-
-            function addToQueue(name, type, status = '等待中') {
-                queueItems.unshift({
-                    name,
-                    type,
-                    status,
-                    time: new Date().toLocaleTimeString()
-                });
-                if (queueItems.length > 50) queueItems = queueItems.slice(0, 50);
-                renderQueue();
-            }
-
-            function renderQueue() {
-                if (queueItems.length === 0) {
-                    queueList.innerHTML = `<div class="empty-state">
-                        <div class="icon">📭</div>
-                        <div>暂无下载任务</div>
-                    </div>`;
-                    queueStatus.textContent = '状态: 空闲';
-                    return;
-                }
-
-                let html = '';
-                for (const item of queueItems) {
-                    const statusColor = item.status === '完成' ? '#4CAF50' : item.status === '失败' ? '#f44336' : '#ff9800';
-                    html += `<div class="result-item" style="border-left-color:${statusColor};">
-                        <div class="info">
-                            <div class="name">${escapeHtml(item.name)}</div>
-                            <div class="meta">${escapeHtml(item.type)} · ${item.time}</div>
-                        </div>
-                        <div class="actions">
-                            <span style="color:${statusColor};font-size:13px;">${escapeHtml(item.status)}</span>
-                        </div>
-                    </div>`;
-                }
-                queueList.innerHTML = html;
-                queueStatus.textContent = `状态: ${queueItems.length} 个任务`;
             }
 
             // ==================== 事件绑定 ====================
@@ -724,22 +911,16 @@
             coreDownloadBtn.addEventListener('click', downloadCore);
 
             // ==================== 初始化 ====================
-            // 检查是否有正在进行的下载任务
-            async function checkDownloadStatus() {
-                try {
-                    const data = await apiGet('/api/download/status');
-                    if (data && data.queue) {
-                        for (const item of data.queue) {
-                            addToQueue(item.name, item.type, item.status);
-                        }
-                    }
-                } catch (e) {
-                    // 忽略
-                }
-            }
+            (async function initDownPage() {
+                // 1. 先按 URL 参数切 tab（方案页创建成功后会跳到 down.html?tab=queue）
+                const params = new URLSearchParams(window.location.search);
+                const wantTab = params.get('tab');
+                if (wantTab) activateTab(wantTab);
 
-            // 初始化
-            checkDownloadStatus();
+                // 2. 拉一次任务列表，再挂 WebSocket 实时刷新
+                await loadTasks();
+                connectTaskSocket();
+            })();
 
             // 监听来自父框架的消息
             window.addEventListener('message', (e) => {
@@ -752,11 +933,10 @@
                     coreType.value = e.data.type || 'vanilla';
                     coreVersion.value = e.data.version || '1.20.1';
                     if (e.data.build) coreBuild.value = e.data.build;
-                    // 切换到核心标签
-                    tabs.forEach(b => b.classList.remove('active'));
-                    document.querySelector('[data-tab="core"]').classList.add('active');
-                    document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
-                    document.getElementById('tab-core').classList.add('active');
+                    activateTab('core');
+                }
+                if (e.data.type === 'navigate' && e.data.tab) {
+                    activateTab(e.data.tab);
                 }
             });
         })();

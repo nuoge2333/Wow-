@@ -87,7 +87,7 @@ function logger() {
 program
     .name('wow')
     .description('Minecraft 服务器管理工具 - 默认优先，可以修改')
-    .version('3.5.18-26.39', '-V');
+    .version('3.5.19-26.3a', '-V');
 
 // ==================== init ====================
 
@@ -530,15 +530,37 @@ webCmd
     // V3.5.16
     .option('--public', '等价于 --host 0.0.0.0，允许局域网/公网访问（强制要求已配置认证凭据）')
     .option('--tunnel', '同时建立 Cloudflare 快速隧道，生成公网 https 地址')
-    .action((options) => {
+    .action(async (options) => {
         const webService = load('./web_service');
         if (!webService) return;
-        webService.startWeb({
+        const started = webService.startWeb({
             port: options.port,
             host: options.host,
             // V3.5.16
             public: options.public === true,
             tunnel: options.tunnel === true
+        });
+
+        if (!started) return;
+
+        // V3.5.19：面板起来后不再把终端晾着。
+        // 交互终端 → 直接进入长命令模式（等价 wow L），面板开着也能继续敲指令；
+        // 非交互（systemd / docker / 管道）→ 保持常驻，由信号退出。
+        if (!process.stdin.isTTY) {
+            console.log('');
+            console.log('💡 当前不是交互终端，面板进程将常驻运行；按 Ctrl+C 结束。');
+            return;
+        }
+
+        console.log('');
+        console.log('💡 已进入长命令模式（等价 `wow L`）：可直接输入 wow 指令，无需再来一个终端。');
+        console.log('   面板与本终端共用同一个 wow 进程；输入 exit 会同时关闭面板。');
+        console.log('');
+        await startRepl({
+            webMode: true,
+            onExit: () => {
+                try { webService.stopWeb(); } catch (e) { /* 忽略 */ }
+            }
         });
     });
 
@@ -1139,11 +1161,36 @@ program.hook('postAction', () => {
 // V3.5.8：长命令 REPL 移至 `wow L`（无参数运行已改为进入数字选择菜单）。
 // 逐行读取完整指令，用户无需输入 wow 前缀（如 server start），exit / quit 退出。
 // 注意：函数声明提升，上方 L 命令的 action 可直接调用。
-async function startRepl() {
+async function startRepl(options = {}) {
     const readline = require('readline');
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout, prompt: 'wow> ' });
-    console.log('Wow~ 已进入交互模式（输入指令，无需 wow 前缀；exit / quit 退出）');
-    logger()?.impt('进入交互式 REPL 模式');
+    if (options.webMode) {
+        console.log('Wow~ 长命令模式已就绪（面板仍在后台运行，输入指令无需 wow 前缀；exit / quit 退出）');
+    } else {
+        console.log('Wow~ 已进入交互模式（输入指令，无需 wow 前缀；exit / quit 退出）');
+    }
+    logger()?.impt(options.webMode ? '进入长命令模式（Web 面板运行中）' : '进入交互式 REPL 模式');
+
+    // V3.5.19：Web 端的 [WebCLI] / [System] 回显要打到这个终端上。
+    // 如果直接 console.log，会把用户正在输入的那一行顶乱，所以先清行再打印，然后重绘提示符。
+    if (options.webMode) {
+        try {
+            const webService = load('./web_service');
+            if (webService && typeof webService.setEchoSink === 'function') {
+                webService.setEchoSink((line) => {
+                    try {
+                        readline.clearLine(process.stdout, 0);
+                        readline.cursorTo(process.stdout, 0);
+                        process.stdout.write(line + '\n');
+                        rl.prompt(true);
+                    } catch (e) {
+                        console.log(line);
+                    }
+                });
+            }
+        } catch (e) { /* 回显接管失败则退回 console.log */ }
+    }
+
     rl.prompt();
     rl.on('line', async (line) => {
         const input = line.trim();
@@ -1184,6 +1231,10 @@ async function startRepl() {
     rl.on('SIGINT', () => { rl.close(); });
     rl.on('close', () => {
         logger()?.info('退出交互式 REPL 模式');
+        // V3.5.19：web 模式下退出 REPL 意味着用户想收工了，顺手关掉面板
+        if (typeof options.onExit === 'function') {
+            try { options.onExit(); } catch (e) { /* 忽略 */ }
+        }
         console.log('再见~');
         process.exit(0);
     });

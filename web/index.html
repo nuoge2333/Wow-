@@ -61,9 +61,23 @@
                     if (event.origin !== window.location.origin) return;
                     if (event.data.type === 'navigate') {
                         const page = event.data.page;
+                        if (!page) return;
                         const contentFrame = document.getElementById('content-frame');
                         // 所有页面都在根目录下，直接拼接
-                        contentFrame.src = '/' + page + '.html';
+                        // V3.5.19：支持 tab 透传，例如方案页创建成功后跳「下载页-任务队列」
+                        //   { type:'navigate', page:'down', tab:'queue' } → /down.html?tab=queue
+                        let url = '/' + page + '.html';
+                        if (event.data.tab) {
+                            url += '?tab=' + encodeURIComponent(event.data.tab);
+                        }
+                        contentFrame.src = url;
+                        // 同步左侧菜单高亮
+                        const menuFrame = document.getElementById('menu-frame');
+                        try {
+                            menuFrame.contentWindow.postMessage(
+                                { type: 'set-active', page: page }, window.location.origin
+                            );
+                        } catch (e) { /* 菜单尚未加载完成，忽略 */ }
                     }
                 });
 

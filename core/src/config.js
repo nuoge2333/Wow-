@@ -517,9 +517,39 @@ class WhitelistManager {
     }
 }
 
+/**
+ * 批量设置配置（V3.5.19）
+ * 与逐个调用 setConfig 的区别：只读一次、只写一次盘。
+ * Web 设置页保存整张表单时用它，避免 40 个键触发 40 次 yaml.dump。
+ * @param {Object<string,*>} patch 点号分隔键 → 值
+ * @returns {number} 实际写入的键数量
+ */
+function setConfigs(patch) {
+    if (!patch || typeof patch !== 'object') return 0;
+    const config = loadConfig();
+    let count = 0;
+    for (const [key, value] of Object.entries(patch)) {
+        const parts = String(key).split('.').filter(Boolean);
+        if (!parts.length) continue;
+        let current = config;
+        for (let i = 0; i < parts.length - 1; i++) {
+            const part = parts[i];
+            if (!(part in current) || typeof current[part] !== 'object' || current[part] === null) {
+                current[part] = {};
+            }
+            current = current[part];
+        }
+        current[parts[parts.length - 1]] = value;
+        count++;
+    }
+    if (count) saveConfig(config);
+    return count;
+}
+
 module.exports = {
     getConfig,
     setConfig,
+    setConfigs,
     loadConfig,
     saveConfig,
     getFullConfig,

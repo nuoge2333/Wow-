@@ -155,6 +155,20 @@
                     window.parent.location.href = '/login.html';
                 }
             });
+
+            // 接收父框架的菜单同步（V3.5.19）
+            // 某些页面（如方案页创建成功）会主动跳转到别的页面，左侧高亮要跟着动。
+            window.addEventListener('message', function(event) {
+                if (event.origin !== window.location.origin) return;
+                if (event.data && event.data.type === 'set-active' && event.data.page) {
+                    const page = event.data.page;
+                    items.forEach(i => {
+                        if (i.dataset.page === page) i.classList.add('active');
+                        else i.classList.remove('active');
+                    });
+                    sessionStorage.setItem('currentPage', page);
+                }
+            });
         })();
     </script>
 </body>

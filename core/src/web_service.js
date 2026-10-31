@@ -17,6 +17,8 @@ const config = require('./config');
 const utils = require('./utils');
 const ServerManager = require('./server');
 const Terracotta = require('./terracotta');
+// V3.5.19：Web 端耗时指令的异步任务执行器
+const WebTask = require('./web_task');
 // V3.5.0：事件日志
 const { logger } = require('./log');
 // V3.5.3：Web 端命令安全策略（拒绝清单）
@@ -50,6 +52,100 @@ function isExposedHost(host) {
     if (!h) return false;
     if (h === '127.0.0.1' || h === 'localhost' || h === '::1' || h === '[::1]') return false;
     return true;
+}
+
+// ==================== Web ↔ CLI 回显（V3.5.19）====================
+
+/**
+ * 清洗一条指令文本。
+ *
+ * Web 控制台最常见的「Unknown command」有两个来源：
+ *   1. 复制粘贴带进来的 \r\n、零宽字符；
+ *   2. 手抖敲出连续空格，被拆成 ['scheme','','pull','x']，第一个参数变成空串。
+ * 这里统一把控制字符压成空格、把连续空白压成单空格、再去首尾空白，
+ * 后续按空白拆分就不可能再拆出空参数。
+ *
+ * @param {*} input
+ * @returns {string}
+ */
+function sanitizeCommandText(input) {
+    if (input === null || input === undefined) return '';
+    let s = String(input);
+    s = s.replace(/[\u0000-\u001f\u007f]/g, ' ');   // 控制字符（含 \r \n \t \0）
+    s = s.replace(/[\u200b-\u200f\ufeff]/g, '');    // 零宽空格 / BOM
+    s = s.replace(/\s+/g, ' ').trim();
+    return s;
+}
+
+/** 默认回显出口：没接 REPL 时直接打到 stdout */
+let echoSink = (line) => {
+    try { console.log(line); } catch (e) { /* 忽略 */ }
+};
+
+/**
+ * 替换回显出口。`wow web start` 进入长命令模式后会把它接到 readline，
+ * 避免回显把正在输入的提示符顶乱。
+ * @param {(line:string)=>void} fn
+ */
+function setEchoSink(fn) {
+    echoSink = typeof fn === 'function' ? fn : (line) => {
+        try { console.log(line); } catch (e) { /* 忽略 */ }
+    };
+}
+
+/** 广播一条控制台消息给所有已连接的 Web 客户端 */
+function broadcastConsole(line, kind = 'system') {
+    for (const client of wsClients) {
+        try {
+            client.emit('console', { line, kind, timestamp: Date.now() });
+        } catch (e) { /* 单个客户端异常不影响其它 */ }
+    }
+}
+
+/**
+ * 在 wow 事件日志 + Web 控制台 + 终端同时打印 `[WebCLI] ...`。
+ * 这是「Web 操作 = 代理发 CLI 指令」这条最高原则的可见化落点。
+ */
+function webCliEcho(text) {
+    const line = `[WebCLI] ${text}`;
+    try { logger.impt(line); } catch (e) { /* 日志失败不影响主流程 */ }
+    broadcastConsole(line, 'webcli');
+    try { echoSink(line); } catch (e) { /* 忽略 */ }
+}
+
+/**
+ * 文件操作等「系统级动作」的回显，格式贴近用户熟悉的 shell 命令。
+ * 注意：这里只打印、不执行——真正的落盘由 file_manager 用 fs API 完成。
+ */
+function systemEcho(text) {
+    const line = `[System] ${text}`;
+    try { logger.info(line); } catch (e) { /* 忽略 */ }
+    broadcastConsole(line, 'system');
+    try { echoSink(line); } catch (e) { /* 忽略 */ }
+}
+
+/** 文件操作回显时补上「在哪个方案里做的」，跨方案浏览时不至于看懵 */
+function schemeSuffix(scheme) {
+    return scheme ? `  @${scheme}` : '';
+}
+
+/**
+ * 把嵌套配置对象压成「点号键 → 值」（V3.5.19）
+ * 设置页的「原始 JSON」模式提交的是整份 wow.yaml，这里转成扁平键后
+ * 再交给 config_schema 做白名单校验。
+ */
+function flattenConfigPatch(obj, prefix = '', out = {}) {
+    if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return out;
+    for (const [k, v] of Object.entries(obj)) {
+        if (prefix === '' && (k === 'patch' || k === 'key' || k === 'value')) continue;
+        const key = prefix ? `${prefix}.${k}` : k;
+        if (v && typeof v === 'object' && !Array.isArray(v)) {
+            flattenConfigPatch(v, key, out);
+        } else {
+            out[key] = v;
+        }
+    }
+    return out;
 }
 
 // JWT 密钥
@@ -393,22 +489,30 @@ function startWeb(options = {}) {
      * 执行 CLI 命令（将 Web 操作转为命令执行）
      */
     app.post('/api/exec', async (req, res) => {
-        const { command, args = [] } = req.body;
+        const { args = [] } = req.body;
+        // V3.5.19：入参统一清洗（去 \r\n、压缩连续空格），避免「带空格就 unknown command」
+        const command = sanitizeCommandText(req.body && req.body.command);
+        const cleanArgs = (Array.isArray(args) ? args : [])
+            .map(a => sanitizeCommandText(a))
+            .filter(a => a !== '');
 
-        if (!command || command.trim().length === 0) {
+        if (!command) {
             return res.status(400).json({ error: '命令不能为空' });
         }
 
         // V3.5.3：Web 端命令安全策略（拒绝清单）——拦截灾难性/不可逆操作
-        const policy = isWebCommandAllowed(command);
+        const policy = isWebCommandAllowed([command, ...cleanArgs].join(' '));
         if (!policy.allowed) {
             logger.warn(`Web 指令被拒绝: ${command} | ${policy.reason}`);
-            return res.status(403).json({ error: policy.reason });
+            return res.status(403).json({ error: policy.reason, code: 'POLICY_DENIED' });
         }
+
+        // V3.5.19：先回显再执行——Web 上点的每一个按钮，终端里都要看得见它发了什么
+        webCliEcho(`wow ${[command, ...cleanArgs].join(' ')}`);
 
         try {
             // 执行命令
-            const result = await execCommand(command, args);
+            const result = await execCommand(command, cleanArgs);
             res.json({ success: true, output: result });
         } catch (e) {
             res.status(500).json({ success: false, error: e.message });
@@ -416,17 +520,207 @@ function startWeb(options = {}) {
     });
 
     /**
+     * 向运行中的 Minecraft 服务端发送一条控制台指令（V3.5.19）
+     * POST /api/console  { line: "say hi" }
+     *
+     * 为什么单独开一条路由：控制台指令不是 wow 指令，绝不能走 /api/exec
+     * （那会变成 `wow list` → unknown command）。这里只做三件事：
+     *   清洗 → 回显 [WebCLI] → 投递给持有 stdin 的进程。
+     */
+    app.post('/api/console', (req, res) => {
+        const line = sanitizeCommandText(req.body && req.body.line);
+        if (!line) {
+            return res.status(400).json({ success: false, error: '指令不能为空' });
+        }
+        if (line.length > 512) {
+            return res.status(413).json({ success: false, error: '指令过长（上限 512 字符）' });
+        }
+
+        const server = new ServerManager();
+        if (!server.isRunning()) {
+            return res.status(409).json({ success: false, error: '服务器未运行，无法发送控制台指令' });
+        }
+
+        webCliEcho(line);
+
+        const relayAlive = typeof ServerManager.isConsoleRelayAlive === 'function'
+            && ServerManager.isConsoleRelayAlive();
+
+        if (relayAlive) {
+            const ok = ServerManager.enqueueConsoleCommand(line);
+            return res.json({ success: ok, via: 'relay', line, queued: ok });
+        }
+
+        // 兜底：没有中继进程（如服务端由旧版本拉起），尝试直接写 stdin
+        let sent = false;
+        try { sent = server.sendCommand(line); } catch (e) { sent = false; }
+        if (!sent) {
+            return res.status(409).json({
+                success: false,
+                error: '当前服务端进程没有控制台接收器（可能是旧版本启动的），请重启服务器后再试'
+            });
+        }
+        res.json({ success: true, via: 'stdin', line });
+    });
+
+    /**
+     * 异步任务：提交（V3.5.19）
+     * POST /api/tasks/run  { command: "scheme create", args: ["名字","--version","1.20.1"], name }
+     * 立即返回 task_id，不等待下载/安装完成。
+     */
+    app.post('/api/tasks/run', (req, res) => {
+        const body = req.body || {};
+        const command = sanitizeCommandText(body.command);
+        const args = (Array.isArray(body.args) ? body.args : [])
+            .map(a => sanitizeCommandText(a))
+            .filter(a => a !== '');
+
+        if (!command) {
+            return res.status(400).json({ success: false, error: '缺少 command' });
+        }
+
+        const policy = isWebCommandAllowed([command, ...args].join(' '));
+        if (!policy.allowed) {
+            logger.warn(`Web 异步任务被拒绝: ${command} | ${policy.reason}`);
+            return res.status(403).json({ success: false, error: policy.reason, code: 'POLICY_DENIED' });
+        }
+
+        const r = WebTask.runTask({
+            command,
+            args,
+            name: sanitizeCommandText(body.name),
+            type: sanitizeCommandText(body.type) || '方案'
+        });
+        if (!r.ok) {
+            return res.status(400).json({ success: false, error: r.reason });
+        }
+
+        webCliEcho(`wow ${[command, ...args].join(' ')}`);
+        res.json({ success: true, task_id: r.task.id, task: r.task });
+    });
+
+    /**
+     * 异步任务：列表（V3.5.19）
+     * GET /api/tasks  → { tasks, stats }
+     */
+    app.get('/api/tasks', (req, res) => {
+        try {
+            const Queue = require('./download_queue');
+            res.json({ success: true, tasks: Queue.list(), stats: Queue.stats() });
+        } catch (e) {
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+    /**
+     * 异步任务：清理已结束的任务（V3.5.19）
+     */
+    app.delete('/api/tasks', (req, res) => {
+        try {
+            const Queue = require('./download_queue');
+            res.json({ success: true, removed: Queue.clearFinished() });
+        } catch (e) {
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+    /**
      * 获取服务器状态
+     * V3.5.19：补齐 running / pid 之外的现场信息（方案名、启动时刻、控制台中继是否在线），
+     * 仪表盘不再出现「状态一片空白」。
      */
     app.get('/api/status', (req, res) => {
-        const server = new ServerManager();
-        const info = server.getInfo();
-        res.json({
-            running: info.running,
-            pid: info.pid,
-            serverDir: info.serverDir,
-            jarFile: info.jarFile
-        });
+        try {
+            const server = new ServerManager();
+            const info = server.getInfo();
+
+            // 启动时刻：PID 文件的 mtime 近似等于「服务器写入 PID 的时间」
+            let startedAt = null;
+            try {
+                const pidFile = path.join(info.serverDir, 'server.pid');
+                const pidPath = fs.existsSync(pidFile) ? pidFile : null;
+                if (pidPath) startedAt = fs.statSync(pidPath).mtimeMs;
+            } catch (e) { /* 拿不到就算了，不影响状态展示 */ }
+
+            res.json({
+                running: !!info.running,
+                pid: info.pid || null,
+                serverDir: info.serverDir,
+                jarFile: info.jarFile,
+                logFile: info.logFile,
+                scheme: config.getConfig('server.scheme', null),
+                startedAt,
+                // V3.5.19：控制台指令是否有进程在接收（决定 Web 控制台能不能发 MC 指令）
+                consoleRelay: typeof ServerManager.isConsoleRelayAlive === 'function'
+                    ? ServerManager.isConsoleRelayAlive()
+                    : false,
+                web: {
+                    port: parseInt(fs.existsSync(WEB_PORT_FILE) ? fs.readFileSync(WEB_PORT_FILE, 'utf8').trim() : 0, 10) || config.getConfig('web.port', 8080),
+                    host: config.getConfig('web.host', '127.0.0.1')
+                }
+            });
+        } catch (e) {
+            res.status(500).json({ error: e.message, running: false, pid: null });
+        }
+    });
+
+    /**
+     * 配置表单结构（V3.5.19）
+     * GET /api/config/schema
+     * 返回「有哪些键、什么类型、中文怎么解释」，前端据此生成表单。
+     * 必须注册在 /api/config/:key 之前，否则会被当成 key="schema"。
+     */
+    app.get('/api/config/schema', (req, res) => {
+        try {
+            const schema = require('./config_schema');
+            const fields = schema.listFields().map(f => {
+                const value = config.getConfig(f.key, null);
+                const isSecret = f.type === 'secret';
+                return {
+                    ...f,
+                    // 密钥类永不回显明文，只告诉前端「是否已设置」
+                    value: isSecret ? null : value,
+                    hasValue: isSecret ? !!(value && String(value).trim()) : undefined
+                };
+            });
+            res.json({ success: true, fields });
+        } catch (e) {
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+    /**
+     * 批量保存配置（V3.5.19）
+     * POST /api/config/batch  { patch: { "auto_scheme": true, "web.port": 8080 } }
+     * 或直接传扁平对象 { "auto_scheme": true }。
+     * 未在 config_schema 登记过的键一律忽略，防止前端塞垃圾键把 wow.yaml 写花。
+     */
+    app.post('/api/config/batch', (req, res) => {
+        try {
+            const body = req.body || {};
+            const rawPatch = (body.patch && typeof body.patch === 'object') ? body.patch : body;
+            const flat = flattenConfigPatch(rawPatch);
+
+            const schema = require('./config_schema');
+            const check = schema.validatePatch(flat);
+            if (!check.ok) {
+                return res.status(400).json({
+                    success: false,
+                    error: `配置项 ${check.key} 取值非法：${check.reason}`,
+                    key: check.key
+                });
+            }
+
+            const applied = config.setConfigs(check.values);
+            const keys = Object.keys(check.values);
+            if (keys.length) {
+                logger.impt(`Web 修改配置: ${keys.join(', ')}`);
+                webCliEcho(`config set ${keys.join(' ')}`);
+            }
+            res.json({ success: true, applied, keys, skipped: check.skipped });
+        } catch (e) {
+            res.status(500).json({ success: false, error: e.message });
+        }
     });
 
     /**
@@ -444,12 +738,33 @@ function startWeb(options = {}) {
 
     /**
      * 更新配置
+     * V3.5.19：同时支持两种载荷——
+     *   单个键：{ key: "web.port", value: 8080 }
+     *   整份配置：{ server: {...}, web: {...} }（设置页「原始 JSON」模式仍在用）
+     * 历史上后一种会因缺少 key 直接 400，用户以为「保存成功」其实什么都没写。
      */
     app.post('/api/config', (req, res) => {
-        const { key, value } = req.body;
+        const body = req.body || {};
+        const { key, value } = body;
+
         if (!key) {
-            return res.status(400).json({ error: '缺少 key' });
+            // 整份配置：按 schema 白名单落到扁平键再写
+            try {
+                const flat = flattenConfigPatch(body);
+                const schema = require('./config_schema');
+                const check = schema.validatePatch(flat);
+                if (!check.ok) {
+                    return res.status(400).json({ error: `配置项 ${check.key} 取值非法：${check.reason}` });
+                }
+                const applied = config.setConfigs(check.values);
+                const keys = Object.keys(check.values);
+                if (keys.length) logger.impt(`Web 保存配置: ${keys.join(', ')}`);
+                return res.json({ success: true, applied, keys, skipped: check.skipped });
+            } catch (e) {
+                return res.status(500).json({ error: e.message });
+            }
         }
+
         config.setConfig(key, value);
         res.json({ success: true, key, value });
     });
@@ -497,6 +812,60 @@ function startWeb(options = {}) {
     });
 
     /**
+     * 单个方案详情（V3.5.19）
+     * GET /api/scheme/:name/status
+     * 前端「方案详情」弹窗一直在请求这个地址，但此前后端从未实现，
+     * 于是永远走到「无法获取详细信息」分支。
+     */
+    app.get('/api/scheme/:name/status', (req, res) => {
+        try {
+            const SchemeManager = require('./scheme_manager');
+            const sm = new SchemeManager();
+            const name = String(req.params.name || '').trim();
+            if (!name) return res.status(400).json({ success: false, error: '缺少方案名' });
+            if (!sm._schemeExists(name)) {
+                return res.status(404).json({ success: false, error: `方案「${name}」不存在` });
+            }
+
+            // 这里直接读 scheme.yaml，不调 sm.status()——那个方法会往 stdout 打一整块表格，
+            // 面板每开一次详情弹窗就往终端刷一遍，太脏。
+            const meta = sm._loadSchemeMeta(name);
+            const res0 = meta.resources || {};
+            const mods = res0.mods || [];
+            const plugins = res0.plugins || [];
+            const core = res0.core || {};
+
+            res.json({
+                success: true,
+                name,
+                state: meta.state,
+                version: meta.version,
+                loader: meta.loader,
+                type: meta.type,
+                build: meta.build || null,
+                created_at: meta.created_at || null,
+                updated_at: meta.updated_at || null,
+                active: sm.currentScheme === name,
+                core: { file: core.file || '--', in_pool: !!core.in_pool },
+                mods: {
+                    count: mods.length,
+                    shared: mods.filter(m => m.in_pool).length,
+                    unique: mods.filter(m => !m.in_pool).length
+                },
+                plugins: {
+                    count: plugins.length,
+                    shared: plugins.filter(p => p.in_pool).length,
+                    unique: plugins.filter(p => !p.in_pool).length
+                },
+                unique_resources: meta.unique_resources || [],
+                world: meta.world || { exists: false }
+            });
+        } catch (e) {
+            res.status(400).json({ success: false, error: e.message });
+        }
+    });
+
+    /**
      * 获取主题列表
      */
     app.get('/api/themes', (req, res) => {
@@ -540,16 +909,37 @@ function startWeb(options = {}) {
 
     // ===== 文件管理（V3.5.6）=====
     // 所有路径严格限制在服务器（方案）运行目录内，详见 file_manager.js
+    // V3.5.19：支持 ?scheme= 指定方案（文件管理器右上角的方案下拉框），
+    // 不传则沿用「当前激活方案」，与旧行为完全一致。
+
+    /** 取本次请求的方案参数（query 优先，其次 body） */
+    const schemeOf = (req) => {
+        const s = (req.query && req.query.scheme) || (req.body && req.body.scheme) || '';
+        return String(s).trim();
+    };
+
+    /** 方案参数 → 方案根目录绝对路径（非法方案名会抛错，由各路由转成 403/404） */
+    const rootOf = (req) => {
+        const FileManager = require('./file_manager');
+        return FileManager.getRoot(schemeOf(req) || undefined);
+    };
 
     /**
      * 列出目录内容
-     * GET /api/files?path=<相对路径>
+     * GET /api/files?path=<相对路径>&scheme=<方案名>
      */
     app.get('/api/files', async (req, res) => {
         try {
             const FileManager = require('./file_manager');
-            const result = await FileManager.listFiles(req.query.path || '');
-            res.json({ success: true, path: result.path, root: FileManager.getRoot(), files: result.files });
+            const rootAbs = rootOf(req);
+            const result = await FileManager.listFiles(req.query.path || '', rootAbs);
+            res.json({
+                success: true,
+                path: result.path,
+                root: rootAbs,
+                scheme: schemeOf(req) || config.getConfig('server.scheme', null),
+                files: result.files
+            });
         } catch (e) {
             const code = e.code === 'EPATH' ? 403 : (e.code === 'ENOENT' ? 404 : 400);
             res.status(code).json({ success: false, error: e.message });
@@ -577,7 +967,7 @@ function startWeb(options = {}) {
 
         try {
             const FileManager = require('./file_manager');
-            const info = FileManager.resolveDownload(req.query.path || '');
+            const info = FileManager.resolveDownload(req.query.path || '', rootOf(req));
             // 文件名含非 ASCII 时用 RFC 5987 编码，避免部分浏览器乱码
             const asciiName = info.name.replace(/[^\x20-\x7e]/g, '_');
             res.setHeader('Content-Disposition',
@@ -626,7 +1016,15 @@ function startWeb(options = {}) {
                 const buf = Buffer.concat(chunks);
                 const parsed = parseMultipart(buf, boundary);
                 const FileManager = require('./file_manager');
-                const result = await FileManager.saveUploads(parsed.fields.path || '', parsed.files);
+                const scheme = parsed.fields.scheme || req.query.scheme || '';
+                const result = await FileManager.saveUploads(
+                    parsed.fields.path || '',
+                    parsed.files,
+                    FileManager.getRoot(String(scheme).trim() || undefined)
+                );
+                if (result.uploaded) {
+                    systemEcho(`cp -r <上传> ${parsed.fields.path || '.'}  (${result.uploaded} 个文件${schemeSuffix(scheme)})`);
+                }
                 res.json({ success: true, uploaded: result.uploaded, files: result.files, skipped: result.skipped });
             } catch (e) {
                 const code = e.code === 'EPATH' ? 403 : 500;
@@ -655,8 +1053,10 @@ function startWeb(options = {}) {
         try {
             const FileManager = require('./file_manager');
             const { path: parentPath = '', name } = req.body || {};
-            const r = await FileManager.makeDir(parentPath, name);
+            const scheme = schemeOf(req);
+            const r = await FileManager.makeDir(parentPath, name, rootOf(req));
             logger.info(`Web 新建文件夹: ${r.path}`);
+            systemEcho(`mkdir ${r.path}${schemeSuffix(scheme)}`);
             res.json({ success: true, ...r });
         } catch (e) {
             res.status(fileErrStatus(e)).json({ success: false, error: e.message });
@@ -671,8 +1071,10 @@ function startWeb(options = {}) {
         try {
             const FileManager = require('./file_manager');
             const { path: p, newName } = req.body || {};
-            const r = await FileManager.renameEntry(p, newName);
+            const scheme = schemeOf(req);
+            const r = await FileManager.renameEntry(p, newName, rootOf(req));
             logger.info(`Web 重命名: ${r.from} → ${r.to}`);
+            systemEcho(`mv ${r.from} ${r.to}${schemeSuffix(scheme)}`);
             res.json({ success: true, ...r });
         } catch (e) {
             res.status(fileErrStatus(e)).json({ success: false, error: e.message });
@@ -687,8 +1089,10 @@ function startWeb(options = {}) {
         try {
             const FileManager = require('./file_manager');
             const { from, to } = req.body || {};
-            const r = await FileManager.transferEntry(from, to, false);
+            const scheme = schemeOf(req);
+            const r = await FileManager.transferEntry(from, to, false, rootOf(req));
             logger.info(`Web 移动: ${r.from} → ${r.to}`);
+            systemEcho(`mv ${r.from} ${r.to}${schemeSuffix(scheme)}`);
             res.json({ success: true, ...r });
         } catch (e) {
             res.status(fileErrStatus(e)).json({ success: false, error: e.message });
@@ -703,8 +1107,10 @@ function startWeb(options = {}) {
         try {
             const FileManager = require('./file_manager');
             const { from, to } = req.body || {};
-            const r = await FileManager.transferEntry(from, to, true);
+            const scheme = schemeOf(req);
+            const r = await FileManager.transferEntry(from, to, true, rootOf(req));
             logger.info(`Web 复制: ${r.from} → ${r.to}`);
+            systemEcho(`cp -r ${r.from} ${r.to}${schemeSuffix(scheme)}`);
             res.json({ success: true, ...r });
         } catch (e) {
             res.status(fileErrStatus(e)).json({ success: false, error: e.message });
@@ -720,8 +1126,10 @@ function startWeb(options = {}) {
         try {
             const FileManager = require('./file_manager');
             const { path: p } = req.body || {};
-            const r = await FileManager.removeEntry(p);
+            const scheme = schemeOf(req);
+            const r = await FileManager.removeEntry(p, rootOf(req));
             logger.warn(`Web 删除${r.type === 'dir' ? '目录' : '文件'}: ${r.path}`);
+            systemEcho(`rm -rf ${r.path}${schemeSuffix(scheme)}`);
             res.json({ success: true, ...r });
         } catch (e) {
             res.status(fileErrStatus(e)).json({ success: false, error: e.message });
@@ -739,8 +1147,10 @@ function startWeb(options = {}) {
             if (!Array.isArray(paths) || paths.length === 0) {
                 return res.status(400).json({ success: false, error: '请至少选择一个要压缩的条目' });
             }
-            const r = await FileManager.compress(paths, dest);
+            const scheme = schemeOf(req);
+            const r = await FileManager.compress(paths, dest, rootOf(req));
             logger.info(`Web 压缩: ${r.entries} 项 → ${r.path}`);
+            systemEcho(`zip -r ${r.path} ${paths.join(' ')}${schemeSuffix(scheme)}`);
             res.json({ success: true, ...r });
         } catch (e) {
             res.status(fileErrStatus(e)).json({ success: false, error: e.message });
@@ -755,8 +1165,10 @@ function startWeb(options = {}) {
         try {
             const FileManager = require('./file_manager');
             const { path: zipPath, dest = '' } = req.body || {};
-            const r = await FileManager.extract(zipPath, dest);
+            const scheme = schemeOf(req);
+            const r = await FileManager.extract(zipPath, dest, rootOf(req));
             logger.info(`Web 解压: ${zipPath} → ${r.path}（${r.extracted} 项）`);
+            systemEcho(`unzip ${zipPath} -d ${r.path || '.'}${schemeSuffix(scheme)}`);
             res.json({ success: true, ...r });
         } catch (e) {
             res.status(fileErrStatus(e)).json({ success: false, error: e.message });
@@ -765,12 +1177,12 @@ function startWeb(options = {}) {
 
     /**
      * 读取文本文件（预览 / 编辑）
-     * GET /api/files/content?path=xxx
+     * GET /api/files/content?path=xxx&scheme=xxx
      */
     app.get('/api/files/content', async (req, res) => {
         try {
             const FileManager = require('./file_manager');
-            const r = await FileManager.readText(req.query.path || '');
+            const r = await FileManager.readText(req.query.path || '', undefined, rootOf(req));
             res.json({ success: true, ...r });
         } catch (e) {
             res.status(fileErrStatus(e)).json({ success: false, error: e.message });
@@ -785,13 +1197,48 @@ function startWeb(options = {}) {
         try {
             const FileManager = require('./file_manager');
             const { path: p, content = '' } = req.body || {};
-            const r = await FileManager.writeText(p, content);
+            const scheme = schemeOf(req);
+            const r = await FileManager.writeText(p, content, undefined, rootOf(req));
             logger.info(`Web 保存文件: ${r.path}（${r.size} 字节）`);
+            systemEcho(`cat > ${r.path}  (${r.size} 字节${schemeSuffix(scheme)})`);
             res.json({ success: true, ...r });
         } catch (e) {
             res.status(fileErrStatus(e)).json({ success: false, error: e.message });
         }
     });
+
+    // ===== 文本编辑器专用别名（V3.5.19）=====
+    // 需求单点名要 /api/file/read 与 /api/file/write。上面两条 REST 路由
+    // （GET/PUT /api/files/content）早已实现同样的能力，这里只做薄别名转发，
+    // 不复制第二份读写逻辑，避免以后改一处漏一处。
+
+    /** GET /api/file/read?path=xxx */
+    app.get('/api/file/read', async (req, res) => {
+        try {
+            const FileManager = require('./file_manager');
+            const r = await FileManager.readText(req.query.path || '', undefined, rootOf(req));
+            res.json({ success: true, ...r });
+        } catch (e) {
+            res.status(fileErrStatus(e)).json({ success: false, error: e.message });
+        }
+    });
+
+    /** POST /api/file/write  { path, content }（同时接受 PUT，方便前端按语义调用） */
+    const fileWriteHandler = async (req, res) => {
+        try {
+            const FileManager = require('./file_manager');
+            const { path: p, content = '' } = req.body || {};
+            const scheme = schemeOf(req);
+            const r = await FileManager.writeText(p, content, undefined, rootOf(req));
+            logger.info(`Web 保存文件: ${r.path}（${r.size} 字节）`);
+            systemEcho(`cat > ${r.path}  (${r.size} 字节${schemeSuffix(scheme)})`);
+            res.json({ success: true, ...r });
+        } catch (e) {
+            res.status(fileErrStatus(e)).json({ success: false, error: e.message });
+        }
+    };
+    app.post('/api/file/write', fileWriteHandler);
+    app.put('/api/file/write', fileWriteHandler);
 
     // ===== 模组搜索与下载队列（V3.5.6）=====
 
@@ -994,8 +1441,11 @@ function startWeb(options = {}) {
      */
     app.get('/api/metrics', async (req, res) => {
         try {
-            const ServerManager = require('./server');
-            const running = ServerManager.isRunning ? ServerManager.isRunning() : false;
+            // V3.5.19 修复：原实现写成 `ServerManager.isRunning()`（类上根本没有这个静态方法），
+            // 永远恒为 false，导致仪表盘 CPU/内存/人数 一直是 0。改为实例方法。
+            const server = new ServerManager();
+            const info = server.getInfo();
+            const running = !!info.running;
 
             let cpu = '0%';
             let memory = '0 MB';
@@ -1003,7 +1453,7 @@ function startWeb(options = {}) {
             let players = 0;
 
             if (running) {
-                const pid = ServerManager.getPid ? ServerManager.getPid() : null;
+                const pid = info.pid;
                 if (pid) {
                     const m = readProcessMetrics(pid);
                     if (m) {
@@ -1016,7 +1466,7 @@ function startWeb(options = {}) {
                 players = await countOnlinePlayers();
             }
 
-            res.json({ success: true, running, cpu, memory, uptime, players });
+            res.json({ success: true, running, pid: info.pid || null, cpu, memory, uptime, players });
         } catch (e) {
             res.status(500).json({ success: false, error: e.message });
         }
@@ -1045,35 +1495,58 @@ function startWeb(options = {}) {
         // 发送欢迎消息
         socket.emit('message', { type: 'info', content: '已连接到 wow Web 服务' });
 
-        // 开始推送日志
-        startLogTail(socket);
+        // V3.5.19：日志改为「单一定时器 + 广播」，新客户端只从当前时刻开始收增量，
+        // 历史记录由前端首次 GET /api/logs 拉取，避免每个页面都重复读整份日志。
+        startBroadcastTail();
+
+        // 连上就先把当前任务列表推一份，任务队列页不必等首次轮询
+        try {
+            const Queue = require('./download_queue');
+            socket.emit('tasks', { tasks: Queue.list(), stats: Queue.stats() });
+        } catch (e) { /* 队列不可用不影响连接 */ }
 
         socket.on('disconnect', () => {
             console.log(`WebSocket 客户端已断开: ${socket.id}`);
             wsClients = wsClients.filter(c => c.id !== socket.id);
-            stopLogTail();
+            if (wsClients.length === 0) stopBroadcastTail();
         });
 
         // 接收命令（前端直接发送命令）
         socket.on('command', async (data) => {
-            const { command, args } = data;
+            const command = sanitizeCommandText(data && data.command);
+            const args = (Array.isArray(data && data.args) ? data.args : [])
+                .map(a => sanitizeCommandText(a))
+                .filter(a => a !== '');
             if (!command) return;
 
             // V3.5.3：与 /api/exec 共用同一套命令安全策略
-            const policy = isWebCommandAllowed(command);
+            const policy = isWebCommandAllowed([command, ...args].join(' '));
             if (!policy.allowed) {
                 logger.warn(`WebSocket 指令被拒绝: ${command} | ${policy.reason}`);
                 socket.emit('command_result', { command, success: false, error: policy.reason });
                 return;
             }
 
+            // V3.5.19：与 HTTP 侧一致，先回显 [WebCLI]
+            webCliEcho(`wow ${[command, ...args].join(' ')}`);
+
             try {
-                const result = await execCommand(command, args || []);
+                const result = await execCommand(command, args);
                 socket.emit('command_result', { command, success: true, output: result });
             } catch (e) {
                 socket.emit('command_result', { command, success: false, error: e.message });
             }
         });
+    });
+
+    // V3.5.19：异步任务进度 → 广播给所有客户端（方案创建 / 拉取 / 瘦身）
+    WebTask.bus.on('update', (task) => {
+        if (!task) return;
+        for (const client of wsClients) {
+            try {
+                client.emit('task', task);
+            } catch (e) { /* 忽略单个客户端异常 */ }
+        }
     });
 
     // ===== 全局错误处理（必须最后注册）=====
@@ -1174,6 +1647,21 @@ function startWeb(options = {}) {
     // 保存服务器实例以便停止
     httpServer = server;
     ioServer = io;
+
+    // V3.5.19：端口占用等启动错误必须给出人话提示，而不是抛一段未捕获的 EADDRINUSE 堆栈
+    server.on('error', (err) => {
+        isRunning = false;
+        if (err && err.code === 'EADDRINUSE') {
+            console.error('');
+            console.error(`❌ Web 面板启动失败：端口 ${port} 已被占用`);
+            console.error(`   换个端口：wow web start -p ${Number(port) + 1}`);
+            console.error(`   或先停掉占用进程：wow web stop`);
+            console.error('');
+        } else {
+            console.error(`❌ Web 面板启动失败: ${err && err.message}`);
+        }
+        try { logger.erro(`Web 面板启动失败: ${err && err.message}`); } catch (e) { /* 忽略 */ }
+    });
 
     // 自动打开浏览器（仅限本地访问）
     if (host === '127.0.0.1' || host === 'localhost') {
@@ -1312,8 +1800,30 @@ function stopWeb() {
     httpServer.close(() => {
         isRunning = false;
         httpServer = null;
+        // V3.5.19：同进程模式下也要清掉 PID/端口文件，否则残留文件会让
+        // `wow web status` 误以为面板还在（旧实现只在「跨进程」分支清理）
+        cleanupOwnStateFiles();
         console.log('Web 服务已停止');
     });
+}
+
+/**
+ * V3.5.19：清理本进程自己写的状态文件。
+ * 只在文件里的 PID 确实是当前进程时才删，避免误删另一个实例的登记信息。
+ */
+function cleanupOwnStateFiles() {
+    let pid = null;
+    try {
+        if (fs.existsSync(WEB_PID_FILE)) {
+            pid = parseInt(fs.readFileSync(WEB_PID_FILE, 'utf8').trim(), 10);
+        }
+    } catch (e) { /* 读不到就当没有 */ }
+
+    // pid 文件里不是自己 → 说明登记的是另一个实例，别动
+    if (pid !== process.pid) return;
+
+    try { fs.unlinkSync(WEB_PID_FILE); } catch (e) { /* 忽略 */ }
+    try { fs.unlinkSync(WEB_PORT_FILE); } catch (e) { /* 忽略 */ }
 }
 
 /**
@@ -1372,20 +1882,25 @@ function webStatus() {
 /**
  * 执行命令（内部函数）
  * V3.5.0：Web 页面（/api/exec 与 WebSocket command）发起的指令统一在此落盘记录。
+ * V3.5.19：参数按空白拆分并过滤空项——历史实现 `command.split(' ')` 会把
+ * `scheme pull  test` 拆出空字符串，最终以 `scheme pull "" test` 传给 commander，
+ * 方案名变成空串，用户看到的就是「命令未知 / 方案不存在」。
  */
 function execCommand(command, args = []) {
-    const argStr = (args && args.length) ? ' ' + args.join(' ') : '';
-    const fullCmd = `wow ${command}${argStr}`.trim();
+    const cmdText = sanitizeCommandText(command);
+    const argList = (Array.isArray(args) ? args : [])
+        .map(a => sanitizeCommandText(a))
+        .filter(a => a !== '');
+    const fullCmd = `wow ${[cmdText, ...argList].join(' ')}`.trim();
     logger.impt(`Web 页面执行指令: ${fullCmd}`);
     return new Promise((resolve, reject) => {
-        const cmdParts = command.split(' ');
-        const mainCmd = cmdParts[0];
-        const subCmd = cmdParts.slice(1).join(' ');
+        const parts = cmdText.split(/\s+/).filter(Boolean);
+        const mainCmd = parts[0];
+        const subParts = parts.slice(1);
 
-        // 实际执行命令：调用 cli.js 的对应功能
-        // 这里用子进程方式执行
+        // 实际执行命令：调用 cli.js 的对应功能（子进程方式）
         const cliPath = path.join(__dirname, 'cli.js');
-        const fullArgs = [cliPath, mainCmd, ...subCmd.split(' '), ...args];
+        const fullArgs = [cliPath, mainCmd, ...subParts, ...argList];
 
         const proc = spawn(process.execPath, fullArgs, {
             cwd: path.join(__dirname, '..')
@@ -1421,57 +1936,78 @@ function execCommand(command, args = []) {
 }
 
 /**
- * 日志推送（WebSocket）
+ * 日志实时推送（WebSocket 广播，V3.5.19）
+ * ------------------------------------------------------------
+ * 旧实现给每个 socket 各开一个 500ms 定时器（且从文件开头读），三个页面同时开着
+ * 就是三份重复 IO，日志还会因为 500ms 轮询有明显延迟。
+ * 现在改为「一个定时器 + 广播」：
+ *   - 全局只维护一个读取游标 logTailPos；
+ *   - 每 250ms 读一次增量，按行广播给所有客户端；
+ *   - 首个客户端连上时启动，最后一个断开时停掉，空闲时零开销。
+ * 历史日志仍由前端首屏 GET /api/logs 拉取，二者互补。
  */
 let logTailTimer = null;
-let logTailLastPos = 0;
+let logTailPos = 0;
+let logTailPath = null;
+const LOG_TAIL_INTERVAL = 250;
+const LOG_TAIL_MAX_CHUNK = 256 * 1024;
 
-function startLogTail(socket) {
-    // 每个客户端单独推送日志
-    const server = new ServerManager();
-    const logFile = server.logFile;
+function startBroadcastTail() {
+    if (logTailTimer) return;
 
-    if (!fs.existsSync(logFile)) {
-        socket.emit('message', { type: 'warning', content: '日志文件不存在' });
-        return;
+    try {
+        const server = new ServerManager();
+        logTailPath = server.logFile;
+        // 从当前末尾开始：只推增量，避免新客户端一连上就被历史日志刷屏
+        logTailPos = fs.existsSync(logTailPath) ? fs.statSync(logTailPath).size : 0;
+    } catch (e) {
+        logTailPath = null;
     }
 
-    // 读取日志并推送
-    let lastPos = 0;
-    const pushLogs = () => {
-        try {
-            const stats = fs.statSync(logFile);
-            if (stats.size > lastPos) {
-                const fd = fs.openSync(logFile, 'r');
-                const buffer = Buffer.alloc(stats.size - lastPos);
-                fs.readSync(fd, buffer, 0, buffer.length, lastPos);
-                fs.closeSync(fd);
-
-                const content = buffer.toString('utf8');
-                const lines = content.split('\n').filter(l => l.trim());
-                for (const line of lines) {
-                    socket.emit('log', { line, timestamp: Date.now() });
-                }
-                lastPos = stats.size;
-            }
-        } catch (e) {
-            // 忽略读取错误
-        }
-    };
-
-    // 每 500ms 推送一次
-    const timer = setInterval(pushLogs, 500);
-    // 保存到 socket 对象以便清理
-    socket._logTimer = timer;
-
-    // 初始推送一次
-    pushLogs();
+    logTailTimer = setInterval(pushLogDelta, LOG_TAIL_INTERVAL);
+    if (logTailTimer.unref) logTailTimer.unref();
 }
 
 function stopLogTail() {
-    if (logTailTimer) {
-        clearInterval(logTailTimer);
-        logTailTimer = null;
+    if (!logTailTimer) return;
+    clearInterval(logTailTimer);
+    logTailTimer = null;
+}
+
+function pushLogDelta() {
+    if (!logTailPath || wsClients.length === 0) return;
+
+    try {
+        if (!fs.existsSync(logTailPath)) return;
+        const stats = fs.statSync(logTailPath);
+
+        // 日志被轮转 / 截断：游标归零重读，否则 pos > size 会永久卡死
+        if (stats.size < logTailPos) logTailPos = 0;
+        if (stats.size === logTailPos) return;
+
+        const pending = stats.size - logTailPos;
+        const start = pending > LOG_TAIL_MAX_CHUNK ? stats.size - LOG_TAIL_MAX_CHUNK : logTailPos;
+        const len = stats.size - start;
+
+        const buf = Buffer.alloc(len);
+        const fd = fs.openSync(logTailPath, 'r');
+        try {
+            fs.readSync(fd, buf, 0, len, start);
+        } finally {
+            fs.closeSync(fd);
+        }
+        logTailPos = stats.size;
+
+        const lines = buf.toString('utf8').split(/\r?\n/).filter(l => l.trim());
+        for (const line of lines) {
+            for (const client of wsClients) {
+                try {
+                    client.emit('log', { line, timestamp: Date.now() });
+                } catch (e) { /* 忽略单个客户端异常 */ }
+            }
+        }
+    } catch (e) {
+        // 读取失败（文件被占用 / 权限）静默跳过，下一轮再试
     }
 }
 
@@ -1662,5 +2198,11 @@ module.exports = {
     startTunnelForLocal,
     stopTunnelHandle,
     isExposedHost,
+    // V3.5.19：供 CLI 长命令模式接管回显、供测试直接验证清洗逻辑
+    setEchoSink,
+    sanitizeCommandText,
+    flattenConfigPatch,
+    webCliEcho,
+    systemEcho,
     isRunning: () => isRunning
 };

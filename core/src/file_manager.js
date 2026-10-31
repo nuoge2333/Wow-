@@ -62,19 +62,52 @@ function pathError(reason) {
 }
 
 /**
- * 取服务器运行目录（方案目录）作为文件管理根
+ * 方案目录根（V3.5.19）
+ * - 不传 scheme：沿用 utils.getServerDir()，即「当前激活方案」，与既有行为完全一致；
+ * - 传 scheme：解析到 scheme/<name>，并强制要求该目录下存在 scheme.yaml。
+ *   Web 文件管理器的方案下拉框靠它切目录；任何路径穿越、绝对路径、盘符一律拒绝，
+ *   避免「用 ?scheme=../../ 读到方案之外」。
+ * @param {string} [scheme]
+ * @returns {string} 绝对路径
  */
-function getRoot() {
-    return path.resolve(utils.getServerDir());
+function getRoot(scheme) {
+    if (scheme === undefined || scheme === null || scheme === '') {
+        return path.resolve(utils.getServerDir());
+    }
+
+    const name = String(scheme).trim();
+    if (!name) return path.resolve(utils.getServerDir());
+    if (name === '.' || name === '..' || /[\/\\]/.test(name) || /^[a-zA-Z]:/.test(name)) {
+        throw pathError('方案名称非法');
+    }
+
+    const base = path.resolve(utils.resolvePath('../scheme'));
+    const abs = path.resolve(base, name);
+    // 二次防御：解析结果必须仍位于 scheme/ 之内
+    const baseWithSep = base.endsWith(path.sep) ? base : base + path.sep;
+    if (!abs.startsWith(baseWithSep)) throw pathError('方案名称非法');
+    if (!fs.existsSync(abs) || !fs.statSync(abs).isDirectory()) {
+        throw Object.assign(new Error(`方案「${name}」不存在`), { code: 'ENOENT' });
+    }
+    if (!fs.existsSync(path.join(abs, 'scheme.yaml'))) {
+        throw Object.assign(new Error(`方案「${name}」不完整（缺少 scheme.yaml）`), { code: 'ENOENT' });
+    }
+    return abs;
 }
 
 /**
  * 解码并规范化用户传入的相对路径，确保落在 root 之内。
  * @param {string} rawPath 用户传入的 path 参数
+ * @param {string} [rootAbs] 根目录绝对路径（默认当前激活方案；跨方案浏览时由调用方传入）
  * @returns {{ok:true, abs:string, rel:string} | {ok:false, reason:string}}
  */
-function safeResolve(rawPath) {
-    const root = getRoot();
+function safeResolve(rawPath, rootAbs) {
+    let root;
+    try {
+        root = rootAbs ? path.resolve(rootAbs) : getRoot();
+    } catch (e) {
+        return { ok: false, reason: e.message };
+    }
     let p = String(rawPath == null ? '' : rawPath);
 
     // 统一分隔符（Windows 反斜杠也视为分隔符）
@@ -139,10 +172,11 @@ function safeResolve(rawPath) {
 /**
  * 列出目录内容
  * @param {string} relPath 相对服务器目录的路径
+ * @param {string} [rootAbs] 根目录（默认当前激活方案）
  * @returns {Promise<{path:string, files:Array}>}
  */
-async function listFiles(relPath) {
-    const r = safeResolve(relPath);
+async function listFiles(relPath, rootAbs) {
+    const r = safeResolve(relPath, rootAbs);
     if (!r.ok) {
         const err = new Error(r.reason);
         err.code = 'EPATH';
@@ -194,8 +228,8 @@ async function listFiles(relPath) {
 /**
  * 解析下载请求：返回绝对路径与文件名，供路由发送文件流
  */
-function resolveDownload(relPath) {
-    const r = safeResolve(relPath);
+function resolveDownload(relPath, rootAbs) {
+    const r = safeResolve(relPath, rootAbs);
     if (!r.ok) {
         const err = new Error(r.reason);
         err.code = 'EPATH';
@@ -244,8 +278,8 @@ function sanitizeUploadRel(originalName) {
  * @param {Array<{rel:string, buffer:Buffer}>} items
  * @returns {Promise<{uploaded:number, files:string[], skipped:string[]}>}
  */
-async function saveUploads(baseRel, items) {
-    const base = safeResolve(baseRel || '');
+async function saveUploads(baseRel, items, rootAbs) {
+    const base = safeResolve(baseRel || '', rootAbs);
     if (!base.ok) {
         const err = new Error(base.reason);
         err.code = 'EPATH';
@@ -286,11 +320,11 @@ async function saveUploads(baseRel, items) {
  * @param {string} parentRel 父目录（相对根，空串为根）
  * @param {string} name 新文件夹名（单段，不含分隔符）
  */
-async function makeDir(parentRel, name) {
+async function makeDir(parentRel, name, rootAbs) {
     const nameCheck = validateNameSegment(name);
     if (!nameCheck.ok) throw pathError(nameCheck.reason);
 
-    const parent = safeResolve(parentRel || '');
+    const parent = safeResolve(parentRel || '', rootAbs);
     if (!parent.ok) throw pathError(parent.reason);
     if (!fs.existsSync(parent.abs)) throw Object.assign(new Error('父目录不存在'), { code: 'ENOENT' });
 
@@ -311,11 +345,11 @@ async function makeDir(parentRel, name) {
 /**
  * 重命名（同目录内改名）
  */
-async function renameEntry(relPath, newName) {
+async function renameEntry(relPath, newName, rootAbs) {
     const nameCheck = validateNameSegment(newName);
     if (!nameCheck.ok) throw pathError(nameCheck.reason);
 
-    const src = safeResolve(relPath);
+    const src = safeResolve(relPath, rootAbs);
     if (!src.ok) throw pathError(src.reason);
     if (!src.rel) throw pathError('不能重命名根目录');
     if (!fs.existsSync(src.abs)) throw Object.assign(new Error('目标不存在'), { code: 'ENOENT' });
@@ -341,13 +375,13 @@ async function renameEntry(relPath, newName) {
  * @param {string} toDirRel 目标目录（移动到此目录下，保持原文件名）
  * @param {boolean} isCopy true=复制，false=移动
  */
-async function transferEntry(fromRel, toDirRel, isCopy) {
-    const src = safeResolve(fromRel);
+async function transferEntry(fromRel, toDirRel, isCopy, rootAbs) {
+    const src = safeResolve(fromRel, rootAbs);
     if (!src.ok) throw pathError(src.reason);
     if (!src.rel) throw pathError('不能操作根目录');
     if (!fs.existsSync(src.abs)) throw Object.assign(new Error('源不存在'), { code: 'ENOENT' });
 
-    const destDir = safeResolve(toDirRel || '');
+    const destDir = safeResolve(toDirRel || '', rootAbs);
     if (!destDir.ok) throw pathError(destDir.reason);
     if (!fs.existsSync(destDir.abs)) throw Object.assign(new Error('目标目录不存在'), { code: 'ENOENT' });
     if (!fs.statSync(destDir.abs).isDirectory()) {
@@ -380,8 +414,8 @@ async function transferEntry(fromRel, toDirRel, isCopy) {
  * 删除文件 / 目录（递归）
  * 注意：这是不可逆操作，调用方（路由 / 前端）必须已做二次确认。
  */
-async function removeEntry(relPath) {
-    const r = safeResolve(relPath);
+async function removeEntry(relPath, rootAbs) {
+    const r = safeResolve(relPath, rootAbs);
     if (!r.ok) throw pathError(r.reason);
     if (!r.rel) throw pathError('不能删除根目录');
     if (!fs.existsSync(r.abs)) throw Object.assign(new Error('目标不存在'), { code: 'ENOENT' });
@@ -396,8 +430,8 @@ async function removeEntry(relPath) {
  * @param {string[]} relPaths 待压缩的条目（相对根）
  * @param {string} destRel 输出 zip 的相对路径
  */
-async function compress(relPaths, destRel) {
-    const dest = safeResolve(destRel);
+async function compress(relPaths, destRel, rootAbs) {
+    const dest = safeResolve(destRel, rootAbs);
     if (!dest.ok) throw pathError(dest.reason);
     if (!dest.rel) throw pathError('压缩包路径不能为空');
 
@@ -406,7 +440,7 @@ async function compress(relPaths, destRel) {
     let added = 0;
 
     for (const rp of relPaths) {
-        const r = safeResolve(rp);
+        const r = safeResolve(rp, rootAbs);
         if (!r.ok) throw pathError(r.reason);
         if (!r.rel) throw pathError('不能压缩根目录');
         if (!fs.existsSync(r.abs)) throw Object.assign(new Error(`「${rp}」不存在`), { code: 'ENOENT' });
@@ -433,15 +467,15 @@ async function compress(relPaths, destRel) {
  * @param {string} zipRel zip 文件相对路径
  * @param {string} destDirRel 解压目标目录（相对根，空串为根）
  */
-async function extract(zipRel, destDirRel) {
-    const src = safeResolve(zipRel);
+async function extract(zipRel, destDirRel, rootAbs) {
+    const src = safeResolve(zipRel, rootAbs);
     if (!src.ok) throw pathError(src.reason);
     if (!src.rel) throw pathError('请指定要解压的文件');
     if (!fs.existsSync(src.abs)) throw Object.assign(new Error('压缩包不存在'), { code: 'ENOENT' });
     if (!fs.statSync(src.abs).isFile()) throw Object.assign(new Error('目标不是文件'), { code: 'EISDIR' });
     if (!/\.zip$/i.test(src.abs)) throw pathError('目前仅支持解压 .zip 文件');
 
-    const destDir = safeResolve(destDirRel || '');
+    const destDir = safeResolve(destDirRel || '', rootAbs);
     if (!destDir.ok) throw pathError(destDir.reason);
     fs.ensureDirSync(destDir.abs);
 
@@ -498,8 +532,8 @@ async function extract(zipRel, destDirRel) {
 /**
  * 读取文本文件内容（供前端预览，限制大小与类型）
  */
-async function readText(relPath, maxBytes = 512 * 1024) {
-    const r = safeResolve(relPath);
+async function readText(relPath, maxBytes = 512 * 1024, rootAbs) {
+    const r = safeResolve(relPath, rootAbs);
     if (!r.ok) throw pathError(r.reason);
     if (!fs.existsSync(r.abs)) throw Object.assign(new Error('文件不存在'), { code: 'ENOENT' });
     const stat = fs.statSync(r.abs);
@@ -513,8 +547,8 @@ async function readText(relPath, maxBytes = 512 * 1024) {
 /**
  * 写入文本文件内容（保存编辑）
  */
-async function writeText(relPath, content, maxBytes = 2 * 1024 * 1024) {
-    const r = safeResolve(relPath);
+async function writeText(relPath, content, maxBytes = 2 * 1024 * 1024, rootAbs) {
+    const r = safeResolve(relPath, rootAbs);
     if (!r.ok) throw pathError(r.reason);
     if (!r.rel) throw pathError('请指定文件名');
 

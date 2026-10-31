@@ -324,8 +324,14 @@ for (const p of [
         assert.ok(!/>模组加载器</.test(html), '仍存在「模组加载器」标签');
     });
     check(`${where}/scheme.html 创建命令仅传 --type（加载器不再单传）`, () => {
-        assert.ok(/scheme create \$\{name\} --version \$\{version\} --type \$\{type\}/.test(html),
-            '创建命令构造被改坏');
+        // V3.5.19：web 版改成 argv 数组 + 异步任务，不再拼一整条字符串，
+        // 但语义必须仍然是「--version / --type」，且不得再单传 loader。
+        const oldForm = /scheme create \$\{name\} --version \$\{version\} --type \$\{type\}/.test(html);
+        const argvForm = /const argv = \[[^\]]*name[^\]]*--version[^\]]*version[^\]]*--type[^\]]*type/s.test(html);
+        assert.ok(oldForm || argvForm, '创建命令构造被改坏');
+        assert.ok(!/--loader/.test(html), '仍在创建命令里单传 --loader');
+        // 拼字符串时必须用单空格分隔，禁止出现 `${a}  ${b}` 这类双空格（会被拆出空参数）
+        assert.ok(!/scheme create \$\{name\}  /.test(html), '创建命令出现双空格');
     });
 }
 

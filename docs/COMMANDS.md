@@ -416,6 +416,21 @@ wow web start --public --tunnel
 > - `web stop` 或进程退出时自动关闭隧道，不留孤儿进程；
 > - 起不来时会回显 cloudflared 的真实输出，日志在 `core/tunnel/cloudflared.log`。
 
+> 🖥️ **终端不再被占用**（V3.5.19）
+>
+> `wow web start` 启动面板后**不会阻塞 CLI**，而是自动进入等价于 `wow L` 的**长命令模式**：
+>
+> ```text
+> 💡 已进入长命令模式（等价 `wow L`）：可直接输入 wow 指令，无需再来一个终端。
+>    面板与本终端共用同一个 wow 进程；输入 exit 会同时关闭面板。
+> wow>
+> ```
+>
+> - 面板与终端共用同一个 wow 进程，敲指令不用加 `wow` 前缀；
+> - Web 端发来的指令会以 `[WebCLI]` 前缀回显在终端，不会把你正在输入的那行顶乱；
+> - `exit` / `quit` 退出长命令模式，同时关闭面板；
+> - 非交互终端（如 `nohup`、CI）下仍然常驻运行，按 Ctrl+C 结束。
+
 ---
 
 ### `web tunnel`
