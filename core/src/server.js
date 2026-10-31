@@ -990,9 +990,12 @@ class ServerManager {
             this._stopLanWatch();
             if (logStream) logStream.end();
             if (code && code !== 0) {
-                console.log(`服务器进程退出，退出码: ${code}`);
                 logger.erro(`Minecraft 进程异常退出（退出码 ${code}），疑似崩溃`);
                 logger.markCrash();
+                // V3.5.18：异常退出时做本地初级诊断（纯本地正则 + 模组扫描，不联网）。
+                // 放在 logStream.end() 之后调用，但诊断器自己读 latest.log，
+                // 该文件由 MC 自身写出、与 logStream（wow-stdout）无关，不受影响。
+                this._diagnoseCrash(code);
             } else {
                 console.log(`服务器进程退出，退出码: ${code}`);
                 logger.info('Minecraft 进程已正常退出');
@@ -1013,6 +1016,41 @@ class ServerManager {
                 this.process.on('exit', resolve);
             });
         }
+    }
+
+    /**
+     * V3.5.18：异常退出时的本地初级诊断。
+     * ------------------------------------------------------------
+     * 设计约束：
+     *   1. 绝不抛错——诊断器自身失败不能影响进程退出与 PID 清理；
+     *   2. 不同步阻塞——读日志 + 扫描在毫秒级，但仍有 IO，放到下一个 tick，
+     *      确保 exit 回调里的清理（_removePid 等）先完成；
+     *   3. 只在异常退出时调用，正常退出不打扰。
+     *
+     * @param {number|string} code 退出码
+     */
+    _diagnoseCrash(code) {
+        const run = () => {
+            try {
+                const scanner = require('./error_scanner');
+                const result = scanner.diagnoseOnCrash({
+                    exitCode: code,
+                    logFile: this.logFile
+                });
+                if (result && result.ok) {
+                    logger.erro(`本地诊断：${result.summary}`);
+                    // 把诊断结论写进事件日志，便于事后复盘
+                    for (const f of result.findings) {
+                        logger.erro(`  发现 ${f.type} | 模组=${f.mod || '未知'} | ${f.rawLine.slice(0, 160)}`);
+                    }
+                }
+            } catch (e) {
+                // 诊断是锦上添花，失败就静默跳过
+                try { logger.erro(`本地诊断失败（已忽略）: ${e.message}`); } catch (_) {}
+            }
+        };
+        // 放到下一个 tick，避免与 exit 回调内的清理竞争
+        setTimeout(run, 0);
     }
 
     /**

@@ -8,7 +8,8 @@
 
 | 版本 | 状态 | 发布时间 |
 |------|------|------|
-| **3.5.17-26.38** | 当前版本 |2026-10-31|
+| **3.5.18-26.39** | 当前版本 |2026-10-31|
+| **3.5.17-26.38** | 上一版本 |2026-10-31|
 | **3.5.16-26.37** | 上一版本 |2026-10-30|
 | **3.5.15-26.36** | 上一版本 |2026-10-24|
 | **3.5.14-26.35** | 上一版本 |2026-10-24|
@@ -69,6 +70,134 @@
 | **3.0.0** | 上一版本 |2026-07-23|
 | **2.0.0** | 内部迭代 |2026-02-27|
 | **1.0.0** | 内部迭代 |2026-02-07|
+
+---
+
+## [3.5.18-26.39] — 2026-10-31
+
+> 主题：**新增本地初级错误诊断器**——服务器崩溃时直接告诉用户「崩在哪、哪个模组、下一步做什么」。
+
+### 新增 `core/src/error_scanner.js`
+
+此前只有 `wow logs report` 做 `[ERROR]` 行数统计，和 `wow logs analyze` 调 AI 分析，
+前者没有实际诊断价值，后者需要联网 + API Key。本次补上中间的「离线初诊」层。
+
+#### 1. 错误字典 `ERROR_PATTERNS`
+
+| 类型 | 判定依据 | 归属 |
+|------|----------|------|
+| `unsupported_class_version` | `UnsupportedClassVersionError` / `class file version` | 环境 |
+| `out_of_memory` | `OutOfMemoryError` / `java heap space` / `unable to create new native thread` | 环境 |
+| `bind_exception` | `java.net.BindException` / `Address already in use` / `FAILED TO BIND TO PORT` | 环境 |
+| `eula` | `You need to agree to the EULA` | 环境 |
+| `missing_dependency` | `Missing or unsupported mandatory dependencies` / `which is missing` | 模组 |
+| `client_mod` | `net.minecraft.client` 相关报错 | 模组 |
+| `mixin_failed` | `Mixin apply failed` / `MixinApplyError` | 模组 |
+| `no_class_def` | `NoClassDefFoundError` / `ClassNotFoundException` | 模组 |
+| `mixin_conflict` | `Mixin conflict` / `conflicting mixins` | 模组 |
+
+每条 pattern 用 `modRelevant` 标记「是否应当归咎于模组」。EULA / 内存 / Java 版本 / 端口占用
+属于服务端环境配置问题，不会再提示用户去删模组。
+
+#### 2. 模组名提取（两路取证）
+
+- **方括号标签**：`[sodium]`、`[/home/mc/mods/iris.jar]` → 取文件名后归一化；
+- **堆栈包名**：`net.caffeinemc.mods.sodium.client.SodiumClientMod` → `sodium`。
+
+排除规则（实测踩出来的）：
+
+| 噪声 | 处理 |
+|------|------|
+| `[12:00:00]` `[main/INFO]` `[Server thread/WARN]` | 日志前缀白名单，不参与提取 |
+| `net.minecraft.*` `com.mojang.*` | 原版包，整条跳过 |
+| `net.fabricmc.*` `org.spongepowered.*` `io.netty.*` | 加载器/库，整条跳过 |
+| `mixins.xxx.json` / `xxx.mixins.json` | 按文件扩展名识别，不是包名 |
+| `missing` / `unknown` / `dependencies` | 占位名与泛化词黑名单 |
+| `sodiumlike` vs 本地 `sodium` | 本地匹配改为严格模式，避免近似名误命中 |
+
+优先级：**方括号标签 > 包名**，同来源再看**离报错行的距离**，最后看**本地是否真的装了**。
+若候选模组在本机 `mods/` 里存在，优先选它——「装了才有可能是真凶」。
+
+#### 3. 前置缺失联动
+
+解析两种真实格式：
+
+```
+Fabric: Mod 'Trinkets' (trinkets) 3.7.0 requires any version of cloth-config, which is missing!
+Forge : Mod ID: 'cloth-config', Requested by: 'trinkets', Expected range: '[11.0,)', Actual version: '[MISSING]'
+```
+
+输出会明确列出「缺失前置」与「声明方」。
+
+> ⚠️ 需求原文的示例提示语是「是否尝试执行 `wow mod install B` 自动补全」，
+> 但 **`wow mod install` 这个命令不存在**（mod 子命令只有 `remove` / `list` / `toggle` / `sync`）。
+> 提示用户执行一条会报「未知命令」的指令比不提示更糟，因此改为：
+> 说明「wow 暂未提供 `mod install`」，并给出真实可行的路径（手动放入 / 菜单搜索下载）。
+
+#### 4. 渲染类模组冲突
+
+不依赖报错行，按本地实际安装情况判断：`sodium` / `iris` / `optifine` / `lithium` / `embeddium`
+等同时存在 ≥2 个时，输出「伴随模组」与冲突警告。
+
+#### 5. 终端输出
+
+结构化彩色输出，非 TTY 时自动关闭颜色（也支持 `NO_COLOR`）：
+
+```
+❌ 服务器异常退出，退出码: 1
+============================================================
+🔍 正在进行本地初级诊断...
+------------------------------------------------------------
+
+🚨 【明确报错】模组: sodium
+   原因: 该模组只在客户端生效（渲染、UI、光影等），放进服务端会在初始化阶段直接抛错。
+   上下文:
+       [12:00:01] [main/INFO]: Loading 45 mods:
+     > java.lang.NoClassDefFoundError: net/minecraft/client/MinecraftClient
+       at net.caffeinemc.mods.sodium.client.SodiumClientMod.onInitialize(...)
+
+🕵️  【疑似冲突】伴随模组: iris, lithium, sodium
+   👉 警告: 多个渲染/优化类模组同时存在，极易导致底层冲突。
+
+💡 【wow 建议】
+   1. 移除该客户端模组：`wow mod remove sodium`；
+   2. 若移除后依然崩溃，请尝试 `wow mod sync` 重新同步服务端环境。
+============================================================
+```
+
+`renderReport()` 只返回行数组、不直接打印，便于测试断言与调用方决定输出位置。
+
+#### 6. 降级
+
+匹配到错误但提取不出模组名时：
+
+- 命令中的模组名替换为 `<模组名>` 占位符，不会输出无法执行的 `wow mod remove 该模组`；
+- 追加通用建议；
+- 末尾提示：`未能精准定位报错模组。你可以使用 wow logs analyze 调用 AI 进行深度解析。`
+
+**仅对「模组相关」错误生效**——EULA、内存、Java 版本这类本来就没有模组可定位，
+强行提示「未能定位模组」只会诱导用户乱删模组。
+
+#### 7. i18n 预留
+
+`MESSAGES` 为 `{ zh, en }` 双表，通过 `setLocale()` 切换；测试断言两表 key 完全一致。
+
+### 修改 `server.js`
+
+异常退出分支不再直接 `console.log('服务器进程退出，退出码: x')`，改为调用
+`this._diagnoseCrash(code)` → `scanner.diagnoseOnCrash()`：
+
+- 包在 `try/catch` 内，诊断器自身出错绝不影响进程退出与 PID 清理；
+- 放在 `setTimeout(..., 0)`，让 exit 回调里的清理先完成；
+- 诊断结论同时写入 wow 事件日志，便于事后复盘；
+- 正常退出（`code === 0`）不触发。
+
+### 测试
+
+新增 `core/test/error_scanner.test.js`，**49 项**断言：错误字典命中、模组提取（13 类包名样本）、
+日志前缀排除、上下文窗口边界、前置缺失解析、降级策略、渲染冲突、终端渲染、i18n、server.js 接入点。
+
+全套 **18 个测试文件通过**。
 
 ---
 

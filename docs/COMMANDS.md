@@ -490,11 +490,64 @@ wow logs analyze [options]
 
 ### `logs report`
 
-生成日志统计报告（不调用 AI）。
+生成日志统计报告（不调用 AI，仅做 `[ERROR]` 等计数）。
 
 ```bash
 wow logs report
 ```
+
+---
+
+### 崩溃时的本地初级诊断（V3.5.18，自动触发）
+
+**不是命令**——服务器非正常退出（退出码非 0）时自动运行，无需手动调用。
+
+与上面两条的分工：
+
+| 方式 | 是否联网 | 用途 |
+|------|----------|------|
+| 崩溃自动诊断 | ❌ 纯本地 | 已知高频崩溃类型的即时定位，毫秒级 |
+| `logs report` | ❌ | 仅计数，无诊断结论 |
+| `logs analyze` | ✅ 需 API Key | 覆盖不到的类型、需要深度推理时 |
+
+输出示例：
+
+```
+❌ 服务器异常退出，退出码: 1
+============================================================
+🔍 正在进行本地初级诊断...
+------------------------------------------------------------
+
+🚨 【明确报错】模组: sodium
+   原因: 该模组只在客户端生效（渲染、UI、光影等），放进服务端会在初始化阶段直接抛错。
+   上下文:
+     > java.lang.NoClassDefFoundError: net/minecraft/client/MinecraftClient
+       at net.caffeinemc.mods.sodium.client.SodiumClientMod.onInitialize(...)
+
+🕵️  【疑似冲突】伴随模组: iris, lithium, sodium
+   👉 警告: 多个渲染/优化类模组同时存在，极易导致底层冲突。
+
+💡 【wow 建议】
+   1. 移除该客户端模组：`wow mod remove sodium`；
+   2. 若移除后依然崩溃，请尝试 `wow mod sync` 重新同步服务端环境。
+============================================================
+```
+
+可识别的错误类型：
+
+| 类型 | 典型日志特征 | 归属 |
+|------|--------------|------|
+| Java 版本不对 | `UnsupportedClassVersionError` | 环境 |
+| 内存溢出 | `OutOfMemoryError` / `java heap space` | 环境 |
+| 端口被占用 | `BindException` / `Address already in use` | 环境 |
+| 未同意 EULA | `You need to agree to the EULA` | 环境 |
+| 客户端模组误装 | 报错涉及 `net.minecraft.client` | 模组 |
+| 缺前置 | `Missing mandatory dependencies` | 模组 |
+| Mixin 冲突/失败 | `Mixin apply failed` / `Mixin conflict` | 模组 |
+| 找不到类 | `NoClassDefFoundError` | 模组 |
+
+> 定位不到具体模组时，末尾会提示改用 `wow logs analyze` 做 AI 深度解析。
+> 环境类错误（前四项）不会这样提示——它们本来就和模组无关。
 
 ---
 
