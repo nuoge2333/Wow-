@@ -1,6 +1,6 @@
 {
   "name": "wow",
-  "version": "3.5.22-26.3d",
+  "version": "3.5.23-26.3e",
   "description": "Minecraft 服务器管理工具 - 默认优先，可以修改",
   "main": "src/cli.js",
   "bin": {
@@ -11,7 +11,7 @@
     "test": "node scripts/test.js"
   },
   "author": "wow Team",
-  "license": "MIT",
+  "license": "MPL-2.0",
   "engines": {
     "node": ">=18.0.0"
   },

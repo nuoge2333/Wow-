@@ -191,43 +191,59 @@ Wow~ 是一个**散装项目**，它没有编译成 `.exe`、`.deb` 等可执行
 
 你也可以通过开发 `Wow~` 插件来扩展功能，无需修改主程序代码。
 
-如果你想制作一个更好的版本，欢迎 **Fork** 本仓库，但请在遵守 **MIT 许可证** 及 [附加条款](#附加条款) 的前提下进行。
+如果你想制作一个更好的版本，欢迎 **Fork** 本仓库，但请在遵守 **MPL2.0 许可证** 的前提下进行（详见 [版权声明](#-版权声明)）。
 
 ## 📄 版权声明
 
 Copyright © 2025-2026 nuoge
 
-本项目使用*MIT开源许可证*，原文请见./LICENSE
-以下是本项目的附加条款
+> **除特别声明的文件外，本仓库内的所有文件均为 MPL2.0（Mozilla Public License v2.0）许可。**
+> 若有文件采用其他许可，会在该文件内或所在目录的 LICENSE 中单独声明。
+
+本项目使用 *Mozilla Public License v2.0* 开源许可证，原文请见 [./LICENSE](LICENSE)。
+
+**许可变更说明**：本项目从 `v3.5.23-26.3e` 起改为 MPL2.0，此前的版本
+（截至 `v3.5.22-26.3d`）仍按 **MIT 许可证** 发布。MIT 是不可撤销的授权，
+因此**你已经获得的旧版本副本，永久享有 MIT 赋予的全部权利**（包括闭源再分发），
+这一点不会因本次变更而改变。
+
+以下是本项目的附加免责声明（仅作免责，不构成对 MPL2.0 所授予权利的限制或附加条件）
 ```
-##Additional Disclaimer (Please read before use):
-If your copy's SHA‑256 checksum does not match the official release (as published by nuoge on the designated distribution platform, to be announced), then your copy is not official and has been tampered with.
+## Additional Disclaimer (Please read before use):
 
-The author (nuoge) assumes no responsibility for any data loss, system crashes, security breaches, or other damages arising from the use of modified, unofficial, or incorrectly distributed copies.
+The author (nuoge) assumes no responsibility for any data loss, system crashes,
+security breaches, or other damages arising from the use of this software, including
+modified, unofficial, or incorrectly distributed copies.
 
-It is the user's sole responsibility to verify the integrity of the software before running it. The official checksum will be provided upon the first public release.
-
-
+It is the user's sole responsibility to verify the integrity of the software before
+running it. Official SHA-256 checksums are published alongside each release; you can
+download them from the release page of the official repository.
 ```
-以下为许可证与附加条款的中文译本，由于部分措辞在中文语境中没有最准确的匹配词汇，不能做到100%准确，仅作参考，不具有任何法律效力，法律效力以附加条款英文原文（即上文）与./LICENSE中MIT许可证英文原版为准：
+以下为许可证与免责声明的中文参考译本。由于部分措辞在中文语境中没有完全对应的
+词汇，本译本不能做到 100% 准确，**仅作参考，不具有任何法律效力**；
+法律效力以 [./LICENSE](LICENSE) 中 MPL2.0 英文原版为准。
 
-MIT 许可证
+Mozilla 公共许可证 第二版
 
-版权所有 (c) 2025 nuoge
+（本中文译本为 MPL2.0 的参考译文，条文含义以英文原文为准，此处不逐条重述。
+核心要点如下：）
 
-特此授予任何获得本软件及其相关文档文件（“软件”）副本的人免费许可，允许其不受限制地处理本软件，包括但不限于使用、复制、修改、合并、发布、分发、再许可和/或销售本软件副本的权利，并允许被提供本软件的人员这样做，但须符合以下条件：
+- **文件级 copyleft**：你修改过的**文件**必须以 MPL2.0 公开其源代码；
+  未修改的文件、以及与之组合的其他代码，可以采用其他许可。
+- **允许更大的作品**：你可以把本软件与其他代码组合成"更大作品"（Larger Work）
+  并按其自选条款分发，只要对本软件部分继续履行 MPL2.0 的义务。
+- **允许闭源集成**：与 GPL 不同，MPL2.0 不要求你的整个项目开源，
+  只要求被修改的 MPL 文件开源。
+- **专利授权**：每位贡献者向你授予其贡献相关的专利许可。
+- **无担保**：本软件按"现状"提供，不附带任何明示或暗示的担保。
 
-上述版权声明和本许可声明应包含在本软件的所有副本或实质性部分中。
+## 附加免责声明（使用前请阅读）：
 
-本软件按“现状”提供，不提供任何形式的明示或暗示担保，包括但不限于适销性、特定用途适用性和非侵权性的担保。在任何情况下，作者或版权持有人均不对任何索赔、损害或其他责任负责，无论该责任是基于合同、侵权或其他原因，因本软件或本软件的使用或其他交易而产生、引起或与之相关。
+作者（nuoge）对因使用本软件（包括被修改过的、非官方的或错误分发的副本）
+而引起的任何数据丢失、系统崩溃、安全漏洞或其他损害不承担任何责任。
 
-##附加免责声明（使用前请阅读）：
-
-如果您的副本经 SHA‑256 校验和与[官方发布版本](https://gitee.com/nuoge233/wow/)不匹配，则您的副本并非官方版本，且已被篡改。
-
-作者（nuoge）对因使用修改过的、非官方的或错误分发的软件副本而引起的任何数据丢失、系统崩溃、安全漏洞或其他损害不承担任何责任。
-
-用户有责任在运行软件前自行验证其完整性。官方校验和将在首次公开发布时提供。
+用户有责任在运行软件前自行验证其完整性。官方 SHA-256 校验和随每个版本一同发布，
+可从官方仓库的 Release 页面下载。
 
 ---
 

@@ -15,7 +15,7 @@ wow~ V3.3.0 起内置对接 **[陶瓦（Terracotta）](https://github.com/burnin
 
 ## 一、它是怎么工作的
 
-陶瓦（Terracotta）是一个基于 EasyTier 的 Minecraft: Java Edition 联机工具。wow~ 在本地拉起**未经修改的陶瓦二进制**，并通过其提供的**本地 HTTP API** 与之交互（符合陶瓦 AGPLv3 的例外条款，wow~ 自身仍保持 MIT 许可）。
+陶瓦（Terracotta）是一个基于 EasyTier 的 Minecraft: Java Edition 联机工具。wow~ 在本地拉起**未经修改的陶瓦二进制**，并通过其提供的**本地 HTTP API** 与之交互（符合陶瓦 AGPLv3 的例外条款，wow~ 自身以 MPL2.0 发布）。
 
 流程简述：
 
@@ -111,7 +111,9 @@ wow~ 据此在 **CLI 输出、Web 面板「联机(陶瓦)」页、交互菜单**
 Powered by Terracotta | 陶瓦联机 — https://github.com/burningtnt/Terracotta (AGPLv3)
 ```
 
-并已在 `README.MD` 致谢中列出。wow~ 本身仍保持 **MIT 许可**，未修改或静态链接陶瓦二进制。
+并已在 `README.MD` 致谢中列出。wow~ 本身以 **MPL2.0** 发布，与陶瓦的 AGPLv3
+相互独立——wow~ 未修改、未静态链接陶瓦二进制，仅通过其 HTTP API 驱动，
+因此不受 AGPL 传染。
 
 ---
 
