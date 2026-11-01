@@ -46,7 +46,11 @@ const DEFAULT_CONFIG = {
         allow_remote_install: false, // true = 放开 install <http(s)://...> 远程下载（等同任意代码执行入口）
         // V3.5.21：true = 放开插件注册的自定义命令经 Web 端执行。
         // 插件是第三方代码、与主程序同权限，Web 又是远程入口，两者叠加风险最高，故默认关闭。
-        allow_plugins: false
+        allow_plugins: false,
+        // V3.5.22：cloudflared 二进制的自定义镜像前缀。
+        // 留空 = 用内置的国内镜像列表（gh-proxy.com / ghfast.top / ghproxy.net）+ GitHub 官方兜底。
+        // 可填镜像根（https://my.mirror）或完整的 releases/latest/download 前缀。
+        tunnel_mirror: ''
     },
     mail: {
         smtp: {

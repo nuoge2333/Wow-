@@ -28,12 +28,92 @@ const axios = require('axios');
 // 二进制与日志落地目录（core/tunnel）
 const TUNNEL_DIR = path.join(__dirname, '../tunnel');
 
-// 官方 GitHub Release 下载源；国内可被 wall，故提供镜像候选
-const CF_RELEASES = [
-    'https://github.com/cloudflare/cloudflared/releases/latest/download',
-    'https://ghproxy.net/https://github.com/cloudflare/cloudflared/releases/latest/download',
-    'https://gh-proxy.com/https://github.com/cloudflare/cloudflared/releases/latest/download'
+/**
+ * cloudflared 下载源（V3.5.22 起镜像优先）
+ * ----------------------------------------------------------------
+ * 为什么镜像优先：
+ *   本项目主要用户在国内，而 GitHub Releases 的下载在国内经常「能连通但传不完」——
+ *   实测 `curl -L .../cloudflared-linux-amd64`（40MB）多次只拿到 3.8MB 就断流，
+ *   表现为下载「成功」但二进制不完整，随后 spawn 报 exec format error 之类的怪错。
+ *   镜像站走的是同一份对象存储，速度稳定得多。
+ *
+ * 镜像只做**传输代理**，不改变内容：本次实测 gh-proxy.com / ghfast.top /
+ * ghproxy.net 三家的 cloudflared-linux-amd64 均为 40274445 字节，
+ * sha256 与 GitHub API 公布的 digest 完全一致
+ * （1f99fb518b83dec2ba8d870a7cc991d82a77e6196295a3d2754ba17ab9f91872）。
+ * 即便如此，下载后仍会做长度校验（见 downloadFile），换源不等于降低要求。
+ *
+ * 顺序：国内镜像 → GitHub 官方兜底（海外用户走第一家会多绕一跳，
+ * 但三家镜像对海外也都能通，代价可接受；国内用户则显著受益）。
+ * 可用 `wow config wow web.tunnel_mirror <url>` 或环境变量
+ * WOW_CLOUDFLARED_MIRROR 覆盖，见 resolveMirrors()。
+ */
+const CF_MIRRORS = [
+    { name: 'gh-proxy.com', base: 'https://gh-proxy.com' },
+    { name: 'ghfast.top', base: 'https://ghfast.top' },
+    { name: 'ghproxy.net', base: 'https://ghproxy.net' }
 ];
+
+/** GitHub 官方（兜底，也是唯一权威来源） */
+const CF_OFFICIAL = 'https://github.com/cloudflare/cloudflared/releases/latest/download';
+
+/**
+ * 组装本次要尝试的完整 URL 列表（镜像优先 + 官方兜底）。
+ *
+ * 覆盖方式（优先级从高到低）：
+ *   1. 环境变量 WOW_CLOUDFLARED_MIRROR（完整前缀，如 https://my.mirror/gh）
+ *   2. 配置项 web.tunnel_mirror
+ *   3. 内置 CF_MIRRORS
+ * 用户显式指定的镜像**排在最前**，官方仍保留在最后兜底——
+ * 「换源」不应该变成「断掉唯一可用源」。
+ *
+ * @param {function} [getConfig] 取配置的函数（测试注入用）
+ * @returns {string[]} 完整 URL 前缀数组
+ */
+function resolveMirrors(getConfig) {
+    const list = [];
+    // 镜像站要求的是「完整目标 URL」，但不同代理的规范不同：
+    //   gh-proxy.com  / ghfast.top  / ghproxy.net  -> <镜像>/<https://github.com/...>
+    // 所以这里统一拼「带协议的完整 URL」，不要去掉协议头。
+    const officialSuffix = CF_OFFICIAL;
+
+    let custom = '';
+    try {
+        if (process.env.WOW_CLOUDFLARED_MIRROR) {
+            custom = String(process.env.WOW_CLOUDFLARED_MIRROR).trim();
+        } else if (typeof getConfig === 'function') {
+            const v = getConfig('web.tunnel_mirror', '');
+            custom = v ? String(v).trim() : '';
+        }
+    } catch (e) { /* 配置不可用则用内置列表 */ }
+
+    if (custom) {
+        // 允许直接写镜像根（https://x.com），也允许写完整的 releases 前缀。
+        // 两种写法都要能拼出干净的 URL：
+        //   https://x.com            -> https://x.com/<官方完整URL>
+        //   https://x.com///         -> 同上（末尾斜杠先去掉）
+        //   https://x.com/gh/        -> https://x.com/gh/<官方完整URL>
+        //   .../releases/latest/download -> 原样使用
+        // 注意 base 若已是完整 URL，不能再拼一遍，否则得到
+        // https://x.com/https://github.com/... 这种坏地址。
+        const trimmed = custom.replace(/\/+$/, '');
+        const hasScheme = /^https?:\/\//i.test(trimmed);
+        const bare = hasScheme ? trimmed : `https://${trimmed.replace(/^\/+/, '')}`;
+        if (trimmed.includes('/cloudflare/cloudflared')) {
+            list.push(trimmed);
+        } else {
+            list.push(`${bare}/${officialSuffix}`);
+        }
+    }
+    for (const m of CF_MIRRORS) {
+        list.push(`${m.base}/${officialSuffix}`);
+    }
+    list.push(CF_OFFICIAL);
+
+    // 去重（用户可能手写了与内置相同的一家）
+    return [...new Set(list)];
+}
+
 
 /**
  * 当前平台对应的 cloudflared 资产名与最终可执行文件名
@@ -92,7 +172,18 @@ function extractTgz(tgzPath, destDir) {
 }
 
 /**
- * 下载文件到 dest（跟随重定向，带超时与进度提示）
+ * 下载文件到 dest（跟随重定向，带超时与进度提示）。
+ *
+ * V3.5.22：新增长度校验。镜像与官方都可能在传输中途断流，
+ * 而 axios 的 stream 模式下「断流」和「正常结束」都只是 'finish' 事件，
+ * 不校验就会把一个 3.8MB 的半截二进制当成 40MB 的完整文件落盘，
+ * 后续 spawn 时抛出难以理解的原生错误。这里以 Content-Length 为准比对，
+ * 不足即视为失败并抛错，由调用方换下一个源。
+ *
+ * @param {string} url
+ * @param {string} dest
+ * @param {string} label
+ * @returns {Promise<number>} 实际写入字节数
  */
 async function downloadFile(url, dest, label) {
     const resp = await axios.get(url, {
@@ -109,26 +200,49 @@ async function downloadFile(url, dest, label) {
 
     fs.ensureDirSync(path.dirname(dest));
     const tmp = dest + '.part';
+    // 上一次中断可能留下 .part，先清掉，避免与本次写入交错
+    try { fs.unlinkSync(tmp); } catch (e) { /* 不存在即正常 */ }
     const writer = fs.createWriteStream(tmp);
 
-    await new Promise((resolve, reject) => {
-        resp.data.on('data', chunk => {
-            got += chunk.length;
-            const now = Date.now();
-            if (total && now - lastPrint > 500) {
-                lastPrint = now;
-                const pct = ((got / total) * 100).toFixed(0);
-                process.stdout.write(`\r  ${label} 下载中... ${pct}%`);
-            }
+    try {
+        await new Promise((resolve, reject) => {
+            resp.data.on('data', chunk => {
+                got += chunk.length;
+                const now = Date.now();
+                if (total && now - lastPrint > 500) {
+                    lastPrint = now;
+                    const pct = ((got / total) * 100).toFixed(0);
+                    process.stdout.write(`\r  ${label} 下载中... ${pct}%`);
+                }
+            });
+            resp.data.on('error', reject);
+            writer.on('error', reject);
+            writer.on('finish', resolve);
+            resp.data.pipe(writer);
         });
-        resp.data.on('error', reject);
-        writer.on('error', reject);
-        writer.on('finish', resolve);
-        resp.data.pipe(writer);
-    });
+    } catch (e) {
+        // 连接中断 / 写盘失败：务必清掉半截临时文件，
+        // 否则下次调用会把它当成残留物，也占着几十 MB 空间。
+        writer.destroy();
+        try { fs.unlinkSync(tmp); } catch (_) { /* 忽略 */ }
+        throw e;
+    }
     if (total) process.stdout.write('\r' + ' '.repeat(50) + '\r');
 
-    fs.moveSync(tmp, dest, { overwrite: true });
+    // 长度校验：服务器给了 Content-Length 就必须一分不少。
+    // 少数镜像用 chunked 编码不给 Content-Length，此时 total=0，跳过校验
+    // （由后续的「可执行文件是否存在 / 能否 spawn」兜底）。
+    if (total && got !== total) {
+        try { fs.unlinkSync(tmp); } catch (e) { /* 忽略 */ }
+        throw new Error(`下载不完整（${got}/${total} 字节），疑似连接中断`);
+    }
+
+    try {
+        fs.moveSync(tmp, dest, { overwrite: true });
+    } catch (e) {
+        try { fs.unlinkSync(tmp); } catch (_) { /* 忽略 */ }
+        throw new Error(`写入失败: ${e.message}`);
+    }
     return got;
 }
 
@@ -150,15 +264,21 @@ async function ensureBinary(options = {}) {
     fs.ensureDirSync(TUNNEL_DIR);
     if (!quiet) {
         console.log('');
-        console.log('  首次使用 Cloudflare Tunnel，需要下载 cloudflared（约 20~40MB）。');
+        console.log('  首次使用 Cloudflare Tunnel，需要下载 cloudflared（约 20~55MB）。');
         console.log(`  平台资产: ${asset}`);
         console.log('');
     }
 
+    // 镜像优先，官方兜底（顺序见文件头 CF_MIRRORS 处的说明）
+    let getConfig = null;
+    try { getConfig = require('./config').getConfig; } catch (e) { /* 无配置则用内置 */ }
+    const sources = resolveMirrors(getConfig);
+
     let lastErr = null;
-    for (const base of CF_RELEASES) {
+    for (const base of sources) {
         const url = `${base}/${asset}`;
-        const host = new URL(url).host;
+        let host = url;
+        try { host = new URL(url).host; } catch (e) { /* 保持原串 */ }
         try {
             if (!quiet) console.log(`  从 ${host} 下载...`);
             const target = packed === 'tgz' ? path.join(TUNNEL_DIR, asset) : binPath;
@@ -177,11 +297,21 @@ async function ensureBinary(options = {}) {
         } catch (e) {
             lastErr = e;
             if (!quiet) console.log(`  ⚠️ ${host} 失败: ${e.message}`);
+            // 清掉可能的半截文件，否则下一轮会命中「已存在则跳过」
             try { if (fs.existsSync(binPath + '.part')) fs.unlinkSync(binPath + '.part'); } catch (e2) {}
+            // 已落盘但不可用（例如解包失败留下的坏文件）也要清，避免污染下一次启动
+            if (packed !== 'tgz' && fs.existsSync(binPath)) {
+                try { fs.unlinkSync(binPath); } catch (e3) { /* 忽略 */ }
+            }
         }
     }
 
-    const err = new Error(`cloudflared 下载失败：${lastErr ? lastErr.message : '所有源均不可用'}`);
+    const err = new Error(
+        `cloudflared 下载失败：${lastErr ? lastErr.message : '所有源均不可用'}\n` +
+        `已尝试 ${sources.length} 个源（国内镜像优先，GitHub 官方兜底）。\n` +
+        `可手动下载 ${asset} 放到 ${TUNNEL_DIR} 后重试；\n` +
+        `或用环境变量 WOW_CLOUDFLARED_MIRROR 指定镜像前缀。`
+    );
     err.code = 'ECFDL';
     throw err;
 }
@@ -311,5 +441,9 @@ module.exports = {
     binaryPath,
     ensureBinary,
     startTunnel,
-    TUNNEL_DIR
+    resolveMirrors,
+    CF_MIRRORS,
+    CF_OFFICIAL,
+    TUNNEL_DIR,
+    _internals: { downloadFile }
 };

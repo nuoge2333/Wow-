@@ -108,15 +108,88 @@ if errorlevel 1 (
 echo Download complete.
 echo.
 
-:: Extract
-echo Installing update...
-mkdir "%TEMP_DIR%\extract" 2>nul
 :: V3.5.3 同步：先做 zip 完整性测试，损坏/截断则拒绝覆盖
 powershell -Command "& { Add-Type -AssemblyName System.IO.Compression.FileSystem; try { $z=[System.IO.Compression.ZipFile]::OpenRead('%TEMP_ZIP%'); $n=$z.Entries.Count; $z.Dispose(); if($n -lt 1){ exit 1 } else { exit 0 } } catch { exit 1 } }" >nul 2>&1
 if errorlevel 1 (
     echo Update package is corrupt or empty. Aborting.
     goto :cleanup
 )
+
+:: ==================== V3.5.22：哈希校验（可协商） ====================
+:: 背景：SHA256SUMS 此前从未随 Release 上传，这段校验在真实环境里一次都没跑过。
+:: 现在三种结局分开处理（与 update.sh 保持一致）：
+::   ① 哈希一致          -^> 直接升级
+::   ② 哈希不一致        -^> 交互询问，默认【否】；非交互一律拒绝
+::   ③ 取不到 SHA256SUMS -^> 交互询问，默认【是】；非交互继续但警告
+:: 区别的理由：②有官方基准却对不上（强信号，宁可不装）；③只是缺基准（信息缺失，
+:: 不该因此卡住更新，否则首次引入校验时所有人都无法自动更新）。
+
+:: 注意：批处理在解析整个 if()else() 块时即展开 %VAR%，块内 set 的变量读不到新值，
+:: 因此这里与上面的 DOWNLOAD_URL 一样用 goto 分支，而不是括号块。
+set CHECKSUMS_URL=
+if "%RELEASE_HOST%"=="gitee" goto :ck_gitee
+set CHECKSUMS_URL=https://github.com/%GITHUB_REPO%/releases/download/%LATEST_TAG%/SHA256SUMS
+goto :ck_done
+:ck_gitee
+set CHECKSUMS_URL=https://gitee.com/%GITEE_REPO%/releases/download/%LATEST_TAG%/SHA256SUMS
+:ck_done
+
+:: 是否可交互：/c 表示双击运行（有窗口可读输入）；WOW_NO_PROMPT=1 强制非交互
+set IS_INTERACTIVE=0
+if "%WOW_NO_PROMPT%"=="1" goto :no_prompt
+echo %CMDCMDLINE% | find /i "/c" >nul
+if not errorlevel 1 set IS_INTERACTIVE=1
+:no_prompt
+
+echo.
+echo Checking SHA256SUMS...
+powershell -Command "& { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; try { Invoke-WebRequest -Uri '%CHECKSUMS_URL%' -OutFile '%TEMP_DIR%\SHA256SUMS' -UseBasicParsing -TimeoutSec 30 } catch { exit 1 } }" >nul 2>&1
+
+if not exist "%TEMP_DIR%\SHA256SUMS" goto :hash_missing
+for %%s in ("%TEMP_DIR%\SHA256SUMS") do if %%~zs==0 goto :hash_missing
+
+:: 计算实际 sha256 并与清单比对
+powershell -Command "& { $a=(Get-FileHash -Algorithm SHA256 -Path '%TEMP_ZIP%').Hash.ToLower(); $lines=Get-Content '%TEMP_DIR%\SHA256SUMS'; $ok=$false; foreach($l in $lines){ if((($l -split '\s+')[0]).ToLower() -eq $a){ $ok=$true; break } }; if($ok){ exit 0 } else { Write-Output ('EXPECTED=' + ($lines[0] -split '\s+')[0]); Write-Output ('ACTUAL=' + $a); exit 1 } }" > "%TEMP_DIR%\hash_result.txt" 2>&1
+if errorlevel 1 goto :hash_mismatch
+echo   Hash verified OK.
+goto :hash_done
+
+:hash_mismatch
+echo.
+echo   !! WARNING: update package hash does NOT match official SHA256SUMS !!
+powershell -Command "& { Get-Content '%TEMP_DIR%\hash_result.txt' | Select-Object -First 2 | ForEach-Object { Write-Output ('    ' + $_) } }" 2>nul
+echo     Possible causes: tampered download, mirror served wrong content, or stale checksums.
+echo     Continuing is risky. Cancel and retry, or download manually and verify.
+echo.
+call :ask_continue "  Hash mismatch. Continue anyway?" n
+if errorlevel 1 (
+    del /q "%TEMP_ZIP%" 2>nul
+    echo   Update cancelled. Nothing was changed.
+    goto :cleanup
+)
+echo   You chose to continue. Installing unverified content.
+goto :hash_done
+
+:hash_missing
+echo.
+echo   !! No official SHA256SUMS found. Cannot verify package integrity. !!
+echo      Zip structure test passed, but content is unverified.
+echo.
+call :ask_continue "  Continue without hash verification?" y
+if errorlevel 1 (
+    del /q "%TEMP_ZIP%" 2>nul
+    echo   Update cancelled. Nothing was changed.
+    goto :cleanup
+)
+echo   Continuing without hash verification.
+goto :hash_done
+
+:hash_done
+echo.
+
+:: ==================== 解压 ====================
+echo Installing update...
+mkdir "%TEMP_DIR%\extract" 2>nul
 powershell -Command "& { Add-Type -AssemblyName System.IO.Compression.FileSystem; [System.IO.Compression.ZipFile]::ExtractToDirectory('%TEMP_ZIP%', '%TEMP_DIR%\extract'); }"
 if errorlevel 1 (
     echo Extraction failed.
@@ -169,3 +242,31 @@ if "%WOW_NO_PAUSE%"=="1" goto :eof
 echo %CMDCMDLINE% | find /i "/c" >nul
 if errorlevel 1 pause
 goto :eof
+
+:: ==================== 子过程：确认是否继续 ====================
+:: 参数：%1 = 提示语   %2 = 默认值（y 或 n）
+:: 返回：errorlevel 0 = 继续；1 = 不继续
+:ask_continue
+if "%IS_INTERACTIVE%"=="1" goto :ask_interactive
+:: 非交互：直接返回默认值，绝不停下来等输入（否则 CI/平台脚本会挂住）
+if /i "%~2"=="y" exit /b 0
+exit /b 1
+:ask_interactive
+:: 提示语先存进变量再用 !VAR! 展开，避免路径里的 & , ) 被 cmd 当成命令分隔符
+set "ASK_PROMPT=%~1"
+if /i "%~2"=="y" (
+    set "ASK_HINT=[Y/n]"
+) else (
+    set "ASK_HINT=[y/N]"
+)
+set "ASK_ANS="
+set /p "ASK_ANS=!ASK_PROMPT! !ASK_HINT! "
+if not defined ASK_ANS (
+    :: 空回车 / EOF 走默认值
+    if /i "%~2"=="y" exit /b 0
+    exit /b 1
+)
+if /i "!ASK_ANS!"=="y" exit /b 0
+if /i "!ASK_ANS!"=="yes" exit /b 0
+if "!ASK_ANS!"=="是" exit /b 0
+exit /b 1

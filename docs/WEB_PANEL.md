@@ -43,6 +43,33 @@ wow web stop
 - 绑定非回环地址且 `web.auth_token` 为空时，**`web start` 会直接拒绝启动**（V3.5.16 起是硬闸门，不是建议）。
   先执行 `wow config wow web.auth_token <一串随机字符>` 再启动。
 
+### 公网穿透（Cloudflare 快速隧道）
+
+`--tunnel` / `wow web tunnel` 会调用官方 **cloudflared** 的快速隧道，
+由 Cloudflare 分配一个临时的 `https://xxx.trycloudflare.com` 地址，**无需域名、无需端口映射**。
+注意该地址每次启动都会变，适合临时分享，不适合长期绑定。
+
+首次使用会自动下载 cloudflared（约 40MB）。**V3.5.22 起改为国内镜像优先**：
+
+| 顺序 | 源 | 说明 |
+|------|----|------|
+| 1 | `WOW_CLOUDFLARED_MIRROR` 环境变量 | 临时覆盖，优先级最高 |
+| 2 | `web.tunnel_mirror` 配置项 | 长期覆盖，见 [配置说明](CONFIG.md#webtunnel_mirror--cloudflared-下载源) |
+| 3 | `gh-proxy.com` → `ghfast.top` → `ghproxy.net` | 内置国内镜像，默认即用 |
+| 4 | GitHub 官方 | 始终兜底，不会被去掉 |
+
+任何一家失败自动换下一家。下载完成后**必做长度校验**（比对 `Content-Length`），
+不足即删除半截文件并换源——实测 GitHub 直连存在「只收到 3.8MB / 40MB 却报成功」的情况，
+不校验就会把残缺二进制落盘，之后 spawn 时报难以理解的原生错误。
+
+镜像站只做**传输代理，不改内容**：三家镜像给出的 cloudflared 字节数与
+sha256（`1f99fb51…`）和 GitHub API 公布的 digest 完全一致。
+
+```bash
+# 若下载仍然很慢，可手动把 cloudflared 放到 core/tunnel/ 下（Windows 为 cloudflared.exe），
+# 程序检测到文件存在就直接用，不再下载。
+```
+
 ### 启动后终端不会「被占住」
 
 V3.5.19 起，`web start` 在**交互终端**里启动面板后会直接进入**长命令模式**（等价 `wow L`）：

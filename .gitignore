@@ -29,6 +29,9 @@ core/.web.port
 # V3.5.21：插件信任表（记录各插件的内容指纹，属本机运行时状态，不进版本库）
 core/.plugins.trust.json
 core/.plugins.trust.json.tmp
+# V3.5.22：发版产物。由 scripts/make-sha256sums.sh 按 tag 实时生成并上传到 Release，
+# 不进版本库——否则它会一直停留在旧 tag 的哈希上，反而误导人。
+SHA256SUMS
 
 # ====================
 # 编辑器 / 系统

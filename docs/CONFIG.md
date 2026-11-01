@@ -155,6 +155,7 @@ backup:
 | `allow_scheme_ops` | boolean | `false` | 🔺 **V3.5.7** 放开 `scheme create/switch/delete/edit/pull/prune/register/export/import` |
 | `allow_remote_install` | boolean | `false` | 🔺 **V3.5.7** 放开 `install <http(s)://...>` 远程下载（等同任意代码执行入口） |
 | `allow_plugins` | boolean | `false` | 🔺 **V3.5.21** 放开插件注册的自定义命令经 Web 端执行（插件是第三方任意代码） |
+| `tunnel_mirror` | string | `''` | 🔺 **V3.5.22** cloudflared 二进制下载源。留空 = 内置三家国内镜像 + GitHub 官方兜底 |
 
 **示例：**
 ```yaml
@@ -170,6 +171,7 @@ web:
   allow_scheme_ops: false
   allow_remote_install: false
   allow_plugins: false
+  tunnel_mirror: ''
 ```
 
 > ⚠️ 将 `host` 设为 `0.0.0.0` 会允许外部 IP 访问，请确保已配置防火墙或设置 `auth_token`。
@@ -198,6 +200,45 @@ web:
 > 默认均为 `false`，保持安全基线。开启 `allow_remote_install` 相当于把任意代码执行入口
 > 暴露给 Web 面板访问者，请仅在完全可信的网络环境中开启。
 > `allow_plugins` 同理：插件与主程序同权限，放开它等于让面板登录者通过插件执行任意代码。
+
+### `web.tunnel_mirror` — cloudflared 下载源
+
+**V3.5.22** 新增。`wow web tunnel` 首次运行会下载 cloudflared（约 40MB），
+下载源按以下顺序尝试，**任何一家失败自动换下一家**：
+
+1. 环境变量 `WOW_CLOUDFLARED_MIRROR`（优先级最高，临时覆盖用）
+2. 本配置项 `web.tunnel_mirror`
+3. 内置国内镜像：`gh-proxy.com` → `ghfast.top` → `ghproxy.net`
+4. GitHub 官方 `https://github.com/cloudflare/cloudflared/releases/latest/download`（始终兜底）
+
+留空即用内置列表，**国内用户无需任何配置**。只有当你自建/知道更快的代理时才需要填。
+
+```bash
+# 查看当前值
+wow config wow web.tunnel_mirror
+
+# 改用自建镜像（填镜像根即可，会自动补全 releases 路径）
+wow config wow web.tunnel_mirror https://my-mirror.example
+
+# 临时覆盖，不写配置
+WOW_CLOUDFLARED_MIRROR=https://my-mirror.example wow web tunnel
+```
+
+> **填法很宽松**，以下四种写法都等价：
+> `https://my-mirror.example`、`my-mirror.example`、
+> `https://my-mirror.example/`（末尾斜杠会被去掉）、
+> `https://my-mirror.example/cloudflare/cloudflared/releases/latest/download`（完整前缀，原样使用）。
+>
+> 若填的地址与内置镜像重复，会自动去重；**官方地址永远不会被去掉**——
+> 「换源」不该变成「断掉唯一可用源」。
+
+**下载完一定会做长度校验**：以响应的 `Content-Length` 为准比对实收字节数，
+不足即判定为断流、删除半截文件并换下一个源。这一条不是可选项——
+实测 GitHub 直连多次出现「只收到 3.8MB / 40MB 但仍报成功」，
+若不校验就会把半截二进制落盘，之后 spawn 时报难以理解的原生错误。
+
+如果你已经手动下载了 cloudflared，可以直接放到 `core/tunnel/` 下
+（Windows 为 `cloudflared.exe`），程序检测到文件存在就跳过下载。
 > 若同时开启危险开关 + 监听 `0.0.0.0` + `dev_mode: true`，启动日志会打印安全提示。
 > 无论如何，`init`、`mod remove/sync/toggle`、`pack install`、`web start`、`logs tail`
 > 这五项在 Web 端**永久禁用**，不受配置影响。
@@ -490,6 +531,7 @@ jre:
 | `server.java` | 下次启动服务器时生效 |
 | `web.port` / `web.host` | 重启 Web 服务生效（`wow web stop` 后 `wow web start`） |
 | `web.theme` | 执行 `wow theme switch` 后立即生效 |
+| `web.tunnel_mirror` | 下次执行 `wow web tunnel` / `wow web start --tunnel` 时生效（cloudflared 已在本地则完全不生效） |
 | `download.mirror` | 下次下载时生效 |
 | `mail.*` | 下次发送邮件时生效 |
 | `ai.*` | 下次执行 `logs analyze` 时生效 |
