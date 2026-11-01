@@ -39,8 +39,8 @@
 ### 1. 下载与解压
 
 ```bash
-# 解压到任意目录
-unzip wow-3.5.9.zip
+# 解压到任意目录（文件名随版本变化，以实际下载到的为准）
+unzip wow-<版本号>.zip
 cd wow
 ```
 
@@ -66,14 +66,16 @@ wow init
 ### 4. 安装服务器
 
 ```bash
-# 推荐方式：创建方案（自动下载核心并激活）
+# 创建方案 = 下载核心 + 建目录 + 激活（唯一的核心安装入口）
 wow scheme create myserver --type paper --version 1.20.1
 
-# 或只下载核心到当前方案目录
-wow install vanilla 1.20.1
-# Mohist 需指定构建号
-wow install mohist 1.20.1 -b 346
+# 其他核心同理，类型用 --type 指定
+wow scheme create modded --type mohist --version 1.20.1 -b 346
 ```
+
+> ⚠️ **V3.5.2 起 `install` 不再安装服务端核心**。`wow install vanilla 1.20.1` 只会提示你改用
+> `scheme create`；`install` 现在只剩两件事：下载任意 URL 文件（`wow install https://... -o 路径`）
+> 和隐藏彩蛋 `wow install party`。
 
 ### 5. 启动服务器
 
@@ -97,16 +99,17 @@ wow web start
 | 数字选择菜单 | `wow`（无参数直接进入） |
 | 长命令模式 | `L [命令...]`（无参进 REPL，带参执行单条） |
 | 服务器管理 | `server start/stop/kill/restart/status` |
-| 方案管理 (模板模式) | `scheme create/list/switch/delete/info` |
+| 方案管理 (模板模式) | `scheme create/list/switch/delete/info/status/pull/prune` |
+| 资源池 | `pool stats` |
 | 模组管理 | `mod remove/list/toggle/sync` |
 | 整合包 | `pack install/generate` |
 | 主题包 | `theme install/list/switch/delete/info` |
-| Web 面板 | `web start/stop/status` |
+| Web 面板 | `web start/stop/status/tunnel` |
 | 联机 / 内网穿透 | `lan host/stop/status` |
 | 日志与 AI | `logs tail/analyze/report` |
 | 配置管理 | `config wow/server/white/mods/server-list/server-quick/server-reset` |
 | 邮件 | `mail test/send-code/crash` |
-| 工具 | `down/install` |
+| 工具 | `down`、`install`（**仅 URL 下载与彩蛋，不再装核心**） |
 
 > 完整命令参考请查看 [docs/COMMANDS.md](docs/COMMANDS.md)
 

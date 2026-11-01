@@ -25,20 +25,33 @@ Wow~ Web 面板以 Express 提供 HTTP 接口，并以 Socket.IO 提供实时通
 { "success": true, "message": "验证码已生成（SMTP 未配置，请查看控制台）", "devCode": "123456" }
 ```
 - 若已配置 SMTP：`message` 为「验证码已发送到您的邮箱」，`devCode` 不返回。
-- 验证码有效期 5 分钟。
+- 若未配置 SMTP 且 `web.dev_mode: true`：验证码打印到服务端控制台，并随响应返回 `devCode`。
+- 若未配置 SMTP 且非开发模式：返回 `403`，提示先配置 SMTP 或设置离线密码（防止生产环境回显验证码被拿去登录）。
+- 若邮箱不在 `mail.whitelist` 内：返回 `403`，且**不会生成验证码**。
+
+验证码有效期 5 分钟。
 
 ### `POST /api/auth/login`
-使用验证码登录，换取 JWT。
+登录并换取 JWT。支持两种方式，**二选一**。
 
-**请求体**
+**方式一：验证码登录**
 ```json
 { "email": "admin@example.com", "code": "123456" }
 ```
+
+**方式二：离线密码登录**（V3.5.3，未配 SMTP 时的替代方式）
+```json
+{ "email": "admin@local", "password": "你的离线密码" }
+```
+> 仅当配置了 `web.auth_password` 时可用。若该值是明文，首次登录会自动转成 scrypt 哈希写回配置，
+> 之后 `GET /api/config` 里看到的就是 `scrypt$...` 形式。
 
 **响应**
 ```json
 { "success": true, "token": "<jwt>" }
 ```
+失败：`401`（密码错误 / 验证码错误 / 验证码过期）、`400`（缺少邮箱或验证码）、
+`403`（邮箱不在白名单内）。
 
 ### `GET /api/auth/verify`
 校验当前令牌是否有效。
@@ -55,12 +68,31 @@ Wow~ Web 面板以 Express 提供 HTTP 接口，并以 Socket.IO 提供实时通
 ## 二、服务器与资源（需认证）
 
 ### `GET /api/status`
-服务器运行状态。
+服务器运行状态（V3.5.19 补齐了方案名、启动时刻、控制台中继与 Web 监听信息）。
 
 **响应**
 ```json
-{ "running": true, "pid": 12345, "serverDir": "...", "jarFile": "..." }
+{
+  "running": true,
+  "pid": 12345,
+  "serverDir": "/path/to/wow/scheme/myserver",
+  "jarFile": "server.jar",
+  "logFile": "/path/to/wow/scheme/myserver/logs/latest.log",
+  "scheme": "myserver",
+  "startedAt": 1767225600000,
+  "consoleRelay": true,
+  "web": { "port": 8080, "host": "127.0.0.1" }
+}
 ```
+
+| 字段 | 说明 |
+|------|------|
+| `running` / `pid` | 是否在运行 / 进程号（未运行为 `null`） |
+| `serverDir` / `jarFile` / `logFile` | 当前方案目录、核心文件名、日志路径 |
+| `scheme` | 当前激活方案名（取自 `server.scheme`，未激活为 `null`） |
+| `startedAt` | 启动时刻（毫秒时间戳，由 `server.pid` 的 mtime 近似；未运行为 `null`） |
+| `consoleRelay` | 是否有进程在接收 MC 控制台指令；为 `false` 时 `/api/console` 会失败 |
+| `web` | 面板实际监听的端口与地址（多实例时以端口文件为准） |
 
 ### `GET /api/logs?lines=50`
 最近 N 行服务器日志（默认 50）。
@@ -85,6 +117,31 @@ Wow~ Web 面板以 Express 提供 HTTP 接口，并以 Socket.IO 提供实时通
 ```json
 { "schemes": [ ... ], "current": "survival" }
 ```
+
+### `GET /api/scheme/:name/status`
+单个方案的详细信息（V3.5.19 新增）。前端「方案详情」弹窗用的就是它。
+
+**响应**
+```json
+{
+  "success": true,
+  "name": "survival",
+  "state": "partial",
+  "version": "1.20.1",
+  "loader": "forge",
+  "type": "forge",
+  "build": null,
+  "created_at": "2026-10-01T12:00:00.000Z",
+  "updated_at": "2026-10-20T08:30:00.000Z",
+  "active": true,
+  "core": { "file": "forge-1.20.1-47.2.0.jar", "in_pool": true },
+  "mods": { "count": 42, "shared": 30, "unique": 12 },
+  "plugins": { "count": 0, "shared": 0, "unique": 0 },
+  "unique_resources": ["config/mymod.toml"],
+  "world": { "exists": true }
+}
+```
+方案不存在返回 `404`。`state` 取值为 `minimal` / `partial` / `full`，含义见 [SCHEMES.md](SCHEMES.md)。
 
 ### `GET /api/themes`
 主题包列表与当前主题。
@@ -122,6 +179,66 @@ Wow~ Web 面板以 Express 提供 HTTP 接口，并以 Socket.IO 提供实时通
 ```json
 { "success": true, "key": "web.port", "value": 9000 }
 ```
+
+### `GET /api/config/schema`
+配置表单结构（V3.5.19 新增）。返回「有哪些键、什么类型、中文怎么解释」，前端据此生成表单。
+
+**响应**
+```json
+{
+  "success": true,
+  "fields": [
+    {
+      "key": "web.port",
+      "type": "number",
+      "group": "Web 面板",
+      "label": "监听端口",
+      "desc": "面板对外提供服务的端口，改完需要重启 web 服务。",
+      "value": 8080
+    },
+    {
+      "key": "web.auth_token",
+      "type": "secret",
+      "group": "Web 面板",
+      "label": "JWT 密钥",
+      "desc": "同时用于签发登录令牌与签名校验。",
+      "value": null,
+      "hasValue": false
+    }
+  ]
+}
+```
+
+| 字段 | 说明 |
+|------|------|
+| `type` | `boolean` / `string` / `number` / `select` / `list` / `secret` |
+| `options` | 仅 `select` 有，形如 `[{ "value": "zh_CN", "label": "简体中文" }]` |
+| `advanced` | `true` 表示默认收在「高级」折叠区 |
+| `danger` | `true` 表示改动风险高，前端标红并二次确认 |
+| `value` | `secret` 类型恒为 `null`，不返回明文 |
+| `hasValue` | 仅 `secret` 有，表示「是否已设置」 |
+
+> 该接口必须注册在 `GET /api/config/:key` 之前，否则 `schema` 会被当成配置键名。
+
+### `POST /api/config/batch`
+批量保存配置（V3.5.19 新增）。表单模式一次提交多个改动项，避免逐个 key 往返。
+
+**请求体**（两种写法等价）
+```json
+{ "patch": { "auto_scheme": true, "web.port": 8080 } }
+```
+```json
+{ "auto_scheme": true, "web.port": 8080 }
+```
+
+**响应**
+```json
+{ "success": true, "applied": 2, "keys": ["auto_scheme", "web.port"], "skipped": [] }
+```
+
+- 嵌套对象会被摊平成点号键（`{ web: { port: 8080 } }` → `web.port`）。
+- **未在 `/api/config/schema` 登记过的键一律忽略**，出现在 `skipped` 里，防止前端塞垃圾键把 `wow.yaml` 写花。
+- 任一键取值非法即整体拒绝：`400` + `{ success: false, error: "配置项 xxx 取值非法：...", key }`。
 
 ---
 
@@ -162,12 +279,104 @@ Wow~ Web 面板以 Express 提供 HTTP 接口，并以 Socket.IO 提供实时通
 > 启动时会做一次危险配置自检，若检测到「危险开关已开 + 监听 `0.0.0.0` + `dev_mode=true`」
 > 等组合，会在日志中打印安全提示（仅提示，不阻断启动）。
 
+### `POST /api/console`
+向**运行中的 Minecraft 服务端**发送一条控制台指令（V3.5.19 新增）。
+
+**请求体**
+```json
+{ "line": "say hello" }
+```
+
+**响应**
+```json
+{ "success": true, "via": "relay", "line": "say hello", "queued": true }
+```
+
+| 字段 | 说明 |
+|------|------|
+| `via` | `relay` = 通过控制台中继进程投递；`stdin` = 直接写服务端 stdin（旧版本拉起的进程才走这条） |
+| `queued` | 仅 `relay` 分支有，表示已入队 |
+
+> 🎯 **为什么不用 `/api/exec`**：控制台指令不是 wow 指令。`say hi` 走 `/api/exec` 会被拆成
+> `wow say hi` → unknown command。本接口只做三件事：清洗（剥离控制字符 / 零宽字符）→ 回显
+> `[WebCLI]` → 投递给持有 stdin 的进程。
+
+错误：`400` 指令为空、`413` 超过 512 字符、`409` 服务器未运行或当前进程没有控制台接收器。
+
+---
+
+## 四之一、异步任务队列（V3.5.19 新增，需认证）
+
+耗时操作（创建方案、拉取 / 瘦身资源）不再让 HTTP 请求干等，改为「提交 → 立即返回 task_id → 订阅进度」。
+
+### `POST /api/tasks/run`
+提交异步任务。**立即返回**，不等下载/安装完成。
+
+**请求体**
+```json
+{
+  "command": "scheme create",
+  "args": ["myserver", "--version", "1.20.1", "--type", "paper"],
+  "name": "myserver",
+  "type": "方案"
+}
+```
+
+| 字段 | 说明 |
+|------|------|
+| `command` | 指令主体，必须是白名单内的前缀：`scheme create` / `scheme pull` / `scheme prune` |
+| `args` | 其余参数数组（会自动清洗空白与控制字符） |
+| `name` | 任务显示名，缺省用 `command` |
+| `type` | 任务分类标签，缺省 `方案` |
+
+**响应**
+```json
+{
+  "success": true,
+  "task_id": "1767225600000-a1b2c3",
+  "task": {
+    "id": "1767225600000-a1b2c3",
+    "name": "myserver",
+    "type": "方案",
+    "status": "运行中",
+    "progress": 5,
+    "stage": "初始化方案目录",
+    "command": "scheme create myserver --version 1.20.1 --type paper",
+    "logs": [],
+    "created_at": "2026-11-01T09:00:00.000Z"
+  }
+}
+```
+
+错误：`403` + `code: "POLICY_DENIED"`（指令不在白名单 / 被 `web.allow_scheme_ops` 拦下）、
+`400`（缺少 command 或队列已满）。
+
+### `GET /api/tasks`
+任务列表与汇总。
+
+```json
+{
+  "success": true,
+  "tasks": [ { "id": "...", "name": "myserver", "status": "完成", "progress": 100, "stage": "完成", "logs": ["..."] } ],
+  "stats": { "total": 1, "running": 0, "finished": 1, "failed": 0 }
+}
+```
+
+`status` 取值：`等待中` / `运行中` / `完成` / `失败`。`logs` 只保留尾部 60 行，`tasks` 最多 50 条。
+
+### `DELETE /api/tasks`
+清理已结束（完成 / 失败）的任务，返回 `{ "success": true, "removed": 2 }`。
+
 ---
 
 ## 四之二、文件管理（V3.5.6 新增，需认证）
 
-> 所有路径均以**当前方案的运行目录**为根（即 `scheme/<方案名>/`），并严格拒绝路径穿越。
-> 未激活任何方案时，根目录回退为 `scheme/`。
+> 所有路径均以**方案的运行目录**为根（即 `scheme/<方案名>/`），并严格拒绝路径穿越。
+> 未指定方案且未激活任何方案时，根目录回退为 `scheme/`。
+>
+> **`scheme` 参数**（V3.5.19）：下列文件接口都接受 `?scheme=<方案名>`（写操作也可放在请求体里），
+> 用于在面板里跨方案浏览文件。缺省 = 当前激活方案。方案名会做二次校验，
+> 必须真实存在且含 `scheme.yaml`，含 `..` / 路径分隔符 / 盘符一律拒绝。
 
 ### `GET /api/files?path=<相对路径>`
 列出目录内容。`path` 为空表示根目录。
@@ -287,6 +496,10 @@ Wow~ Web 面板以 Express 提供 HTTP 接口，并以 Socket.IO 提供实时通
 { "success": true, "path": "server.properties", "content": "..." }
 ```
 
+> 💡 **两套路径等价**（V3.5.19）：`GET /api/file/read` 与 `GET /api/files/content` 是同一实现，
+> 后者是早期 REST 风格接口，前者是文本编辑器专用的薄别名，**没有第二份读写逻辑**。
+> 新代码建议用 `/api/file/read`、`/api/file/write`，语义更直白；老代码继续用 `/api/files/content` 不会失效。
+
 ### `PUT /api/files/content`
 写入文本文件（覆盖）。上限 2MB。
 
@@ -294,6 +507,16 @@ Wow~ Web 面板以 Express 提供 HTTP 接口，并以 Socket.IO 提供实时通
 { "path": "server.properties", "content": "motd=Hello\n" }
 ```
 父目录不存在会自动创建。
+
+### `GET /api/file/read` / `POST|PUT /api/file/write`
+V3.5.19 新增的文本编辑器接口，参数与 `/api/files/content` 完全一致：
+
+```json
+// POST /api/file/write
+{ "path": "config/my.toml", "content": "[a]\nb = 1\n" }
+```
+
+`POST` 与 `PUT` 等价，方便前端按语义调用。成功返回 `{ success: true, path, size }`。
 
 ---
 
@@ -366,12 +589,34 @@ Wow~ Web 面板以 Express 提供 HTTP 接口，并以 Socket.IO 提供实时通
 
 ## 五、WebSocket（Socket.IO）
 
-连接地址即面板基址。连接后后端会：
-- 发送 `message` 事件：`{ type: 'info', content: '已连接到 wow Web 服务' }`
-- 每 500ms 推送 `log` 事件：`{ line: "...", timestamp: 1234567890 }`（服务器日志增量）
+连接地址即面板基址。**必须使用 Socket.IO 客户端**（`socket.io-client`），原生 `WebSocket`
+连不上 —— 握手协议不是纯 WebSocket。
 
-前端可发送：
-- `command` 事件：`{ command: "server", args: ["status"] }` → 后端执行并以 `command_result` 事件返回 `{ command, success, output|error }`
+### 服务端推送
+
+| 事件 | 载荷 | 时机 |
+|------|------|------|
+| `message` | `{ type: 'info', content: '已连接到 wow Web 服务' }` | 连接建立时 |
+| `tasks` | `{ tasks: [...], stats: {...} }` | 连接建立时推一份当前队列快照 |
+| `log` | `{ line: "...", timestamp: 1767225600000 }` | **每 250ms** 推送一次服务器日志增量（V3.5.19 起） |
+| `task` | 单个任务对象（同 `GET /api/tasks` 里的结构） | 任务状态 / 进度 / 阶段变化时广播 |
+| `console` | `{ line: "[WebCLI] ...", kind: 'system', timestamp }` | 面板发起 CLI 操作时的回显，所有客户端可见 |
+| `command_result` | `{ command, success, output \| error }` | 响应前端发来的 `command` 事件 |
+
+> 📌 **日志推送机制**（V3.5.19）：全局只维护**一个** 250ms 定时器和一份读取游标，
+> 增量按行广播给所有客户端；首个客户端连上时启动，最后一个断开时停掉。
+> 旧实现是每个 socket 各开一个 500ms 定时器、各自从文件头读，三个页面同时开着就是三份重复 IO。
+>
+> 新客户端**只从连接那一刻开始收增量**，历史日志请先 `GET /api/logs?lines=N` 拉一次。
+
+### 前端可发送
+
+| 事件 | 载荷 | 说明 |
+|------|------|------|
+| `command` | `{ command: "server", args: ["status"] }` | 执行一条 wow CLI 指令，结果由 `command_result` 返回；与 `/api/exec` 共用同一套安全策略 |
+
+> MC 控制台指令（`say`、`op` 等）请走 `POST /api/console`，不要用 `command` 事件 ——
+> 那会被当成 `wow say ...` 执行并报 unknown command。
 
 ---
 
@@ -379,10 +624,11 @@ Wow~ Web 面板以 Express 提供 HTTP 接口，并以 Socket.IO 提供实时通
 
 | 状态码 | 含义 |
 |--------|------|
-| `400` | 请求参数缺失或格式错误（如邮箱无效、缺少 command、路径非法） |
-| `403` | 路径越界 / 权限不足（如文件管理中的路径穿越） |
-| `404` | 资源不存在（目录、文件或项目） |
-| `413` | 上传内容过大（超过 512MB） |
-| `502` | 上游服务异常（Modrinth / CurseForge 等第三方接口） |
-| `401` | 未登录 / Token 无效或过期 / 验证码错误 |
+| `400` | 请求参数缺失或格式错误（如邮箱无效、缺少 command、路径非法、配置取值非法） |
+| `401` | 未登录 / Token 无效或过期 / 验证码或密码错误 |
+| `403` | 路径越界、指令被策略拒绝、邮箱不在白名单、暴露公网但缺少凭据 |
+| `404` | 资源不存在（目录、文件、方案或项目） |
+| `409` | 状态冲突（服务器未运行、控制台无接收器、目标已存在） |
+| `413` | 上传内容过大（超过 512MB）或控制台指令超过 512 字符 |
 | `500` | 服务端执行出错（如命令失败） |
+| `502` | 上游服务异常（Modrinth / CurseForge 等第三方接口） |

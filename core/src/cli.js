@@ -87,7 +87,7 @@ function logger() {
 program
     .name('wow')
     .description('Minecraft 服务器管理工具 - 默认优先，可以修改')
-    .version('3.5.19-26.3a', '-V');
+    .version('3.5.20-26.3b', '-V');
 
 // ==================== init ====================
 
@@ -429,6 +429,79 @@ schemeCmd
             console.log(`  兼容性: Java ${meta.compatibility?.java || '未知'}`);
         } catch (e) {
             console.error(`❌ 获取信息失败: ${e.message}`);
+        }
+    });
+
+// V3.5.20：补齐 pull / prune / status 三个子命令。
+// 这三个动作 SchemeManager 里早已实现，Web 端命令策略（command_policy.js）、
+// 开服控制台白名单（server.js）与异步任务白名单（web_task.js）也都把它们当既有命令对待，
+// 但 CLI 一直没注册 —— 结果 Web 端放行后 spawn 出来只会得到「unknown command」。
+// 这里把最后一段接上，命令行与 Web 面板才真正等价。
+schemeCmd
+    .command('pull <name>')
+    .description('强制补齐方案资源（从 pool 复制缺失的模组 / 核心）')
+    .action(async (name) => {
+        const SchemeManager = load('./scheme_manager');
+        if (!SchemeManager) return;
+        const schemeManager = new SchemeManager();
+        try {
+            await schemeManager.pull(name);
+            console.log('✅ 补齐完成');
+        } catch (e) {
+            console.error(`❌ 补齐失败: ${e.message}`);
+        }
+    });
+
+schemeCmd
+    .command('prune <name>')
+    .description('强制瘦身方案（与 pool 重复的资源改为共享引用）')
+    .action(async (name) => {
+        const SchemeManager = load('./scheme_manager');
+        if (!SchemeManager) return;
+        const schemeManager = new SchemeManager();
+        try {
+            await schemeManager.prune(name);
+            console.log('✅ 瘦身完成');
+        } catch (e) {
+            console.error(`❌ 瘦身失败: ${e.message}`);
+        }
+    });
+
+schemeCmd
+    .command('status [name]')
+    .description('查看方案详细状态（资源引用 / 独占统计）')
+    .action((name) => {
+        const SchemeManager = load('./scheme_manager');
+        if (!SchemeManager) return;
+        const schemeManager = new SchemeManager();
+        try {
+            schemeManager.status(name);
+        } catch (e) {
+            console.error(`❌ 获取状态失败: ${e.message}`);
+        }
+    });
+
+// ==================== pool（资源共享池） ====================
+
+const poolCmd = program.command('pool').description('资源共享池');
+
+poolCmd
+    .command('stats')
+    .description('查看资源池统计（总数 / 被引用 / 独占 / 占用体积）')
+    .action(() => {
+        const poolStats = load('./pool_stats');
+        if (!poolStats) return;
+        const s = poolStats.getStats();
+        console.log('资源共享池');
+        console.log(`  目录    : ${s.poolDir}`);
+        console.log(`  资源总数: ${s.total}`);
+        console.log(`  被方案引用: ${s.refs}`);
+        console.log(`  仅存于池中: ${s.unique}`);
+        console.log(`  占用体积: ${poolStats.formatSize(s.totalSize)}（同名文件只计一次）`);
+        const types = Object.keys(s.byType || {});
+        if (types.length) {
+            console.log('  分类:');
+            for (const t of types) console.log(`    ${t}: ${s.byType[t]}`);
         }
     });
 

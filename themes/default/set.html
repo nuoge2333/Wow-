@@ -310,6 +310,182 @@
             border-color: #4CAF50;
         }
 
+        /* ===== 配置表单（V3.5.19） ===== */
+        .cfg-mode-switch {
+            float: right;
+            display: inline-flex;
+            gap: 0;
+            border: 1px solid #22334d;
+            border-radius: 5px;
+            overflow: hidden;
+        }
+        .cfg-mode-switch .mode-btn {
+            background: transparent;
+            border: none;
+            color: #7d8ea3;
+            font-size: 12px;
+            padding: 4px 12px;
+            cursor: pointer;
+            font-family: inherit;
+        }
+        .cfg-mode-switch .mode-btn.active {
+            background: #1b3a2b;
+            color: #66bb6a;
+        }
+        .cfg-mode-switch .mode-btn:hover:not(.active) {
+            background: #17253a;
+            color: #aab;
+        }
+
+        .cfg-group-title {
+            margin: 18px 0 8px;
+            padding-bottom: 6px;
+            border-bottom: 1px solid #1b2b44;
+            color: #8fa6c0;
+            font-size: 13px;
+            letter-spacing: .5px;
+        }
+        .cfg-group-title:first-child { margin-top: 0; }
+
+        .cfg-row {
+            display: flex;
+            align-items: flex-start;
+            gap: 14px;
+            padding: 10px 12px;
+            border-radius: 6px;
+            margin-bottom: 2px;
+        }
+        .cfg-row:hover { background: #101c30; }
+        .cfg-row.danger-row { border-left: 2px solid #b3403a; }
+        .cfg-row.is-dirty { background: #12251c; }
+
+        .cfg-row .cfg-label {
+            flex: 0 0 190px;
+            min-width: 0;
+            padding-top: 6px;
+        }
+        .cfg-row .cfg-label .name {
+            color: #ccd;
+            font-size: 13px;
+        }
+        .cfg-row .cfg-label .key {
+            color: #4a5c72;
+            font-size: 11px;
+            font-family: ui-monospace, Menlo, Consolas, monospace;
+            word-break: break-all;
+        }
+        .cfg-row .cfg-control {
+            flex: 1;
+            min-width: 0;
+        }
+        .cfg-row .cfg-desc {
+            margin-top: 5px;
+            color: #62768c;
+            font-size: 12px;
+            line-height: 1.55;
+        }
+        .cfg-row .cfg-desc .warn {
+            color: #d9853f;
+        }
+
+        .cfg-input, .cfg-select, .cfg-textarea {
+            width: 100%;
+            box-sizing: border-box;
+            background: #0d1727;
+            border: 1px solid #22334d;
+            border-radius: 4px;
+            color: #ccd;
+            padding: 7px 10px;
+            font-size: 13px;
+            font-family: inherit;
+            outline: none;
+        }
+        .cfg-input:focus, .cfg-select:focus, .cfg-textarea:focus { border-color: #4CAF50; }
+        .cfg-textarea {
+            min-height: 62px;
+            resize: vertical;
+            font-family: ui-monospace, Menlo, Consolas, monospace;
+            font-size: 12px;
+        }
+        .cfg-select { cursor: pointer; }
+
+        /* Switch 开关 */
+        .cfg-switch {
+            position: relative;
+            display: inline-block;
+            width: 44px;
+            height: 24px;
+            margin-top: 4px;
+            flex: 0 0 auto;
+        }
+        .cfg-switch input { opacity: 0; width: 0; height: 0; }
+        .cfg-switch .track {
+            position: absolute;
+            inset: 0;
+            background: #24384f;
+            border-radius: 12px;
+            transition: .2s;
+            cursor: pointer;
+        }
+        .cfg-switch .track::before {
+            content: "";
+            position: absolute;
+            width: 18px;
+            height: 18px;
+            left: 3px;
+            top: 3px;
+            background: #8fa6c0;
+            border-radius: 50%;
+            transition: .2s;
+        }
+        .cfg-switch input:checked + .track { background: #2e7d32; }
+        .cfg-switch input:checked + .track::before {
+            transform: translateX(20px);
+            background: #fff;
+        }
+        .cfg-switch .state-text {
+            margin-left: 54px;
+            font-size: 12px;
+            color: #7d8ea3;
+            line-height: 24px;
+            white-space: nowrap;
+        }
+
+        .cfg-advanced-toggle {
+            margin: 14px 0 4px;
+            color: #5f7288;
+            font-size: 12px;
+        }
+        .cfg-details {
+            margin-top: 16px;
+            border-top: 1px dashed #1b2b44;
+            padding-top: 10px;
+        }
+        .cfg-details > summary {
+            cursor: pointer;
+            color: #62768c;
+            font-size: 13px;
+            outline: none;
+            list-style: none;
+        }
+        .cfg-details > summary::-webkit-details-marker { display: none; }
+        .cfg-details > summary::before { content: "▸ "; }
+        .cfg-details[open] > summary::before { content: "▾ "; }
+
+        .cfg-toolbar {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-top: 14px;
+            padding-top: 12px;
+            border-top: 1px solid #1b2b44;
+        }
+        .cfg-toolbar .dirty-hint {
+            color: #d9853f;
+            font-size: 12px;
+            flex: 1;
+        }
+
         @media (max-width: 900px) {
             .settings-grid {
                 grid-template-columns: 1fr;
@@ -317,6 +493,8 @@
             .settings-section.full {
                 grid-column: 1;
             }
+            .cfg-row { flex-direction: column; gap: 6px; }
+            .cfg-row .cfg-label { flex: none; width: 100%; padding-top: 0; }
         }
     </style>
 </head>
@@ -330,15 +508,33 @@
             <div class="settings-section full">
                 <div class="title">
                     📝 启动器配置 (wow.yaml)
-                    <span class="badge">JSON 格式</span>
+                    <span class="badge" id="cfg-mode-badge">表单模式</span>
+                    <div class="cfg-mode-switch">
+                        <button class="mode-btn active" id="mode-form-btn" data-mode="form">🧩 表单</button>
+                        <button class="mode-btn" id="mode-raw-btn" data-mode="raw">{ } 原始 JSON</button>
+                    </div>
                 </div>
-                <div class="config-group">
-                    <label>配置内容</label>
-                    <textarea id="config-editor" spellcheck="false" style="min-height:200px;font-family:monospace;font-size:12px;"></textarea>
+
+                <!-- 表单模式（V3.5.19：按 /api/config/schema 动态生成） -->
+                <div id="config-form-wrap">
+                    <input class="filter-input" id="cfg-search" placeholder="搜索配置项（支持 key 或中文说明）..." />
+                    <div id="config-form">
+                        <div class="empty-state">加载中...</div>
+                    </div>
                 </div>
+
+                <!-- 原始 JSON 模式 -->
+                <div id="config-raw-wrap" style="display:none;">
+                    <div class="config-group">
+                        <label>配置内容（wow.yaml）</label>
+                        <textarea id="config-editor" spellcheck="false" style="min-height:280px;font-family:monospace;font-size:12px;"></textarea>
+                    </div>
+                </div>
+
                 <div class="btn-row">
                     <button class="btn btn-success" id="save-config-btn">💾 保存配置</button>
                     <button class="btn btn-secondary" id="reload-config-btn">🔄 重新加载</button>
+                    <span class="dirty-hint" id="cfg-dirty-hint" style="color:#d9853f;font-size:12px;margin-left:10px;"></span>
                 </div>
                 <div style="margin-top:8px;color:#667788;font-size:12px;">
                     修改后需要重启服务才能生效，部分配置项保存后立即生效。
@@ -505,27 +701,342 @@
                 return await resp.json();
             }
 
-            // ==================== 配置编辑器 ====================
-            async function loadConfig() {
-                try {
-                    const data = await apiGet('/api/config');
-                    configEditor.value = JSON.stringify(data, null, 2);
-                } catch (e) {
-                    configEditor.value = '加载失败: ' + e.message;
+            // ==================== 配置视图（表单 / 原始 JSON） ====================
+            // V3.5.19：不再只给一个纯文本框。
+            //   - 从 /api/config/schema 读字段定义（类型 / 中文名 / 说明 / 枚举 / 危险标记）
+            //   - boolean → Switch，select → 下拉，number → 数字输入，list → 逐行 textarea
+            //   - 每项下方固定显示中文说明，防止小白把 key 改成别的东西
+            //   - 原始 JSON 模式保留，供高级用户直接编辑
+            let cfgSchema = [];
+            let cfgValues = {};       // 服务端当前值（扁平 key）
+            let cfgDirty = {};        // 本页改动（扁平 key），提交时只发这些
+            let cfgMode = 'form';
+
+            const cfgFormEl = document.getElementById('config-form');
+            const cfgSearchEl = document.getElementById('cfg-search');
+            const cfgModeBadge = document.getElementById('cfg-mode-badge');
+            const cfgFormWrap = document.getElementById('config-form-wrap');
+            const cfgRawWrap = document.getElementById('config-raw-wrap');
+
+            /** 按 key 取当前生效值：改动优先，其次服务端值 */
+            function currentValue(key) {
+                if (Object.prototype.hasOwnProperty.call(cfgDirty, key)) return cfgDirty[key];
+                return cfgValues[key];
+            }
+
+            function readByPath(obj, key) {
+                const parts = String(key).split('.');
+                let cur = obj;
+                for (const p of parts) {
+                    if (cur === null || cur === undefined || typeof cur !== 'object') return undefined;
+                    cur = cur[p];
+                }
+                return cur;
+            }
+
+            /** 把嵌套配置摊平成 { 'a.b': v } */
+            function flattenAll(obj, prefix = '', out = {}) {
+                if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return out;
+                for (const [k, v] of Object.entries(obj)) {
+                    const key = prefix ? prefix + '.' + k : k;
+                    if (v && typeof v === 'object' && !Array.isArray(v)) flattenAll(v, key, out);
+                    else out[key] = v;
+                }
+                return out;
+            }
+
+            function groupOrder(list) {
+                // 按 schema 中首次出现的顺序排列分组，保证「服务器」永远在最上面
+                const order = [];
+                for (const f of list) {
+                    const g = f.group || '其他';
+                    if (!order.includes(g)) order.push(g);
+                }
+                return order;
+            }
+
+            function switchHtml(key, checked, disabled) {
+                return `<div style="display:flex;align-items:center;">
+                    <label class="cfg-switch">
+                        <input type="checkbox" data-key="${escapeHtml(key)}" data-type="boolean" ${checked ? 'checked' : ''} ${disabled ? 'disabled' : ''} />
+                        <span class="track"></span>
+                    </label>
+                    <span class="state-text">${checked ? '开启' : '关闭'}</span>
+                </div>`;
+            }
+
+            function controlHtml(field) {
+                const key = field.key;
+                const raw = currentValue(key);
+                const disabled = !!field.readOnly;
+                const ph = field.placeholder ? ` placeholder="${escapeHtml(field.placeholder)}"` : '';
+                const disAttr = disabled ? ' disabled' : '';
+
+                if (field.type === 'boolean') {
+                    const v = raw === true || raw === 'true' || raw === 1 || raw === '1';
+                    return switchHtml(key, v, disabled);
+                }
+
+                if (field.type === 'select') {
+                    const v = raw === null || raw === undefined ? '' : String(raw);
+                    let opts = '';
+                    for (const o of (field.options || [])) {
+                        const val = typeof o === 'object' ? o.value : o;
+                        const lab = typeof o === 'object' ? (o.label || o.value) : o;
+                        opts += `<option value="${escapeHtml(String(val))}" ${String(val) === v ? 'selected' : ''}>${escapeHtml(String(lab))}</option>`;
+                    }
+                    if (v === '' || !field.options.some(o => String(typeof o === 'object' ? o.value : o) === v)) {
+                        opts = `<option value="" selected>（未设置，使用默认值）</option>` + opts;
+                    }
+                    return `<select class="cfg-select" data-key="${key}" data-type="select"${disAttr}>${opts}</select>`;
+                }
+
+                if (field.type === 'number') {
+                    const v = raw === null || raw === undefined ? '' : raw;
+                    return `<input class="cfg-input" type="number" min="0" step="1" data-key="${key}" data-type="number" value="${escapeHtml(String(v))}"${ph}${disAttr} />`;
+                }
+
+                if (field.type === 'list') {
+                    let v = '';
+                    if (Array.isArray(raw)) v = raw.join('\n');
+                    else if (raw !== null && raw !== undefined) v = String(raw);
+                    return `<textarea class="cfg-textarea" data-key="${key}" data-type="list"${ph}${disAttr}>${escapeHtml(v)}</textarea>
+                        <div class="cfg-desc" style="margin-top:4px;color:#4a5c72;">每行一个值；留空表示不使用</div>`;
+                }
+
+                if (field.type === 'secret') {
+                    // secret 只回传是否已设置，不回传明文（见 /api/config/schema 的 hasValue）
+                    const has = field.hasValue === true;
+                    return `<input class="cfg-input" type="password" autocomplete="new-password"
+                        data-key="${key}" data-type="secret"
+                        placeholder="${has ? '已设置（留空则不修改）' : '未设置'}"${disAttr} />`;
+                }
+
+                const v = raw === null || raw === undefined ? '' : raw;
+                return `<input class="cfg-input" type="text" data-key="${key}" data-type="string" value="${escapeHtml(String(v))}"${ph}${disAttr} />`;
+            }
+
+            function fieldRowHtml(field) {
+                const dirty = Object.prototype.hasOwnProperty.call(cfgDirty, field.key);
+                const cls = ['cfg-row'];
+                if (field.danger) cls.push('danger-row');
+                if (dirty) cls.push('is-dirty');
+                const desc = escapeHtml(field.desc || '');
+                const warn = field.danger ? '<span class="warn">⚠️ 改错会导致启动器异常，请确认后再改。</span>' : '';
+                return `<div class="${cls.join(' ')}" data-row="${field.key}">
+                    <div class="cfg-label">
+                        <div class="name">${escapeHtml(field.label || field.key)}${dirty ? ' <span style="color:#66bb6a;">●</span>' : ''}</div>
+                        <div class="key">${escapeHtml(field.key)}</div>
+                    </div>
+                    <div class="cfg-control">
+                        ${controlHtml(field)}
+                        ${desc ? `<div class="cfg-desc">${desc}${warn ? '<br>' + warn : ''}</div>` : ''}
+                    </div>
+                </div>`;
+            }
+
+            function renderConfigForm() {
+                if (!cfgSchema.length) {
+                    cfgFormEl.innerHTML = `<div class="empty-state" style="color:#f44336;">配置结构加载失败，请切到「原始 JSON」模式手动编辑</div>`;
+                    return;
+                }
+                const kw = (cfgSearchEl.value || '').trim().toLowerCase();
+                const match = (f) => {
+                    if (!kw) return true;
+                    return f.key.toLowerCase().includes(kw)
+                        || String(f.label || '').toLowerCase().includes(kw)
+                        || String(f.desc || '').toLowerCase().includes(kw);
+                };
+
+                const visible = cfgSchema.filter(f => !f.advanced && match(f));
+                const advanced = cfgSchema.filter(f => f.advanced && match(f));
+
+                let html = '';
+                for (const g of groupOrder(visible)) {
+                    html += `<div class="cfg-group-title">${escapeHtml(g)}</div>`;
+                    for (const f of visible.filter(x => (x.group || '其他') === g)) {
+                        html += fieldRowHtml(f);
+                    }
+                }
+
+                if (advanced.length) {
+                    const open = kw ? ' open' : '';
+                    html += `<details class="cfg-details"${open}>
+                        <summary>高级选项（${advanced.length} 项，非必要请勿修改）</summary>`;
+                    for (const g of groupOrder(advanced)) {
+                        html += `<div class="cfg-group-title">${escapeHtml(g)}</div>`;
+                        for (const f of advanced.filter(x => (x.group || '其他') === g)) {
+                            html += fieldRowHtml(f);
+                        }
+                    }
+                    html += `</details>`;
+                }
+
+                if (!visible.length && !advanced.length) {
+                    html = `<div class="empty-state">没有匹配「${escapeHtml(kw)}」的配置项</div>`;
+                }
+
+                cfgFormEl.innerHTML = html;
+                bindFormEvents();
+            }
+
+            function bindFormEvents() {
+                cfgFormEl.querySelectorAll('[data-key]').forEach(el => {
+                    const key = el.dataset.key;
+                    const type = el.dataset.type;
+                    if (type === 'boolean') {
+                        el.addEventListener('change', () => {
+                            cfgDirty[key] = el.checked;
+                            const txt = el.closest('.cfg-switch').parentElement.querySelector('.state-text');
+                            if (txt) txt.textContent = el.checked ? '开启' : '关闭';
+                            markDirtyRow(key);
+                        });
+                    } else if (type === 'secret') {
+                        el.addEventListener('input', () => {
+                            if (el.value === '') delete cfgDirty[key];
+                            else cfgDirty[key] = el.value;
+                            markDirtyRow(key);
+                        });
+                    } else {
+                        el.addEventListener('input', () => {
+                            if (type === 'number') {
+                                cfgDirty[key] = el.value === '' ? null : Number(el.value);
+                            } else if (type === 'list') {
+                                const arr = el.value.split('\n').map(x => x.trim()).filter(Boolean);
+                                cfgDirty[key] = arr;
+                            } else {
+                                cfgDirty[key] = el.value === '' ? null : el.value;
+                            }
+                            markDirtyRow(key);
+                        });
+                        el.addEventListener('change', () => {
+                            if (type === 'select') {
+                                cfgDirty[key] = el.value === '' ? null : el.value;
+                                markDirtyRow(key);
+                            }
+                        });
+                    }
+                });
+            }
+
+            function markDirtyRow(key) {
+                const row = cfgFormEl.querySelector(`[data-row="${CSS.escape(key)}"]`);
+                if (row) row.classList.add('is-dirty');
+                updateDirtyHint();
+            }
+
+            function updateDirtyHint() {
+                const n = Object.keys(cfgDirty).length;
+                const hint = document.getElementById('cfg-dirty-hint');
+                if (hint) {
+                    hint.textContent = n ? `有 ${n} 项未保存的修改` : '';
                 }
             }
 
-            async function saveConfig() {
-                let config;
+            async function loadConfig() {
+                // 1) 取字段定义（只取一次）
+                if (!cfgSchema.length) {
+                    try {
+                        const schema = await apiGet('/api/config/schema');
+                        cfgSchema = Array.isArray(schema.fields) ? schema.fields : (Array.isArray(schema) ? schema : []);
+                    } catch (e) {
+                        cfgSchema = [];
+                    }
+                }
+
+                // 2) 取当前配置
                 try {
-                    config = JSON.parse(configEditor.value);
+                    const data = await apiGet('/api/config');
+                    cfgValues = flattenAll(data && data.config ? data.config : data);
+                    configEditor.value = JSON.stringify(data && data.config ? data.config : data, null, 2);
                 } catch (e) {
-                    showToast('JSON 格式错误: ' + e.message, 'error');
+                    cfgValues = {};
+                    configEditor.value = '加载失败: ' + e.message;
+                }
+
+                cfgDirty = {};
+                updateDirtyHint();
+                renderConfigForm();
+            }
+
+            function setMode(mode) {
+                cfgMode = mode === 'raw' ? 'raw' : 'form';
+                cfgFormWrap.style.display = cfgMode === 'form' ? 'block' : 'none';
+                cfgRawWrap.style.display = cfgMode === 'raw' ? 'block' : 'none';
+                cfgModeBadge.textContent = cfgMode === 'form' ? '表单模式' : '原始 JSON';
+                document.getElementById('mode-form-btn').classList.toggle('active', cfgMode === 'form');
+                document.getElementById('mode-raw-btn').classList.toggle('active', cfgMode === 'raw');
+                if (cfgMode === 'raw') {
+                    // 进原始模式时，把表单里的改动同步进 JSON，避免两处不一致
+                    const merged = deepMerge(structuredCloneSafe(cfgValues), cfgDirty);
+                    configEditor.value = JSON.stringify(merged, null, 2);
+                } else {
+                    renderConfigForm();
+                }
+            }
+
+            function structuredCloneSafe(obj) {
+                try { return JSON.parse(JSON.stringify(obj || {})); } catch (e) { return {}; }
+            }
+
+            function deepMerge(base, patch) {
+                for (const [k, v] of Object.entries(patch || {})) {
+                    const parts = String(k).split('.');
+                    let cur = base;
+                    for (let i = 0; i < parts.length - 1; i++) {
+                        const p = parts[i];
+                        if (!cur[p] || typeof cur[p] !== 'object' || Array.isArray(cur[p])) cur[p] = {};
+                        cur = cur[p];
+                    }
+                    cur[parts[parts.length - 1]] = v;
+                }
+                return base;
+            }
+
+            async function saveConfig() {
+                if (cfgMode === 'raw') {
+                    let config;
+                    try {
+                        config = JSON.parse(configEditor.value);
+                    } catch (e) {
+                        showToast('JSON 格式错误: ' + e.message, 'error');
+                        return;
+                    }
+                    try {
+                        const r = await apiPost('/api/config', config);
+                        const skipped = (r && r.skipped && r.skipped.length)
+                            ? `（忽略未知项: ${r.skipped.join(', ')}）` : '';
+                        showToast('配置已保存' + skipped, 'success');
+                        await loadConfig();
+                    } catch (e) {
+                        showToast('保存失败: ' + e.message, 'error');
+                    }
                     return;
                 }
+
+                // 表单模式：只提交改动项
+                const patch = {};
+                for (const [k, v] of Object.entries(cfgDirty)) patch[k] = v;
+                if (!Object.keys(patch).length) {
+                    showToast('没有需要保存的修改', 'info');
+                    return;
+                }
+
+                // 危险项二次确认
+                const dangerKeys = cfgSchema.filter(f => f.danger && Object.prototype.hasOwnProperty.call(patch, f.key));
+                if (dangerKeys.length) {
+                    const names = dangerKeys.map(f => f.label || f.key).join('、');
+                    if (!confirm(`以下项标记为危险配置：\n  ${names}\n\n改错可能导致启动器无法启动，确认保存？`)) {
+                        return;
+                    }
+                }
+
                 try {
-                    await apiPost('/api/config', config);
-                    showToast('配置已保存', 'success');
+                    const r = await apiPost('/api/config/batch', { patch });
+                    const skipped = (r && r.skipped && r.skipped.length)
+                        ? `，忽略 ${r.skipped.length} 个未知项` : '';
+                    showToast(`已保存 ${r.applied !== undefined ? r.applied : Object.keys(patch).length} 项配置${skipped}`, 'success');
+                    await loadConfig();
                 } catch (e) {
                     showToast('保存失败: ' + e.message, 'error');
                 }
@@ -703,7 +1214,23 @@
 
             // ==================== 事件绑定 ====================
             saveConfigBtn.addEventListener('click', saveConfig);
-            reloadConfigBtn.addEventListener('click', loadConfig);
+            reloadConfigBtn.addEventListener('click', () => {
+                if (Object.keys(cfgDirty).length && !confirm('有未保存的修改，重新加载会丢弃它们，继续？')) return;
+                loadConfig();
+            });
+
+            // 表单 / 原始 JSON 切换
+            document.getElementById('mode-form-btn').addEventListener('click', () => setMode('form'));
+            document.getElementById('mode-raw-btn').addEventListener('click', () => setMode('raw'));
+            cfgSearchEl.addEventListener('input', () => renderConfigForm());
+
+            // 有未保存改动时离开页面给个提醒
+            window.addEventListener('beforeunload', (e) => {
+                if (cfgMode === 'form' && Object.keys(cfgDirty).length) {
+                    e.preventDefault();
+                    e.returnValue = '';
+                }
+            });
 
             // 插件
             pluginInstallBtn.addEventListener('click', () => {

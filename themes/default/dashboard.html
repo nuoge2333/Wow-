@@ -112,6 +112,10 @@
         .console-box .log-warn { color: #ff9800; }
         .console-box .log-info { color: #4CAF50; }
         .console-box .log-dim { color: #556677; }
+        /* V3.5.19：Web 端操作回显 */
+        .console-box .log-webcli { color: #2196F3; }
+        .console-box .log-system { color: #9c88ff; }
+        .console-box .log-user { color: #ccd; font-weight: 600; }
 
         .console-input-row {
             display: flex;
@@ -226,12 +230,15 @@
             </div>
         </div>
 
-        <!-- 启动脚本 -->
+        <!-- JVM 参数（V3.5.19：原「启动脚本」文本框写的是一个后端从来不读的配置键，
+             改绑真正生效的 server.jvm_args，保存后下次启动即生效） -->
         <div class="panel">
-            <div class="panel-title">📜 启动脚本</div>
-            <textarea class="script-box" id="start-script" spellcheck="false"></textarea>
-            <div style="margin-top:8px;">
-                <button class="btn btn-script" id="save-script-btn">💾 保存脚本</button>
+            <div class="panel-title">🧩 JVM 参数</div>
+            <textarea class="script-box" id="jvm-args" spellcheck="false"
+                placeholder="-Xmx2G&#10;-Xms2G&#10;-XX:+UseG1GC"></textarea>
+            <div style="margin-top:8px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+                <button class="btn btn-script" id="save-script-btn">💾 保存参数</button>
+                <span style="color:#667788;font-size:12px;">每行一个参数；修改后需重启服务器生效。</span>
             </div>
         </div>
 
@@ -243,7 +250,11 @@
                 <button class="btn btn-stop" id="btn-stop">⏹ 停止</button>
                 <button class="btn btn-kill" id="btn-kill">✖ 强制停止</button>
                 <button class="btn btn-restart" id="btn-restart">⟳ 重启</button>
-                <span style="color:#667788;font-size:13px;margin-left:8px;" id="server-status-label">状态: 未知</span>
+            </div>
+            <div style="margin-top:10px;color:#8899aa;font-size:13px;display:flex;gap:18px;flex-wrap:wrap;">
+                <span id="server-status-label">状态: 未知</span>
+                <span id="server-pid">PID: --</span>
+                <span id="console-relay">控制台通道: --</span>
             </div>
         </div>
 
@@ -267,6 +278,8 @@
         </div>
     </div>
 
+    <!-- V3.5.19：日志改为 WebSocket 实时推送（socket.io 客户端由服务端自动托管） -->
+    <script src="/socket.io/socket.io.js"></script>
     <script>
         (function() {
             // ==================== 状态与引用 ====================
@@ -284,7 +297,9 @@
             const killBtn = document.getElementById('btn-kill');
             const restartBtn = document.getElementById('btn-restart');
             const statusLabel = document.getElementById('server-status-label');
-            const scriptTextarea = document.getElementById('start-script');
+            const pidLabel = document.getElementById('server-pid');
+            const relayLabel = document.getElementById('console-relay');
+            const jvmArgsBox = document.getElementById('jvm-args');
             const saveScriptBtn = document.getElementById('save-script-btn');
 
             // 统计元素
@@ -295,10 +310,11 @@
             const statScheme = document.getElementById('stat-scheme');
             const statPlayers = document.getElementById('stat-players');
 
-            let logPollTimer = null;
             let statusPollTimer = null;
-            let lastLogSize = 0;
+            let fallbackLogTimer = null;
             let currentScheme = '--';
+            let argsLoaded = false;
+            let serverRunning = false;
 
             // ==================== API 调用封装 ====================
             async function apiExec(command, args = []) {
@@ -311,7 +327,7 @@
                     body: JSON.stringify({ command, args })
                 });
                 if (!resp.ok) {
-                    const err = await resp.json();
+                    const err = await resp.json().catch(() => ({}));
                     throw new Error(err.error || '命令执行失败');
                 }
                 return await resp.json();
@@ -325,74 +341,171 @@
                 return await resp.json();
             }
 
-            // ==================== 更新仪表盘 ====================
-            async function updateDashboard() {
-                try {
-                    const status = await apiGet('/api/status');
-                    const running = status.running || false;
-                    statusLabel.textContent = running ? '✅ 运行中' : '⏹️ 已停止';
-                    statusLabel.style.color = running ? '#4CAF50' : '#f44336';
-
-                    // 统计信息（模拟数据，实际由后端提供）
-                    // 此处应调用 /api/metrics 获取真实数据，目前简化
-                    // statCpu.textContent = status.cpu || '0%';
-                    // statMem.textContent = status.memory || '0 MB';
-                    // statUptime.textContent = status.uptime || '0s';
-                    // statPlayers.textContent = status.players || 0;
-
-                    // 获取方案信息
-                    const schemes = await apiGet('/api/schemes');
-                    if (schemes && schemes.current) {
-                        currentScheme = schemes.current;
-                        statScheme.textContent = currentScheme;
-                    }
-
-                    // 获取启动脚本
-                    if (!scriptTextarea.value) {
-                        const config = await apiGet('/api/config/server.start_script');
-                        if (config && config.value) {
-                            scriptTextarea.value = config.value;
-                        } else {
-                            scriptTextarea.value = 'java -Xmx2G -Xms2G -jar server.jar nogui';
-                        }
-                    }
-                } catch (e) {
-                    console.warn('更新仪表盘失败:', e);
-                }
+            async function apiPost(path, body) {
+                const resp = await fetch(path, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + token
+                    },
+                    body: JSON.stringify(body)
+                });
+                const data = await resp.json().catch(() => ({}));
+                if (!resp.ok) throw new Error(data.error || '请求失败');
+                return data;
             }
 
-            // ==================== 日志轮询 ====================
-            async function pollLogs() {
-                try {
-                    const data = await apiGet('/api/logs?lines=50');
-                    if (data.logs && data.logs.length > 0) {
-                        // 只更新新内容（简化实现）
-                        const currentText = consoleBox.innerText;
-                        const newLines = data.logs.join('\n');
-                        if (newLines !== currentText.replace(/^\[系统\].*\n/, '')) {
-                            // 保留最新50行
-                            let lines = data.logs;
-                            if (lines.length > 50) lines = lines.slice(-50);
-                            consoleBox.innerHTML = lines.map(line => {
-                                // 简单着色
-                                let cls = '';
-                                if (line.includes('[ERROR]') || line.includes('error')) cls = 'log-error';
-                                else if (line.includes('[WARN]') || line.includes('warn')) cls = 'log-warn';
-                                else if (line.includes('[INFO]') || line.includes('info')) cls = 'log-info';
-                                return `<span class="${cls}">${escapeHtml(line)}</span>`;
-                            }).join('\n');
-                            consoleBox.scrollTop = consoleBox.scrollHeight;
-                        }
-                    }
-                } catch (e) {
-                    // 静默失败
+            // ==================== 控制台渲染 ====================
+            // 统一走 buffer 渲染：既有历史日志，也有 WebSocket 增量，还混着
+            // [WebCLI] / [System] 这类回显，逐条 append 比整块重绘更省事也不闪。
+            const MAX_CONSOLE_LINES = 400;
+            const consoleLines = [];
+
+            function classify(line) {
+                if (line.startsWith('[WebCLI]')) return 'log-webcli';
+                if (line.startsWith('[System]')) return 'log-system';
+                if (line.startsWith('> ')) return 'log-user';
+                if (/\bERROR\b|\bFATAL\b|Exception|错误/i.test(line)) return 'log-error';
+                if (/\bWARN\b|警告/i.test(line)) return 'log-warn';
+                if (/\bINFO\b/.test(line)) return 'log-info';
+                return 'log-dim';
+            }
+
+            function appendConsole(line, kind) {
+                if (!line) return;
+                const cls = kind === 'webcli' ? 'log-webcli'
+                    : kind === 'system' ? 'log-system'
+                    : classify(line);
+                consoleLines.push({ line, cls });
+                if (consoleLines.length > MAX_CONSOLE_LINES) {
+                    consoleLines.splice(0, consoleLines.length - MAX_CONSOLE_LINES);
                 }
+                renderConsole();
+            }
+
+            function renderConsole() {
+                // 首次渲染前清掉占位提示
+                if (consoleLines.length === 0) return;
+                consoleBox.innerHTML = consoleLines.map(({ line, cls }) =>
+                    `<span class="${cls}">${escapeHtml(line)}</span>`
+                ).join('\n');
+                consoleBox.scrollTop = consoleBox.scrollHeight;
             }
 
             function escapeHtml(text) {
                 const div = document.createElement('div');
                 div.textContent = text;
                 return div.innerHTML;
+            }
+
+            // ==================== 更新仪表盘 ====================
+            async function updateDashboard() {
+                try {
+                    const status = await apiGet('/api/status');
+                    serverRunning = status.running === true;
+
+                    statusLabel.textContent = serverRunning ? '✅ 运行中' : '⏹️ 已停止';
+                    statusLabel.style.color = serverRunning ? '#4CAF50' : '#f44336';
+
+                    // V3.5.19：PID 不再是空白——后端 /api/status 明确返回 pid
+                    pidLabel.textContent = serverRunning
+                        ? `PID: ${status.pid || '未知'}`
+                        : 'PID: --';
+
+                    relayLabel.textContent = status.consoleRelay
+                        ? '控制台通道: ✅ 可发送指令'
+                        : (serverRunning ? '控制台通道: ⚠️ 未就绪（请重启服务端）' : '控制台通道: --');
+                    relayLabel.style.color = status.consoleRelay ? '#4CAF50' : '#8899aa';
+
+                    if (status.scheme) {
+                        currentScheme = status.scheme;
+                        statScheme.textContent = currentScheme;
+                    }
+
+                    // 运行指标（CPU / 内存 / 时长 / 人数）
+                    try {
+                        const m = await apiGet('/api/metrics');
+                        statCpu.textContent = m.cpu || '0%';
+                        statMem.textContent = m.memory || '0 MB';
+                        statUptime.textContent = m.uptime || '0s';
+                        statPlayers.textContent = m.players || 0;
+                        // 网络流量暂无采集源，保持占位而不是伪造数字
+                        statNet.textContent = '—';
+                    } catch (e) { /* 指标拿不到不影响状态展示 */ }
+
+                    // JVM 参数（只加载一次，避免覆盖用户正在编辑的内容）
+                    if (!argsLoaded) {
+                        try {
+                            const r = await apiGet('/api/config/server.jvm_args');
+                            const args = Array.isArray(r.value) ? r.value : [];
+                            jvmArgsBox.value = args.join('\n');
+                            argsLoaded = true;
+                        } catch (e) { /* 忽略 */ }
+                    }
+                } catch (e) {
+                    console.warn('更新仪表盘失败:', e);
+                }
+            }
+
+            // ==================== 日志：WebSocket 实时推送 ====================
+            async function loadHistory() {
+                try {
+                    const data = await apiGet('/api/logs?lines=80');
+                    if (Array.isArray(data.logs) && data.logs.length) {
+                        consoleLines.length = 0;
+                        for (const line of data.logs) appendConsole(line);
+                    }
+                } catch (e) { /* 历史日志读不到也能靠实时推送继续用 */ }
+            }
+
+            let socket = null;
+            function connectSocket() {
+                if (typeof io !== 'function') {
+                    // 极端情况（主题包缺少 socket.io 客户端）：退化为低频轮询
+                    startFallbackPolling();
+                    return;
+                }
+                socket = io({ auth: { token } });
+
+                socket.on('log', (p) => {
+                    if (p && p.line) appendConsole(p.line);
+                });
+
+                // V3.5.19：[WebCLI] / [System] 回显
+                socket.on('console', (p) => {
+                    if (p && p.line) appendConsole(p.line, p.kind);
+                });
+
+                socket.on('connect', () => {
+                    appendConsole('[系统] 日志已切换为 WebSocket 实时推送', 'system');
+                    if (fallbackLogTimer) { clearInterval(fallbackLogTimer); fallbackLogTimer = null; }
+                });
+
+                socket.on('disconnect', () => {
+                    appendConsole('[系统] 实时连接已断开，正在尝试重连…', 'system');
+                    startFallbackPolling();
+                });
+            }
+
+            // 断线兜底：低频轮询最近日志，重连成功后自动停掉
+            let lastFallbackText = '';
+            function startFallbackPolling() {
+                if (fallbackLogTimer) return;
+                fallbackLogTimer = setInterval(async () => {
+                    if (socket && socket.connected) {
+                        clearInterval(fallbackLogTimer);
+                        fallbackLogTimer = null;
+                        return;
+                    }
+                    try {
+                        const data = await apiGet('/api/logs?lines=40');
+                        const text = (data.logs || []).join('\n');
+                        if (text && text !== lastFallbackText) {
+                            lastFallbackText = text;
+                            for (const line of data.logs.slice(-10)) appendConsole(line);
+                        }
+                    } catch (e) { /* 静默 */ }
+                }, 3000);
             }
 
             // ==================== 服务器控制 ====================
@@ -407,51 +520,49 @@
                 if (!cmd) return;
                 try {
                     statusLabel.textContent = '⏳ 执行中...';
-                    const result = await apiExec(cmd, []);
-                    console.log(`${action} 执行结果:`, result);
-                    // 立即刷新状态
+                    appendConsole(`> ${cmd}`, 'user');
+                    await apiExec(cmd, []);
+                    // start/restart 会等 Java 起来才返回，这里再补一次刷新
                     setTimeout(updateDashboard, 1000);
                 } catch (e) {
-                    alert(`操作失败: ${e.message}`);
+                    appendConsole(`操作失败: ${e.message}`, 'system');
                     statusLabel.textContent = '❌ 失败';
+                    setTimeout(updateDashboard, 1500);
                 }
             }
 
             // ==================== 控制台命令 ====================
-            async function sendConsoleCommand(cmd) {
-                if (!cmd.trim()) return;
-                try {
-                    // 在控制台显示用户输入
-                    consoleBox.innerHTML += `\n> ${escapeHtml(cmd)}`;
-                    consoleBox.scrollTop = consoleBox.scrollHeight;
-                    const result = await apiExec(cmd, []);
-                    // 结果会通过日志轮询显示
-                } catch (e) {
-                    consoleBox.innerHTML += `\n<span class="log-error">错误: ${escapeHtml(e.message)}</span>`;
-                    consoleBox.scrollTop = consoleBox.scrollHeight;
-                }
+            // V3.5.19：这里发的是「Minecraft 控制台指令」，必须走 /api/console。
+            // 旧实现走 /api/exec（= 执行 wow 子命令），所以敲 list 会被当成 `wow list`，
+            // 回一句 unknown command —— 这正是需求里说的「Unknown command」。
+            async function sendConsoleCommand(raw) {
+                const cmd = String(raw == null ? '' : raw).replace(/[\r\n]+/g, ' ').trim();
+                if (!cmd) return;
                 consoleInput.value = '';
-            }
+                appendConsole(`> ${cmd}`, 'user');
 
-            // ==================== 保存启动脚本 ====================
-            async function saveScript() {
-                const script = scriptTextarea.value.trim();
-                if (!script) {
-                    alert('启动脚本不能为空');
+                if (!serverRunning) {
+                    appendConsole('服务器未运行，指令未发送。请先点击「启动」。', 'system');
                     return;
                 }
                 try {
-                    await fetch('/api/config', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'Authorization': 'Bearer ' + token
-                        },
-                        body: JSON.stringify({ key: 'server.start_script', value: script })
-                    });
-                    alert('启动脚本已保存');
+                    await apiPost('/api/console', { line: cmd });
                 } catch (e) {
-                    alert('保存失败: ' + e.message);
+                    appendConsole(`发送失败: ${e.message}`, 'system');
+                }
+            }
+
+            // ==================== 保存 JVM 参数 ====================
+            async function saveArgs() {
+                const value = jvmArgsBox.value
+                    .split(/\r?\n/)
+                    .map(s => s.trim())
+                    .filter(Boolean);
+                try {
+                    await apiPost('/api/config', { key: 'server.jvm_args', value });
+                    appendConsole('[系统] JVM 参数已保存（重启服务器后生效）', 'system');
+                } catch (e) {
+                    appendConsole('保存失败: ' + e.message, 'system');
                 }
             }
 
@@ -460,7 +571,7 @@
             stopBtn.addEventListener('click', () => serverAction('stop'));
             killBtn.addEventListener('click', () => serverAction('kill'));
             restartBtn.addEventListener('click', () => serverAction('restart'));
-            saveScriptBtn.addEventListener('click', saveScript);
+            saveScriptBtn.addEventListener('click', saveArgs);
 
             sendBtn.addEventListener('click', () => {
                 sendConsoleCommand(consoleInput.value);
@@ -476,31 +587,26 @@
             document.querySelectorAll('.cmd-tag').forEach(el => {
                 el.addEventListener('click', () => {
                     const cmd = el.dataset.cmd;
-                    if (cmd) {
-                        consoleInput.value = cmd;
-                        sendConsoleCommand(cmd);
-                    }
+                    if (cmd) sendConsoleCommand(cmd);
                 });
             });
 
             // ==================== 初始化 ====================
             async function init() {
+                consoleBox.innerHTML = '';
                 await updateDashboard();
-                // 开始轮询日志
-                logPollTimer = setInterval(pollLogs, 1500);
-                // 开始轮询状态
+                await loadHistory();
+                connectSocket();
+
                 statusPollTimer = setInterval(updateDashboard, 5000);
-                // 立即获取一次日志
-                setTimeout(pollLogs, 500);
             }
 
-            // 页面卸载时清理定时器
             window.addEventListener('beforeunload', () => {
-                if (logPollTimer) clearInterval(logPollTimer);
                 if (statusPollTimer) clearInterval(statusPollTimer);
+                if (fallbackLogTimer) clearInterval(fallbackLogTimer);
+                if (socket) socket.close();
             });
 
-            // 启动
             init().catch(e => console.warn('初始化失败:', e));
         })();
     </script>

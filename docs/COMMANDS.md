@@ -1,6 +1,6 @@
 # 📋 完整命令参考
 
-> wow~ 所有命令按类别分组，共计 49 个命令
+> wow~ 所有命令按类别分组，共计 53 个命令
 
 > 📌 **命令引导词说明（重要）**
 > 本文档中的命令有两种写法：带前缀的（`wow server start`）与只写主干的（`### server start`）。无论哪种，**实际执行时都要加上启动脚本前缀**：
@@ -27,7 +27,7 @@
 > | `theme` | 主题包管理 |
 > | `install` | 彩蛋与 URL 下载（V3.3.10 起已隐藏） |
 >
-> 帮助菜单中保留的是核心工作流命令：`init` / `server` / `scheme` / `mod` / `web` / `lan` / `config` / `L`。
+> 帮助菜单中保留的是核心工作流命令：`init` / `server` / `scheme` / `pool` / `mod` / `web` / `lan` / `config` / `L`。
 
 ---
 
@@ -139,7 +139,7 @@ wow server status
 
 ---
 
-## 二、方案管理 (5 个)
+## 二、方案管理 (8 个)
 
 方案是独立的 Minecraft 服务器实例，支持模板模式（自动资源共享）。
 
@@ -225,6 +225,63 @@ wow scheme info [name]
 ```
 
 不指定 name 时显示当前方案。
+
+---
+
+### `scheme pull <name>`
+
+强制补齐方案：从 `pool/` 复制缺失的核心 / 模组 / 插件到方案目录。
+
+```bash
+wow scheme pull survival
+```
+
+- 已存在且内容一致的文件会跳过（按 SHA-256 判断）。
+- 执行成功后 **`auto_scheme` 会自动置为 `false`**，转入手动管理模式。
+
+---
+
+### `scheme prune <name>`
+
+强制瘦身方案：把与 `pool/` 内容一致的资源改为共享引用，删掉方案目录里的重复副本。
+
+```bash
+wow scheme prune survival
+```
+
+- 只处理「与池中文件哈希一致」的资源，独占文件不动。
+- 同样会把 `auto_scheme` 置为 `false`。
+
+---
+
+### `scheme status [name]`
+
+查看方案的结构化状态：状态（minimal / partial / full）、版本、加载器、核心，
+以及模组 / 插件的「共享 vs 独占」统计。
+
+```bash
+wow scheme status survival
+```
+
+与 `scheme info` 的区别：`info` 偏元数据（创建时间、兼容性 Java 版本），
+`status` 偏资源分布（有多少资源真正复用自池）。
+
+---
+
+## 二之二、资源池管理 (1 个)
+
+### `pool stats`
+
+查看资源共享池统计。
+
+```bash
+wow pool stats
+```
+
+输出资源总数、被方案引用的数量、仅存于池中的数量、占用体积（同名文件只计一次）
+以及按类型（cores / mods / plugins）的分类计数。与 Web 面板 `GET /api/pool/stats` 同一口径。
+
+> 📌 `pool prune`（清理未引用资源）尚未提供；`auto_scheme: true` 时随方案切换自动清理。
 
 ---
 

@@ -59,7 +59,7 @@ wow set server.dir ./my_server
 
 | 字段 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
-| `dir` | string | `../../server` | 服务器实例目录 |
+| `dir` | string | `../scheme` | 服务器实例目录（相对 `core/`；V3.5.2 起默认指向根目录 `scheme/`） |
 | `jar` | string | `null` | 指定服务端 jar 文件名（`null` 自动检测） |
 | `java` | string | `null` | Java 可执行文件路径（`null` 自动检测或下载） |
 | `jvm_args` | array | `["-Xmx2G", "-Xms2G", "-XX:+UseG1GC"]` | 默认 JVM 参数 |
@@ -70,7 +70,7 @@ wow set server.dir ./my_server
 **示例：**
 ```yaml
 server:
-  dir: ../../server
+  dir: ../scheme
   jar: null
   java: null
   jvm_args:
@@ -125,14 +125,14 @@ mod:
 
 | 字段 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
-| `dir` | string | `../../server/backups` | 备份存储目录 |
+| `dir` | string | `../scheme/backups` | 备份存储目录（相对 `core/`） |
 | `auto` | boolean | `false` | 是否自动备份 |
 | `max` | integer | `5` | 保留的最大备份数 |
 
 **示例：**
 ```yaml
 backup:
-  dir: ../../server/backups
+  dir: ../scheme/backups
   auto: true
   max: 10
 ```
@@ -145,11 +145,12 @@ backup:
 |------|------|--------|------|
 | `port` | integer | `8080` | Web 服务监听端口 |
 | `host` | string | `127.0.0.1` | 绑定地址（`0.0.0.0` 允许远程访问） |
-| `auth_token` | string | `null` | 自定义 JWT 密钥（`null` 自动生成） |
+| `auth_token` | string | `null` | 自定义 JWT 密钥（`null` 自动生成）。暴露非回环地址时必填，否则 `web start` 拒绝启动 |
+| `auth_password` | string | `null` | 🔺 **V3.5.3** 离线登录密码。未配 SMTP 时的替代登录方式；填写明文后首次登录会自动转成 scrypt 哈希落盘 |
 | `run_startup` | boolean | `true` | 是否随 CLI 自动启动 Web 服务 |
 | `theme` | string | `default` | 当前激活的主题包名称 |
 | `session_timeout` | integer | `86400` | 登录会话有效期（秒），默认 24 小时 |
-| `dev_mode` | boolean | `false` | 开发模式（开启后暴露调试信息） |
+| `dev_mode` | boolean | `false` | 开发模式（开启后暴露调试信息；未配 SMTP 时会回显验证码） |
 | `cors_origins` | array | `[]` | 允许的跨源域名白名单；空数组 = 仅同源 |
 | `allow_scheme_ops` | boolean | `false` | 🔺 **V3.5.7** 放开 `scheme create/switch/delete/edit/pull/prune/register/export/import` |
 | `allow_remote_install` | boolean | `false` | 🔺 **V3.5.7** 放开 `install <http(s)://...>` 远程下载（等同任意代码执行入口） |
@@ -160,6 +161,7 @@ web:
   port: 8080
   host: 0.0.0.0
   auth_token: null
+  auth_password: null
   run_startup: true
   theme: dark
   session_timeout: 86400
@@ -186,7 +188,7 @@ web:
 > 该检查在 `server.listen()` **之前**执行，不占端口。先补齐再启动：
 >
 > ```bash
-> wow config set web.auth_token 一串足够长的随机字符
+> wow config wow web.auth_token 一串足够长的随机字符
 > wow web start --public
 > ```
 
@@ -355,7 +357,25 @@ auth:
 | macOS | `/Library/Java/JavaVirtualMachines`、Homebrew（`/opt/homebrew/opt/openjdk@17` 等） |
 | Windows | `Program Files\Java`、`Eclipse Adoptium`、`Corretto`、`Zulu`、`BellSoft`、`Semeru`、`Microsoft` |
 
-在菜单 **11 → 1** 中可查看扫描结果并交互式选择。
+在菜单 **8 → 1**（系统设置 → Java 设置）中可查看扫描结果并交互式选择。
+
+---
+
+### `lan` — 联机 / 陶瓦（Terracotta）设置
+
+| 字段 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `auto_room` | boolean | `false` | 服务器启动时自动开房（非交互 / 后台场景推荐） |
+| `room_code` | string | `""` | 固定房间号；留空由陶瓦自动生成，好友在启动器里输入此号即可加入 |
+| `mirror` | string | `https://gitee.com/burningtnt/Terracotta/releases` | 二进制下载镜像（默认 Gitee） |
+| `version` | string | `0.4.2` | 陶瓦版本号（对应 release tag `v0.4.2`） |
+| `binary_url` | string | `""` | 二进制完整下载地址；留空则按 `mirror` + `version` + 平台自动拼装 |
+
+> 🔧 **运行时状态不在本段**：端口、pid、房间号、二进制路径由 wow~ 写入 `core/.lan.json`，
+> 请勿手改。改 `wow.yaml` 里的 `lan` 段只影响「下次开房」使用的参数。
+
+> 💡 wow~ 通过陶瓦的**本地 HTTP API** 驱动联机，不修改其二进制；
+> 开房前会自检本机 MC 服务端端口（默认 25565）是否在监听。
 
 ---
 
@@ -367,7 +387,7 @@ verbose: false
 auto_scheme: true
 
 server:
-  dir: ../../server
+  dir: ../scheme
   jar: null
   java: null
   jvm_args:
@@ -390,7 +410,7 @@ mod:
     - modrinth
 
 backup:
-  dir: ../../server/backups
+  dir: ../scheme/backups
   auto: true
   max: 10
 

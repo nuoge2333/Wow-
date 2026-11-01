@@ -8,7 +8,8 @@
 
 ## 主题包是什么？
 
-主题包是一个 **ZIP 压缩包**，解压后替换 `core/web/` 目录的全部内容。你可以：
+主题包是一个 **ZIP 压缩包**，安装后解包到 `themes/<主题名>/`；`wow theme switch <主题名>`
+会把该目录**整体复制到根目录 `web/`**（覆盖前先清空 `web/`）。你可以：
 
 - 完全重写 HTML 结构
 - 设计自己的 CSS 样式
@@ -92,6 +93,21 @@ wow theme info my_theme
 wow theme delete my_theme
 ```
 
+### 生效机制（重要）
+
+```
+themes/<主题名>/  ──(theme switch 时整目录复制)──▶  web/  ──(Express 静态目录)──▶  浏览器
+```
+
+- **`web/` 是产物目录，不是源码目录**：每次 `theme switch` 都会先删除 `web/` 整个目录，
+  再把 `themes/<主题名>/` 原样复制过去。所以主题包里**没写的东西，切换后就不存在了**。
+- 默认主题 `themes/default/` 就是官方全套页面（`index.html` / `login.html` / `dashboard.html` /
+  `down.html` / `file.html` / `scheme.html` / `set.html` / `lan.html` / `tool.html` 及 `css/`、`js/`）。
+  **做主题最省事的起点是复制它，再改样式。**
+- 启动时若 `web/` 不存在，会从 `themes/<web.theme>/`（缺失则回退 `themes/default/`）复制一份；
+  两个主题目录都没有时，才生成一个只有「请安装主题包」的最小页 —— 此时面板只有壳，功能页都不可用。
+- 只改 CSS 也建议整包复制：单独放一个 `style.css` 进去，其余页面会全部消失。
+
 ---
 
 ## 主题与 Web API
@@ -112,27 +128,49 @@ fetch('/api/status', {
 .then(res => res.json())
 .then(data => console.log(data));
 
-// 执行命令
+// 执行 CLI 指令：command 是命令主干，args 是其余参数
 fetch('/api/exec', {
     method: 'POST',
     headers: {
         'Content-Type': 'application/json',
         'Authorization': 'Bearer ' + token
     },
-    body: JSON.stringify({ command: 'server status' })
+    body: JSON.stringify({ command: 'server', args: ['status'] })
 })
 .then(res => res.json())
 .then(data => console.log(data));
 
-// WebSocket 实时日志
-const ws = new WebSocket('ws://' + location.host + '?token=' + token);
-ws.onmessage = (e) => {
-    const data = JSON.parse(e.data);
-    if (data.type === 'log') {
-        console.log(data.line);
-    }
-};
+// 向运行中的 MC 服务端发控制台指令（不是 wow 指令，别走 /api/exec）
+fetch('/api/console', {
+    method: 'POST',
+    headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + token
+    },
+    body: JSON.stringify({ line: 'say hello' })
+});
 ```
+
+实时日志走 **Socket.IO**，原生 `WebSocket` 连不上。客户端脚本由服务端自带，无需打包进主题：
+
+```html
+<script src="/socket.io/socket.io.js"></script>
+<script>
+    const socket = io({ auth: { token } });
+
+    // 每 250ms 推送一批增量日志（V3.5.19 起）
+    socket.on('log', (p) => console.log(p.line));
+
+    // 面板操作的 CLI 回显，形如 "[WebCLI] wow server status"
+    socket.on('console', (p) => console.log(p.line));
+
+    // 异步任务进度（创建方案 / 拉取 / 瘦身）
+    socket.on('task', (t) => console.log(t.name, t.stage, t.progress + '%'));
+</script>
+```
+
+> ⚠️ 主题包若替换了 `index.html` / `dashboard.html`，记得保留
+> `<script src="/socket.io/socket.io.js"></script>` 这行，否则实时日志只剩轮询兜底。
 
 ---
 
@@ -155,7 +193,7 @@ ws.onmessage = (e) => {
 
 ## 文件结构完全自由
 
-主题包解压后直接替换 `core/web/` 目录。你可以在你的主题包中自由放置任何文件，只要：
+主题包会被整体复制到根目录 `web/`。你可以在主题包中自由放置任何文件，只要：
 
 1. `theme.json` 在根目录
 2. 你自己写的 HTML 中引用的路径（CSS、JS、图片等）与你自己的文件结构一致
@@ -183,7 +221,7 @@ my_theme/
 
 ## 注意事项
 
-1. **登录页**（`login.html`）位于 `core/web/` 根目录，在未登录时直接访问。
+1. **登录页**（`login.html`）位于 `web/` 根目录，在未登录时直接访问。
    如果你希望自定义登录页，需要在主题包中包含 `login.html`，并确保登录逻辑调用 `/api/auth/request-code` 和 `/api/auth/login`。
 
 2. **主框架**（`index.html`）默认包含菜单栏 (`left.html`) 和通知栏 (`right.html`) 的 iframe。
@@ -191,7 +229,9 @@ my_theme/
 
 3. 如果你修改了菜单栏的页面跳转逻辑，请确保跳转目标是你的主题包中存在的 HTML 文件。
 
-4. 主题包中**不需要**包含 `css/main.css` 或 `js/main.js`，除非你打算覆盖它们。wow 的默认全局样式会被你的样式覆盖（如果文件名相同），但建议你使用自己的样式文件，避免冲突。
+4. **切换主题是「整目录替换」**：`theme switch` 会先删掉 `web/`，再把你的主题复制过去。
+   所以主题包里没包含的页面（如 `dashboard.html`、`file.html`）切换后就不存在了。
+   最省事的做法是把 `themes/default/` 整个复制出来改，而不是从零新建。
 
 ---
 
@@ -235,21 +275,24 @@ minimal_theme/
     <button onclick="stopServer()">停止</button>
     <div id="log" style="background:#1e1e1e;color:#d4d4d4;padding:10px;height:200px;overflow-y:scroll;font-family:monospace;"></div>
 
+    <!-- Socket.IO 客户端由服务端托管，不需要打包进主题 -->
+    <script src="/socket.io/socket.io.js"></script>
     <script>
         const token = sessionStorage.getItem('wow_token');
         if (!token) window.location.href = '/login.html';
 
-        async function apiExec(cmd) {
+        // command = 命令主干，args = 其余参数
+        async function apiExec(command, args = []) {
             const resp = await fetch('/api/exec', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
-                body: JSON.stringify({ command: cmd })
+                body: JSON.stringify({ command, args })
             });
             return await resp.json();
         }
 
-        function startServer() { apiExec('server start'); }
-        function stopServer() { apiExec('server stop'); }
+        function startServer() { apiExec('server', ['start']); }
+        function stopServer() { apiExec('server', ['stop']); }
 
         async function updateStatus() {
             const resp = await fetch('/api/status', {
@@ -261,16 +304,13 @@ minimal_theme/
         updateStatus();
         setInterval(updateStatus, 3000);
 
-        // 连接 WebSocket 实时日志
-        const ws = new WebSocket('ws://' + location.host + '?token=' + token);
-        ws.onmessage = (e) => {
-            const data = JSON.parse(e.data);
-            if (data.type === 'log') {
-                const log = document.getElementById('log');
-                log.textContent += data.line + '\n';
-                log.scrollTop = log.scrollHeight;
-            }
-        };
+        // 实时日志：Socket.IO（原生 WebSocket 连不上，协议不同）
+        const socket = io({ auth: { token } });
+        socket.on('log', (p) => {
+            const log = document.getElementById('log');
+            log.textContent += p.line + '\n';
+            log.scrollTop = log.scrollHeight;
+        });
     </script>
 </body>
 </html>

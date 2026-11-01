@@ -120,9 +120,9 @@ ref_count:
 auto_scheme: true   # 默认启用
 ```
 
-> 💡 补齐（pull）与瘦身（prune）目前是 `scheme switch` 的内部行为，由 `auto_scheme`
-> 自动触发，**没有对应的手动命令**。把 `auto_scheme` 设为 `false` 后，切换方案不再
-> 自动补齐/瘦身，资源需要你自己管理。
+> 💡 补齐（pull）与瘦身（prune）在 `scheme switch` 时由 `auto_scheme` 自动触发；
+> 需要单独操作时也可以用 `wow scheme pull <名称>` / `wow scheme prune <名称>` 手动执行。
+> 手动执行后 `auto_scheme` 会**自动关为 `false`**（转入手动管理模式），后续切换不再自动搬运资源。
 
 ---
 
@@ -163,25 +163,49 @@ wow scheme switch survival
 
 ---
 
-### 补齐与瘦身（`scheme switch` 的内部行为）
+### 补齐与瘦身（`scheme pull` / `scheme prune`）
 
-补齐（pull）与瘦身（prune）没有独立命令，它们在 `scheme switch` 时按
-`auto_scheme` 设置自动执行：
+这两个动作在 `scheme switch` 时按 `auto_scheme` 设置自动执行，也可以手动触发：
 
 ```bash
 # auto_scheme: true（默认）时，切换即自动完成补齐 + 瘦身
 wow scheme switch survival
 
-# 查看方案详情（含状态 minimal/partial/full）
-wow scheme info survival
+# 手动补齐：从 pool 复制缺失的核心 / 模组 / 插件到方案目录
+wow scheme pull survival
+
+# 手动瘦身：把与 pool 内容一致的资源改为共享引用，删掉方案里的重复副本
+wow scheme prune survival
+
+# 查看方案状态（minimal / partial / full 与资源引用统计）
+wow scheme status survival
 ```
 
-`scheme info` 的输出包含状态、版本、加载器、核心与资源引用信息，
-相当于早期文档中的 `scheme status`。
+> ⚠️ 手动执行 `pull` / `prune` 后，`auto_scheme` 会被**自动置为 `false`**，
+> 之后切换方案不再自动搬运资源，一切由你决定。想恢复自动管理：`wow config wow auto_scheme true`。
 
-> 📌 **尚未提供**：手动的 `scheme pull` / `scheme prune` / `scheme status` 命令，
-> 以及 `pool stats` / `pool prune`。资源统计可查看 `core/pool/index.yaml`，
-> 未引用资源在 `auto_scheme: true` 时会自动清理。
+`scheme status` 输出结构化状态（状态、版本、加载器、核心、模组/插件的共享与独占数），
+`scheme info` 输出更偏「元数据概览」（创建时间、兼容性等），两者互补。
+
+资源池统计：
+
+```bash
+wow pool stats
+# 资源共享池
+#   目录    : /path/to/wow/core/pool
+#   资源总数: 128
+#   被方案引用: 96
+#   仅存于池中: 32
+#   占用体积: 4.2 GB（同名文件只计一次）
+#   分类:
+#     cores: 4
+#     mods: 110
+#     plugins: 14
+```
+
+> 📌 **尚未提供**：`pool prune`（清理未被引用的池资源）。目前未引用资源在
+> `auto_scheme: true` 时会随方案切换自动清理；关闭自动管理后需手动删除 `core/pool/` 下的文件。
+> 池索引在 `core/pool/index.yaml`。
 
 ---
 
@@ -258,7 +282,7 @@ world:
 wow scheme create server_a -v 1.20.1 -t forge
 wow scheme switch server_a
 
-# 2. 安装模组：进入数字菜单第 10 项「模组/插件搜索下载」，
+# 2. 安装模组：进入数字菜单第 4 项「模组/插件搜索下载」，
 #    或用 Web 面板上传（装进当前方案的 mods/ 并计入 pool）
 #    URL 下载 / 本地文件两种方式都支持
 

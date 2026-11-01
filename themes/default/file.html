@@ -126,6 +126,118 @@
         /* 隐藏文件上传输入 */
         #file-input { display: none; }
 
+        /* ===== 方案选择器（V3.5.19） ===== */
+        .scheme-picker {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12.5px;
+            color: #7d8ea3;
+        }
+        .scheme-picker select {
+            background: #0d1727;
+            border: 1px solid #22334d;
+            border-radius: 4px;
+            color: #ccd;
+            padding: 5px 8px;
+            font-size: 12.5px;
+            font-family: inherit;
+            cursor: pointer;
+            max-width: 190px;
+            outline: none;
+        }
+        .scheme-picker select:focus { border-color: #4CAF50; }
+
+        /* ===== 文本编辑器覆盖层（V3.5.19） ===== */
+        .editor-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(5, 10, 20, .78);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 9000;
+            padding: 24px;
+        }
+        .editor-overlay.active { display: flex; }
+        .editor-box {
+            width: min(960px, 100%);
+            height: min(78vh, 100%);
+            background: #0f1a2f;
+            border: 1px solid #22334d;
+            border-radius: 8px;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            box-shadow: 0 18px 50px rgba(0,0,0,.55);
+        }
+        .editor-head {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 12px 16px;
+            border-bottom: 1px solid #1b2b44;
+            background: #101c30;
+        }
+        .editor-head .title {
+            flex: 1;
+            min-width: 0;
+            color: #ccd;
+            font-size: 13.5px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .editor-head .title .path {
+            color: #56687e;
+            font-size: 11.5px;
+            font-family: ui-monospace, Menlo, Consolas, monospace;
+            display: block;
+        }
+        .editor-head .tag {
+            font-size: 11px;
+            color: #66bb6a;
+            border: 1px solid #2e5a3a;
+            border-radius: 3px;
+            padding: 1px 6px;
+        }
+        .editor-body {
+            flex: 1;
+            min-height: 0;
+            display: flex;
+        }
+        .editor-body textarea {
+            flex: 1;
+            width: 100%;
+            border: none;
+            outline: none;
+            resize: none;
+            background: #0b1424;
+            color: #cfd8e3;
+            padding: 14px 16px;
+            font-family: ui-monospace, Menlo, Consolas, "Courier New", monospace;
+            font-size: 13px;
+            line-height: 1.6;
+            tab-size: 2;
+        }
+        .editor-foot {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 16px;
+            border-top: 1px solid #1b2b44;
+            background: #101c30;
+        }
+        .editor-foot .hint {
+            flex: 1;
+            color: #5b6d84;
+            font-size: 12px;
+        }
+        .editor-foot .dirty { color: #d9853f; }
+
+        /* ===== 文件图标配色 ===== */
+        .file-icon { display: inline-block; width: 18px; text-align: center; }
+
         @media (max-width: 600px) {
             .toolbar { gap: 4px; }
             .toolbar .btn { padding: 4px 10px; font-size: 12px; }
@@ -152,6 +264,14 @@
             <button class="btn warning" id="unzip-btn" disabled>📂 解压</button>
             <span class="separator"></span>
             <button class="btn" id="refresh-btn">🔄 刷新</button>
+            <span style="flex:1;"></span>
+            <!-- 方案切换（V3.5.19）：文件管理器可跨方案浏览 -->
+            <label class="scheme-picker" title="切换要浏览的方案目录">
+                <span>🗂️ 方案</span>
+                <select id="scheme-select">
+                    <option value="">服务器根目录</option>
+                </select>
+            </label>
         </div>
 
         <!-- 路径栏 -->
@@ -187,6 +307,27 @@
     <!-- 隐藏的文件输入 -->
     <input type="file" id="file-input" multiple webkitdirectory />
 
+    <!-- 文本编辑器覆盖层（V3.5.19） -->
+    <div class="editor-overlay" id="editor-overlay">
+        <div class="editor-box">
+            <div class="editor-head">
+                <div class="title">
+                    <span id="editor-name">未命名</span>
+                    <span class="path" id="editor-path"></span>
+                </div>
+                <span class="tag" id="editor-size">0 B</span>
+            </div>
+            <div class="editor-body">
+                <textarea id="editor-text" spellcheck="false" wrap="off"></textarea>
+            </div>
+            <div class="editor-foot">
+                <span class="hint" id="editor-hint">Ctrl + S 保存 · Esc 关闭</span>
+                <button class="btn" id="editor-cancel">取消</button>
+                <button class="btn success" id="editor-save">💾 保存</button>
+            </div>
+        </div>
+    </div>
+
     <script>
         (function() {
             const token = sessionStorage.getItem('wow_token');
@@ -215,36 +356,99 @@
 
             const fileCountEl = document.getElementById('file-count');
             const selectedInfoEl = document.getElementById('selected-info');
+            const schemeSelect = document.getElementById('scheme-select');
+
+            const editorOverlay = document.getElementById('editor-overlay');
+            const editorText = document.getElementById('editor-text');
+            const editorNameEl = document.getElementById('editor-name');
+            const editorPathEl = document.getElementById('editor-path');
+            const editorSizeEl = document.getElementById('editor-size');
+            const editorHintEl = document.getElementById('editor-hint');
+            const editorSaveBtn = document.getElementById('editor-save');
+            const editorCancelBtn = document.getElementById('editor-cancel');
 
             // ==================== 状态 ====================
             let currentPath = ''; // 相对于服务器根目录的路径，空字符串表示根
             let selectedFiles = []; // 选中的文件名列表
             let clipboard = null; // { action: 'copy'|'cut', files: [] }
             let fileList = [];
+            let currentScheme = ''; // 当前浏览的方案（空串=服务器根目录）
+            let editorState = { open: false, path: '', original: '', dirty: false };
 
             // ==================== API 封装 ====================
-            async function apiExec(command, args = []) {
-                const resp = await fetch('/api/exec', {
-                    method: 'POST',
+            // V3.5.7：全部走纯 REST 接口，不再依赖 /api/exec 调 shell。
+            // 原因：旧实现用 `mkdir` `mv` `rm -rf` `cp -r` `zip` `unzip` `tar` 等系统命令，
+            // Windows 上绝大多数不存在（mkdir/mv/cp/rm 都是 Unix 工具），且存在命令注入风险。
+            async function apiRequest(path, method = 'GET', body = null) {
+                const options = {
+                    method,
                     headers: {
                         'Content-Type': 'application/json',
                         'Authorization': 'Bearer ' + token
-                    },
-                    body: JSON.stringify({ command, args })
-                });
-                if (!resp.ok) {
-                    const err = await resp.json();
-                    throw new Error(err.error || '请求失败');
-                }
-                return await resp.json();
+                    }
+                };
+                if (body !== null) options.body = JSON.stringify(body);
+                // V3.5.19：所有文件接口统一带上当前方案，后端据此切换根目录
+                const url = withScheme(path);
+                const resp = await fetch(url, options);
+                const text = await resp.text();
+                let data = {};
+                try { data = text ? JSON.parse(text) : {}; } catch (e) { data = {}; }
+                if (!resp.ok) throw new Error(data.error || `请求失败 (HTTP ${resp.status})`);
+                return data;
             }
 
             async function apiGet(path) {
-                const resp = await fetch(path, {
-                    headers: { 'Authorization': 'Bearer ' + token }
-                });
-                if (!resp.ok) throw new Error('请求失败');
-                return await resp.json();
+                return apiRequest(path, 'GET');
+            }
+
+            /** 拼接相对路径：空父目录时直接返回名字 */
+            function joinPath(parent, name) {
+                return parent ? `${parent}/${name}` : name;
+            }
+
+            /** 给 URL 追加方案参数（V3.5.19：文件管理器可跨方案浏览） */
+            function withScheme(url) {
+                if (!currentScheme) return url;
+                return url + (url.includes('?') ? '&' : '?') + 'scheme=' + encodeURIComponent(currentScheme);
+            }
+
+            // ==================== 文件图标 ====================
+            // 按 isDir 与扩展名区分图标，避免所有文件都长成同一张纸。
+            const ICON_BY_EXT = {
+                json: '🧾', yml: '⚙️', yaml: '⚙️', toml: '⚙️', ini: '⚙️',
+                conf: '⚙️', cfg: '⚙️', properties: '⚙️',
+                jar: '📦', zip: '🗜️', gz: '🗜️', tar: '🗜️', rar: '🗜️',
+                log: '📝', txt: '📝', md: '📝', sh: '📜', bat: '📜', ps1: '📜',
+                png: '🖼️', jpg: '🖼️', jpeg: '🖼️', gif: '🖼️', webp: '🖼️', ico: '🖼️',
+                mp3: '🎵', ogg: '🎵', wav: '🎵',
+                java: '☕', js: '🟨', ts: '🟦', py: '🐍', html: '🌐', css: '🎨',
+                dat: '💾', db: '💾', lock: '🔒'
+            };
+
+            const EDITABLE_EXT = new Set([
+                'txt', 'json', 'properties', 'yml', 'yaml', 'cfg', 'toml',
+                'ini', 'conf', 'log', 'md', 'sh', 'bat', 'ps1', 'xml',
+                'html', 'css', 'js', 'ts', 'java', 'py', 'csv', 'env'
+            ]);
+            // 超过这个大小就不在浏览器里编辑了（读回来会卡）
+            const EDITABLE_MAX_BYTES = 2 * 1024 * 1024;
+
+            function extOf(name) {
+                const i = String(name).lastIndexOf('.');
+                if (i <= 0 || i === name.length - 1) return '';
+                return name.slice(i + 1).toLowerCase();
+            }
+
+            function iconFor(file) {
+                if (file.isDir) return '📁';
+                return ICON_BY_EXT[extOf(file.name)] || '📄';
+            }
+
+            function isEditable(file) {
+                if (file.isDir) return false;
+                if (!EDITABLE_EXT.has(extOf(file.name))) return false;
+                return !file.size || file.size <= EDITABLE_MAX_BYTES;
             }
 
             // ==================== 加载文件列表 ====================
@@ -253,7 +457,7 @@
                     // 使用 CLI 命令列出文件：ls -l
                     // 由于命令行输出需要解析，使用自定义API /api/files 更简单
                     // 这里我们使用 /api/files?path=... 获取JSON数据
-                    const data = await apiGet(`/api/files?path=${encodeURIComponent(path)}`);
+                    const data = await apiGet(withScheme(`/api/files?path=${encodeURIComponent(path)}`));
                     fileList = data.files || [];
                     renderFileList(fileList);
                     updatePathBar(path);
@@ -278,7 +482,7 @@
                     return a.name.localeCompare(b.name);
                 });
                 for (const file of sorted) {
-                    const icon = file.isDir ? '📁' : '📄';
+                    const icon = iconFor(file);
                     const size = file.isDir ? '—' : formatSize(file.size);
                     const mtime = file.mtime ? new Date(file.mtime).toLocaleString() : '—';
                     const selected = selectedFiles.includes(file.name);
@@ -286,13 +490,14 @@
                         <td><input type="checkbox" class="file-check" ${selected ? 'checked' : ''} /></td>
                         <td>
                             <span class="file-icon">${icon}</span>
-                            <span class="filename" data-name="${escapeHtml(file.name)}" data-isdir="${file.isDir}">${escapeHtml(file.name)}</span>
+                            <span class="filename" data-name="${escapeHtml(file.name)}" data-isdir="${file.isDir}" title="${file.isDir ? '点击进入目录' : (isEditable(file) ? '双击编辑内容' : escapeHtml(file.name))}">${escapeHtml(file.name)}</span>
                         </td>
                         <td>${size}</td>
                         <td>${mtime}</td>
                         <td>
                             <div class="actions">
                                 ${file.isDir ? `<button class="btn-sm" data-action="open" data-name="${escapeHtml(file.name)}">打开</button>` : ''}
+                                ${isEditable(file) ? `<button class="btn-sm" data-action="edit" data-name="${escapeHtml(file.name)}">编辑</button>` : ''}
                                 <button class="btn-sm" data-action="download" data-name="${escapeHtml(file.name)}">下载</button>
                             </div>
                         </td>
@@ -314,6 +519,24 @@
                             // 点击文件：选中
                             toggleFileSelection(name);
                         }
+                    });
+                    // 双击文本类文件 → 打开编辑器
+                    el.addEventListener('dblclick', (e) => {
+                        e.stopPropagation();
+                        if (el.dataset.isdir === 'true') return;
+                        const name = el.dataset.name;
+                        const file = fileList.find(f => f.name === name);
+                        if (!file) return;
+                        if (isEditable(file)) openEditor(name);
+                        else showHint('该文件类型不支持在线编辑');
+                    });
+                });
+
+                // 「编辑」按钮
+                document.querySelectorAll('[data-action="edit"]').forEach(el => {
+                    el.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        openEditor(el.dataset.name);
                     });
                 });
 
@@ -447,7 +670,9 @@
             async function downloadFile(name) {
                 // 使用 /api/download?path=... 下载文件
                 const path = currentPath ? `${currentPath}/${name}` : name;
-                window.open(`/api/download?path=${encodeURIComponent(path)}&token=${encodeURIComponent(token)}`, '_blank');
+                let url = `/api/download?path=${encodeURIComponent(path)}&token=${encodeURIComponent(token)}`;
+                if (currentScheme) url += '&scheme=' + encodeURIComponent(currentScheme);
+                window.open(url, '_blank');
             }
 
             async function uploadFiles(files) {
@@ -459,6 +684,7 @@
                     formData.append('files', file, relativePath);
                 }
                 formData.append('path', currentPath || '');
+                if (currentScheme) formData.append('scheme', currentScheme);
                 try {
                     const resp = await fetch('/api/upload', {
                         method: 'POST',
@@ -481,7 +707,7 @@
                 const name = prompt('请输入新文件夹名称:');
                 if (!name) return;
                 try {
-                    await apiExec(`mkdir ${currentPath ? currentPath + '/' + name : name}`);
+                    await apiRequest('/api/files/mkdir', 'POST', { path: currentPath, name });
                     loadFiles(currentPath);
                 } catch (e) {
                     alert('创建失败: ' + e.message);
@@ -493,10 +719,11 @@
                 const oldName = selectedFiles[0];
                 const newName = prompt('请输入新名称:', oldName);
                 if (!newName || newName === oldName) return;
-                const oldPath = currentPath ? `${currentPath}/${oldName}` : oldName;
-                const newPath = currentPath ? `${currentPath}/${newName}` : newName;
                 try {
-                    await apiExec(`mv ${oldPath} ${newPath}`);
+                    await apiRequest('/api/files/rename', 'POST', {
+                        path: joinPath(currentPath, oldName),
+                        newName
+                    });
                     selectedFiles = [];
                     loadFiles(currentPath);
                 } catch (e) {
@@ -506,12 +733,20 @@
 
             async function deleteFiles() {
                 if (selectedFiles.length === 0) return;
-                const confirmMsg = `确定删除 ${selectedFiles.length} 个文件/文件夹吗？`;
-                if (!confirm(confirmMsg)) return;
+                const list = selectedFiles.join('、');
+                // 不可逆操作：要求用户手动输入 DELETE 确认（比 confirm 更难误触）
+                const answer = prompt(
+                    `⚠️ 即将永久删除以下 ${selectedFiles.length} 项，此操作不可恢复：\n\n${list}\n\n` +
+                    `如确认，请输入 DELETE（全大写）后回车：`
+                );
+                if (answer !== 'DELETE') {
+                    return;
+                }
+                let ok = 0;
                 for (const name of selectedFiles) {
-                    const path = currentPath ? `${currentPath}/${name}` : name;
                     try {
-                        await apiExec(`rm -rf ${path}`);
+                        await apiRequest('/api/files', 'DELETE', { path: joinPath(currentPath, name) });
+                        ok++;
                     } catch (e) {
                         alert(`删除 ${name} 失败: ${e.message}`);
                     }
@@ -522,35 +757,32 @@
 
             function copyFiles() {
                 if (selectedFiles.length === 0) return;
-                clipboard = { action: 'copy', files: selectedFiles.map(f => currentPath ? `${currentPath}/${f}` : f) };
+                clipboard = { action: 'copy', files: selectedFiles.map(f => joinPath(currentPath, f)) };
                 pasteBtn.disabled = false;
                 alert(`已复制 ${selectedFiles.length} 个文件/文件夹到剪贴板`);
             }
 
             function moveFiles() {
                 if (selectedFiles.length === 0) return;
-                clipboard = { action: 'cut', files: selectedFiles.map(f => currentPath ? `${currentPath}/${f}` : f) };
+                clipboard = { action: 'cut', files: selectedFiles.map(f => joinPath(currentPath, f)) };
                 pasteBtn.disabled = false;
                 alert(`已剪切 ${selectedFiles.length} 个文件/文件夹到剪贴板`);
             }
 
             async function pasteFiles() {
                 if (!clipboard || clipboard.files.length === 0) return;
-                const dest = currentPath ? currentPath : '.';
+                const isCopy = clipboard.action === 'copy';
+                const endpoint = isCopy ? '/api/files/copy' : '/api/files/move';
                 let successCount = 0;
                 for (const src of clipboard.files) {
                     try {
-                        if (clipboard.action === 'copy') {
-                            await apiExec(`cp -r ${src} ${dest}/`);
-                        } else if (clipboard.action === 'cut') {
-                            await apiExec(`mv ${src} ${dest}/`);
-                        }
+                        await apiRequest(endpoint, 'POST', { from: src, to: currentPath });
                         successCount++;
                     } catch (e) {
                         alert(`操作 ${src} 失败: ${e.message}`);
                     }
                 }
-                alert(`${clipboard.action === 'copy' ? '复制' : '移动'} 完成 ${successCount} 个`);
+                alert(`${isCopy ? '复制' : '移动'} 完成 ${successCount} 个`);
                 clipboard = null;
                 pasteBtn.disabled = true;
                 selectedFiles = [];
@@ -561,14 +793,13 @@
                 if (selectedFiles.length === 0) return;
                 const zipName = prompt('输入压缩包文件名 (不含扩展名):', 'archive');
                 if (!zipName) return;
-                const fullZipName = zipName + '.zip';
-                const targetPath = currentPath ? `${currentPath}/${fullZipName}` : fullZipName;
-                // 构建文件列表
-                const files = selectedFiles.map(f => currentPath ? `${currentPath}/${f}` : f);
+                const fullZipName = zipName.endsWith('.zip') ? zipName : zipName + '.zip';
                 try {
-                    // 使用 zip 命令
-                    await apiExec(`zip ${targetPath} ${files.join(' ')}`);
-                    alert(`压缩成功: ${fullZipName}`);
+                    const r = await apiRequest('/api/files/compress', 'POST', {
+                        paths: selectedFiles.map(f => joinPath(currentPath, f)),
+                        dest: joinPath(currentPath, fullZipName)
+                    });
+                    alert(`压缩成功: ${fullZipName}（${formatSize(r.size)}）`);
                     selectedFiles = [];
                     loadFiles(currentPath);
                 } catch (e) {
@@ -577,26 +808,39 @@
             }
 
             async function unzipFiles() {
-                if (selectedFiles.length !== 1) return;
-                const name = selectedFiles[0];
-                if (!name.endsWith('.zip') && !name.endsWith('.tar.gz') && !name.endsWith('.tgz')) {
-                    alert('仅支持 .zip 或 .tar.gz 文件');
+                if (selectedFiles.length !== 1) {
+                    alert('请只选中一个压缩包');
                     return;
                 }
-                const filePath = currentPath ? `${currentPath}/${name}` : name;
-                const destDir = currentPath ? currentPath : '.';
+                const name = selectedFiles[0];
+                if (!name.toLowerCase().endsWith('.zip')) {
+                    alert('目前仅支持解压 .zip 文件（.tar.gz 请在终端操作）');
+                    return;
+                }
                 try {
-                    if (name.endsWith('.zip')) {
-                        await apiExec(`unzip ${filePath} -d ${destDir}`);
-                    } else if (name.endsWith('.tar.gz') || name.endsWith('.tgz')) {
-                        await apiExec(`tar -xzf ${filePath} -C ${destDir}`);
+                    const r = await apiRequest('/api/files/extract', 'POST', {
+                        path: joinPath(currentPath, name),
+                        dest: currentPath
+                    });
+                    let msg = `解压成功，共 ${r.extracted} 个文件`;
+                    if (r.skipped && r.skipped.length) {
+                        msg += `\n⚠️ 有 ${r.skipped.length} 个条目因路径不安全被跳过`;
                     }
-                    alert('解压成功');
+                    alert(msg);
                     selectedFiles = [];
                     loadFiles(currentPath);
                 } catch (e) {
                     alert('解压失败: ' + e.message);
                 }
+            }
+
+            /** 格式化文件大小 */
+            function formatSize(bytes) {
+                const n = Number(bytes) || 0;
+                if (n >= 1024 * 1024 * 1024) return (n / 1024 / 1024 / 1024).toFixed(2) + ' GB';
+                if (n >= 1024 * 1024) return (n / 1024 / 1024).toFixed(2) + ' MB';
+                if (n >= 1024) return (n / 1024).toFixed(1) + ' KB';
+                return n + ' B';
             }
 
             // ==================== 事件绑定 ====================
@@ -629,6 +873,17 @@
 
             // 键盘快捷键
             document.addEventListener('keydown', (e) => {
+                // 编辑器打开时，快捷键归编辑器，不要触发文件操作
+                if (editorState.open) {
+                    if (e.ctrlKey && (e.key === 's' || e.key === 'S')) {
+                        e.preventDefault();
+                        saveEditor();
+                    } else if (e.key === 'Escape') {
+                        e.preventDefault();
+                        closeEditor();
+                    }
+                    return;
+                }
                 if (e.ctrlKey && e.key === 'c') { e.preventDefault(); copyFiles(); }
                 if (e.ctrlKey && e.key === 'v') { e.preventDefault(); pasteFiles(); }
                 if (e.ctrlKey && e.key === 'x') { e.preventDefault(); moveFiles(); }
@@ -636,8 +891,143 @@
                 if (e.key === 'F5') { e.preventDefault(); loadFiles(currentPath); }
             });
 
+            // ==================== 文本编辑器（V3.5.19） ====================
+            // 读写都走 /api/file/read、/api/file/write（后端做路径越权校验）。
+            function showHint(msg) {
+                editorHintEl.textContent = msg;
+                editorHintEl.classList.add('dirty');
+                setTimeout(() => {
+                    if (!editorState.dirty) {
+                        editorHintEl.textContent = 'Ctrl + S 保存 · Esc 关闭';
+                        editorHintEl.classList.remove('dirty');
+                    }
+                }, 2600);
+            }
+
+            function updateEditorSize() {
+                const n = new Blob([editorText.value]).size;
+                editorSizeEl.textContent = formatSize(n) + (editorState.dirty ? ' · 已修改' : '');
+            }
+
+            async function openEditor(name) {
+                const relPath = joinPath(currentPath, name);
+                editorNameEl.textContent = name;
+                editorPathEl.textContent = (currentScheme ? `[${currentScheme}] ` : '') + (relPath || '/');
+                editorText.value = '';
+                editorText.disabled = true;
+                editorHintEl.textContent = '读取中...';
+                editorHintEl.classList.remove('dirty');
+                editorOverlay.classList.add('active');
+
+                try {
+                    const data = await apiGet(withScheme(`/api/file/read?path=${encodeURIComponent(relPath)}`));
+                    const content = typeof data.content === 'string' ? data.content : '';
+                    editorText.value = content;
+                    editorState = { open: true, path: relPath, original: content, dirty: false };
+                    editorSizeEl.textContent = formatSize(new Blob([content]).size);
+                    editorHintEl.textContent = 'Ctrl + S 保存 · Esc 关闭';
+                } catch (e) {
+                    editorText.value = '';
+                    editorHintEl.textContent = '读取失败: ' + e.message;
+                    editorHintEl.classList.add('dirty');
+                    editorState = { open: true, path: relPath, original: '', dirty: false };
+                } finally {
+                    editorText.disabled = false;
+                    editorText.focus();
+                }
+            }
+
+            async function saveEditor() {
+                if (!editorState.open) return;
+                const content = editorText.value;
+                editorSaveBtn.disabled = true;
+                editorSaveBtn.textContent = '保存中...';
+                try {
+                    await apiRequest(withScheme('/api/file/write'), 'POST', {
+                        path: editorState.path,
+                        content: content
+                    });
+                    editorState.original = content;
+                    editorState.dirty = false;
+                    editorHintEl.textContent = '✅ 已保存';
+                    editorHintEl.classList.remove('dirty');
+                    updateEditorSize();
+                    setTimeout(() => {
+                        editorHintEl.textContent = 'Ctrl + S 保存 · Esc 关闭';
+                    }, 1800);
+                    loadFiles(currentPath);
+                } catch (e) {
+                    editorHintEl.textContent = '保存失败: ' + e.message;
+                    editorHintEl.classList.add('dirty');
+                } finally {
+                    editorSaveBtn.disabled = false;
+                    editorSaveBtn.textContent = '💾 保存';
+                }
+            }
+
+            function closeEditor() {
+                if (editorState.dirty && editorText.value !== editorState.original) {
+                    if (!confirm('有未保存的修改，确定关闭？')) return;
+                }
+                editorOverlay.classList.remove('active');
+                editorState = { open: false, path: '', original: '', dirty: false };
+                editorText.value = '';
+            }
+
+            editorText.addEventListener('input', () => {
+                if (!editorState.open) return;
+                editorState.dirty = editorText.value !== editorState.original;
+                editorHintEl.textContent = editorState.dirty ? '有未保存的修改' : 'Ctrl + S 保存 · Esc 关闭';
+                editorHintEl.classList.toggle('dirty', editorState.dirty);
+                updateEditorSize();
+            });
+
+            editorSaveBtn.addEventListener('click', saveEditor);
+            editorCancelBtn.addEventListener('click', closeEditor);
+            editorOverlay.addEventListener('click', (e) => {
+                if (e.target === editorOverlay) closeEditor();
+            });
+
+            // ==================== 方案切换（V3.5.19） ====================
+            async function loadSchemes() {
+                try {
+                    const data = await apiGet('/api/schemes');
+                    const list = data.schemes || data.list || [];
+                    const current = data.current || '';
+
+                    let html = '<option value="">服务器根目录</option>';
+                    for (const item of list) {
+                        const name = typeof item === 'string' ? item : (item.name || '');
+                        if (!name) continue;
+                        html += `<option value="${escapeHtml(name)}"${name === current ? ' selected' : ''}>${escapeHtml(name)}${name === current ? '（当前）' : ''}</option>`;
+                    }
+                    schemeSelect.innerHTML = html;
+
+                    // 初始化时默认选中当前激活方案
+                    if (current) {
+                        currentScheme = current;
+                        schemeSelect.value = current;
+                    } else {
+                        schemeSelect.value = '';
+                    }
+                } catch (e) {
+                    // 拉不到方案列表就保持「服务器根目录」
+                    schemeSelect.innerHTML = '<option value="">服务器根目录</option>';
+                }
+            }
+
+            schemeSelect.addEventListener('change', () => {
+                currentScheme = schemeSelect.value || '';
+                currentPath = '';
+                selectedFiles = [];
+                loadFiles('');
+            });
+
             // ==================== 初始化 ====================
-            loadFiles('');
+            (async function init() {
+                await loadSchemes();
+                await loadFiles('');
+            })();
         })();
     </script>
 </body>

@@ -411,6 +411,83 @@
                 return await resp.json();
             }
 
+            async function apiPost(path, body) {
+                const resp = await fetch(path, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + token
+                    },
+                    body: JSON.stringify(body)
+                });
+                const data = await resp.json().catch(() => ({}));
+                if (!resp.ok) throw new Error(data.error || '请求失败');
+                return data;
+            }
+
+            /**
+             * V3.5.19：把耗时指令丢给后台任务（立即返回 task_id）。
+             * 失败时若是「策略拒绝」，给用户一个明确的、需要本人确认的开启入口，
+             * 而不是让按钮永远点不动。
+             */
+            async function apiTask(command, args, name) {
+                const resp = await fetch('/api/tasks/run', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + token
+                    },
+                    body: JSON.stringify({ command, args, name })
+                });
+                const data = await resp.json().catch(() => ({}));
+                if (!resp.ok) {
+                    const err = new Error(data.error || '任务提交失败');
+                    err.code = data.code || '';
+                    throw err;
+                }
+                return data;
+            }
+
+            /**
+             * 面板默认禁止「方案结构变更」（web.allow_scheme_ops = false）。
+             * 被拒时弹一次确认，用户同意才写配置并重试——不静默放开安全闸门。
+             */
+            async function runSchemeOp(fn) {
+                try {
+                    return await fn();
+                } catch (e) {
+                    if (e.code === 'POLICY_DENIED' || /allow_scheme_ops/.test(e.message || '')) {
+                        const ok = confirm(
+                            '该操作默认在 Web 端被禁用（wow.yaml → web.allow_scheme_ops: false）。\n\n' +
+                            '是否现在开启「允许面板操作方案」并重试？\n\n' +
+                            '⚠️ 开启后，任何能登录面板的人都可以创建 / 切换 / 删除方案。'
+                        );
+                        if (ok) {
+                            await apiPost('/api/config', { key: 'web.allow_scheme_ops', value: true });
+                            return await fn();
+                        }
+                    }
+                    throw e;
+                }
+            }
+
+            /** 跳到「下载队列」页看进度（父窗口负责真正切换 iframe） */
+            function goToQueue() {
+                // V3.5.19：任务提交成功后立刻切到「下载页-任务队列」，让用户看到进度。
+                // 1) 嵌在 index.html 的 iframe 里 → 通知父框架换页并带上 tab
+                // 2) 单独打开本页 → 直接跳转
+                try {
+                    if (window.parent && window.parent !== window) {
+                        window.parent.postMessage(
+                            { type: 'navigate', page: 'down', tab: 'queue' },
+                            window.location.origin
+                        );
+                        return;
+                    }
+                } catch (e) { /* 跨域时退化到下面的直接跳转 */ }
+                window.location.href = '/down.html?tab=queue';
+            }
+
             // ==================== Toast 消息 ====================
             let toastTimer = null;
             function showToast(message, type = 'info', duration = 3000) {
@@ -501,21 +578,10 @@
 
             // ==================== 处理方案操作 ====================
             async function handleSchemeAction(action, name) {
-                const actionMap = {
-                    switch: { cmd: `scheme switch ${name}`, msg: `切换到 ${name}` },
-                    delete: { cmd: `scheme delete ${name}`, msg: `删除 ${name}` },
-                    pull: { cmd: `scheme pull ${name}`, msg: `拉取补齐 ${name}` },
-                    prune: { cmd: `scheme prune ${name}`, msg: `瘦身 ${name}` },
-                    info: null // 特殊处理
-                };
-
                 if (action === 'info') {
                     await showSchemeInfo(name);
                     return;
                 }
-
-                const entry = actionMap[action];
-                if (!entry) return;
 
                 // 删除需要确认
                 if (action === 'delete') {
@@ -523,12 +589,33 @@
                 }
 
                 try {
+                    // 拉取 / 瘦身要复制或删除成百上千个 jar，属于「耗时指令」，
+                    // 走异步任务：立刻返回，进度在「下载队列」页看。
+                    if (action === 'pull' || action === 'prune') {
+                        const label = action === 'pull' ? '拉取补齐' : '瘦身';
+                        showToast(`⏳ 已提交「${label} ${name}」，正在后台执行…`, 'info', 4000);
+                        await runSchemeOp(() => apiTask(
+                            `scheme ${action}`,
+                            [name],
+                            `${label} ${name}`
+                        ));
+                        goToQueue();
+                        return;
+                    }
+
+                    const actionMap = {
+                        switch: { cmd: `scheme switch ${name}`, msg: `切换到 ${name}` },
+                        delete: { cmd: `scheme delete ${name}`, msg: `删除 ${name}` }
+                    };
+                    const entry = actionMap[action];
+                    if (!entry) return;
+
                     showToast(`⏳ ${entry.msg}...`, 'info', 0);
-                    const result = await apiExec(entry.cmd);
+                    await runSchemeOp(() => apiExec(entry.cmd));
                     showToast(`✅ ${entry.msg} 成功`, 'success');
                     await loadSchemes();
                 } catch (e) {
-                    showToast(`❌ ${entry.msg} 失败: ${e.message}`, 'error');
+                    showToast(`❌ 操作失败: ${e.message}`, 'error', 6000);
                 }
             }
 
@@ -584,26 +671,28 @@
                     return;
                 }
 
-                let cmd = `scheme create ${name} --version ${version} --type ${type}`;
-                if (type === 'other' && otherType) {
-                    cmd += ` --other-type ${otherType}`;
-                }
-                if (build) {
-                    cmd += ` --build ${build}`;
-                }
-
                 try {
-                    showToast('⏳ 正在创建方案...', 'info', 0);
-                    await apiExec(cmd);
-                    showToast(`✅ 方案 "${name}" 创建成功`, 'success');
+                    // V3.5.19：异步创建。Forge/NeoForge 安装器要跑几分钟，
+                    // 同步等待只会让浏览器请求超时、用户误以为失败。
+                    // argv 用单空格拼接，避免出现 `scheme create  name` 这种双空格。
+                    const argv = [name, '--version', version, '--type', type];
+                    if (type === 'other' && otherType) argv.push('--other-type', otherType);
+                    if (build) argv.push('--build', build);
+
                     createModal.classList.remove('active');
+                    showToast(`⏳ 已提交创建「${name}」，正在后台下载核心…`, 'info', 5000);
+
+                    await runSchemeOp(() => apiTask('scheme create', argv, `创建方案 ${name}`));
+
                     // 重置表单
                     newName.value = '';
                     newBuild.value = '';
                     newOtherType.value = '';
                     await loadSchemes();
+                    // 立刻切到下载队列页看进度
+                    goToQueue();
                 } catch (e) {
-                    showToast(`❌ 创建失败: ${e.message}`, 'error');
+                    showToast(`❌ 创建失败: ${e.message}`, 'error', 6000);
                 }
             }
 

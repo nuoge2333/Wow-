@@ -1308,73 +1308,10 @@ function startWeb(options = {}) {
      */
     app.get('/api/pool/stats', async (req, res) => {
         try {
-            const poolDir = utils.resolvePath('pool');
-            const schemeDir = utils.resolvePath('../scheme');
-
-            // 收集方案目录内所有文件名（用于判定"被引用"）
-            const schemeFiles = new Set();
-            const collect = (dir, depth) => {
-                if (depth > 6 || !fs.existsSync(dir)) return;
-                let entries;
-                try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
-                for (const ent of entries) {
-                    const full = path.join(dir, ent.name);
-                    if (ent.isDirectory()) {
-                        if (ent.name === 'logs' || ent.name === 'world' || ent.name === 'libraries') continue;
-                        collect(full, depth + 1);
-                    } else {
-                        schemeFiles.add(ent.name);
-                    }
-                }
-            };
-            collect(schemeDir, 0);
-
-            // 遍历 pool 下的资源文件
-            const byType = {};
-            let total = 0;
-            let refs = 0;
-            const walk = (dir, typeKey, depth) => {
-                if (depth > 4 || !fs.existsSync(dir)) return;
-                let entries;
-                try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
-                for (const ent of entries) {
-                    const full = path.join(dir, ent.name);
-                    if (ent.isDirectory()) {
-                        walk(full, typeKey, depth + 1);
-                    } else if (ent.name.endsWith('.jar') || ent.name.endsWith('.zip')) {
-                        total++;
-                        byType[typeKey] = (byType[typeKey] || 0) + 1;
-                        if (schemeFiles.has(ent.name)) refs++;
-                    }
-                }
-            };
-            if (fs.existsSync(poolDir)) {
-                for (const sub of fs.readdirSync(poolDir)) {
-                    const full = path.join(poolDir, sub);
-                    if (fs.statSync(full).isDirectory()) walk(full, sub, 0);
-                }
-            }
-
-            // 统计去重后的文件大小
-            let totalSize = 0;
-            const seen = new Set();
-            const sizeWalk = (dir, depth) => {
-                if (depth > 4 || !fs.existsSync(dir)) return;
-                let entries;
-                try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
-                for (const ent of entries) {
-                    const full = path.join(dir, ent.name);
-                    if (ent.isDirectory()) {
-                        sizeWalk(full, depth + 1);
-                    } else if (!seen.has(ent.name)) {
-                        seen.add(ent.name);
-                        try { totalSize += fs.statSync(full).size; } catch { /* 忽略 */ }
-                    }
-                }
-            };
-            if (fs.existsSync(poolDir)) sizeWalk(poolDir, 0);
-
-            res.json({ success: true, total, refs, unique: total - refs, byType, totalSize, poolDir });
+            // V3.5.20：统计口径抽到 pool_stats.js，CLI 的 `pool stats` 与本接口共用，
+            // 避免两处各写一遍导致数字对不上。
+            const stats = require('./pool_stats');
+            res.json({ success: true, ...stats.getStats() });
         } catch (e) {
             res.status(500).json({ success: false, error: e.message });
         }

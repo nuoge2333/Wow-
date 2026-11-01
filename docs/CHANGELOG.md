@@ -8,7 +8,8 @@
 
 | 版本 | 状态 | 发布时间 |
 |------|------|------|
-| **3.5.19-26.3a** | 当前版本 |2026-10-31|
+| **3.5.20-26.3b** | 当前版本 |2026-11-01|
+| **3.5.19-26.3a** | 上一版本 |2026-10-31|
 | **3.5.18-26.39** | 上一版本 |2026-10-31|
 | **3.5.17-26.38** | 上一版本 |2026-10-31|
 | **3.5.16-26.37** | 上一版本 |2026-10-30|
@@ -71,6 +72,67 @@
 | **3.0.0** | 上一版本 |2026-07-23|
 | **2.0.0** | 内部迭代 |2026-02-27|
 | **1.0.0** | 内部迭代 |2026-02-07|
+
+---
+
+## [3.5.20-26.3b] — 2026-11-01
+
+> 主题：**文档与代码重新对齐**——把「文档里写着、代码里没有」和「代码改了、文档没跟」
+> 两类偏差一次性清掉；顺带补上一条违反最高原则的断层。
+
+### 补齐「文档/策略里有、CLI 里没有」的命令
+
+这是一处真实的功能断层，不只是文档问题：
+
+- `scheme pull` / `scheme prune` 的实现（`SchemeManager.pull/prune`）早就在，
+  `command_policy.js` 的 `SCHEME_OPS`、`server.js` 的控制台白名单、`web_task.js` 的异步任务白名单
+  也都把它们当既有命令放行——但 `cli.js` 从未注册对应子命令。
+  结果是 Web 端放行后 spawn 出来只会得到 commander 的 `unknown command`，
+  **「Web 端代理 CLI 指令」这条最高原则在这三个动作上是断的**。
+- 本版注册 `scheme pull <name>`、`scheme prune <name>`、`scheme status [name]`、`pool stats`。
+- `scheme status` 复用已有的 `SchemeManager.status()`，输出状态 / 版本 / 核心 / 共享与独占统计。
+- `pool stats` 的统计逻辑从 `web_service.js` 内联代码抽成独立模块 `core/src/pool_stats.js`，
+  CLI 与 `GET /api/pool/stats` 共用同一份口径，避免两边数字对不上。
+- 测试：新增 `core/test/cli_commands.test.js`，通过 `--help` 输出断言四个子命令确实注册，
+  并用临时目录验证池统计口径（不碰真实 `core/pool/`）。
+
+### 默认主题与面板页面重新同步
+
+- `themes/default/` 长期落后于 `web/`：`diff -rq` 显示 7 个页面不同，且缺 `lan.html`。
+  由于 `theme switch` 是**整目录替换**（先 `rm -rf web/` 再复制主题），
+  用户一旦切换主题再切回来，面板会退回旧版并丢掉「联机」页。
+- 本版把 `web/` 全量同步到 `themes/default/`，两者现已逐字节一致。
+
+### 文档修正
+
+按「会不会让用户照着做却失败」排序：
+
+- **README / QUICKSTART**：快速开始不再教 `wow install vanilla 1.20.1`（V3.5.2 起该命令只打印
+  「请改用 scheme create」），改为 `scheme create --type`；`install` 明确标注为「URL 下载 + 彩蛋」。
+- **菜单编号**：`4 = 模组/插件搜索下载`、`14 = 联机/我要当房主`（V3.5.10 重排后的实际编号）。
+  修正 QUICKSTART / SCHEMES / TROUBLE_ARCH / TROUBLE_DEBIAN / TROUBLE_WINDOWS 中的「第 10 项」，
+  以及 3.3.0 历史条目里的「第 15 项」加注说明。
+- **CONFIG.md**：`server.dir` 默认值 `../../server` → `../scheme`，`backup.dir` 同理
+  （V3.5.2 删除 `server/` 后未同步）；`wow config set web.auth_token` 改为 `wow config wow web.auth_token`
+  （`config` 没有 `set` 子命令）；补 `web.auth_password` 配置项与 `lan` 配置段；
+  菜单 `11 → 1` 改为 `8 → 1`（Java 设置在系统设置下，不是日志分析）。
+- **API.md**：补 `POST /api/console`、`POST /api/tasks/run`、`GET|DELETE /api/tasks`、
+  `GET /api/config/schema`、`POST /api/config/batch`、`GET /api/scheme/:name/status`；
+  `/api/status` 响应补齐 `scheme` / `startedAt` / `consoleRelay` / `web`；
+  日志推送 500ms → 250ms；补 `task` / `tasks` / `console` 三个 Socket.IO 事件；
+  说明 `/api/file/read|write` 与 `/api/files/content` 是同一实现的别名，不是两套逻辑；
+  补 `?scheme=` 参数、密码登录分支、错误码 409。
+- **THEMES.md**：`core/web/` → 根目录 `web/`（该目录 3.5.6 已删除）；新增「生效机制」小节说明
+  整目录替换的后果；API 示例改为 `{ command, args }`；WebSocket 示例改为 `socket.io-client`
+  （原生 `WebSocket` 连不上 Socket.IO）。
+- **WEB_PANEL.md**：补 `--public` / `--tunnel` / `web tunnel`；补「启动后进入长命令模式、
+  `exit` 同时关面板」；实时日志 500ms → 250ms；补离线密码登录；补 4 条常见问题。
+- **SCHEMES.md / TERMS.md / COMMANDS.md**：把「pull / prune 没有独立命令」「`pool stats` 尚未提供」
+  改为实际可用的命令说明；`COMMANDS.md` 命令总数 49 → 53。
+- **TROUBLE_MACOS.md**：整份重写。原文的 `/` 被系统性吞掉（`httpsnodejs.orgdistv20.17.0`、
+  `usrlibexecjava_home`、`corenodedarwinx64`、`.wow.sh`），表格竖线与引用块也一并损坏。
+  重写时顺带修正了三处照搬 Linux 的错误做法：`limits.conf` → `launchctl limit maxfiles`、
+  `update-ca-certificates` → macOS 无此命令、`wow --verbose` → `wow config wow verbose true`。
 
 ---
 
@@ -1960,7 +2022,7 @@ PID 文件由 `startWeb()` 写入 `process.pid`，而 `stopWeb()` 无条件优�
 
 ### 🌐 新功能（联机 / 内网穿透 · 陶瓦 Terracotta）
 - **对接陶瓦（Terracotta）实现内网穿透联机**：基于 EasyTier 的 [Terracotta](https://github.com/burningtnt/Terracotta)，让没有公网 IP 的房主也能让好友直接加入自己的 Minecraft 服务端
-- **「我要当房主」一键开房**：`wow lan host` 命令、交互菜单第 15 项、Web 面板「联机(陶瓦)」页均可开房；陶瓦会自动扫描本机正在运行的 Minecraft 服务端端口并建立穿透通道
+- **「我要当房主」一键开房**：`wow lan host` 命令、交互菜单第 15 项（V3.5.10 菜单重排后为第 14 项）、Web 面板「联机(陶瓦)」页均可开房；陶瓦会自动扫描本机正在运行的 Minecraft 服务端端口并建立穿透通道
 - **房间号即加入凭证**：开房成功后返回房间号，好友在 **PCL / HMCL / BakaXL / FCL** 启动器中选择「加入陶瓦房间」并输入该房间号即可联机（3.3.0 仅实现房主端，加入端由上述启动器内置支持）
 - **陶瓦二进制运行时自动下载**：首次开房时按平台从默认 **Gitee 镜像**（`https://gitee.com/burningtnt/Terracotta/releases`）下载对应二进制（约 8–14 MB）并解压缓存，之后复用本地缓存，无需手动安装
 - **`lan.auto_room` 配置**：设为 `true` 后，启动 Minecraft 服务端时自动开房、停止服务端时自动关房（适合非交互 / 后台 / Docker 场景）
