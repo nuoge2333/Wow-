@@ -87,7 +87,7 @@ function logger() {
 program
     .name('wow')
     .description('Minecraft 服务器管理工具 - 默认优先，可以修改')
-    .version('3.5.20-26.3b', '-V');
+    .version('3.5.21-26.3c', '-V');
 
 // ==================== init ====================
 
@@ -589,6 +589,154 @@ themeCmd
         } catch (e) {
             console.error(`❌ 获取信息失败: ${e.message}`);
         }
+    });
+
+// ==================== plugin（V3.5.21：外部插件管理） ====================
+// 插件是「主程序 + 外部插件」微内核架构的扩展点：
+//   代码放 <项目根>/wow-plugins/<名字>/，永不进 core/；
+//   插件在 plugin.json 里声明的命令会被注册成顶层命令（wow <命令名>）。
+// 本命令组只负责「装 / 卸 / 查 / 信任」这些文件层操作，
+// 命令注册由 plugin_loader.js 在启动时完成（见文件末尾的 registerPlugins）。
+
+const pluginCmd = program.command('plugin').description('插件管理（外部扩展命令）');
+
+pluginCmd
+    .command('list')
+    .description('列出已安装插件及信任状态')
+    .action(() => {
+        const PluginManager = load('./plugin_manager');
+        if (!PluginManager) return;
+        const pm = new PluginManager();
+        const plugins = pm.list();
+        console.log(`插件目录: ${pm.pluginsDir}`);
+        if (plugins.length === 0) {
+            console.log('  还没有安装任何插件。');
+            console.log('  安装方式: wow plugin install <插件包.zip>');
+            return;
+        }
+        const badge = { trusted: '✅ 已信任', new: '⏳ 未信任', changed: '⚠️ 已变更' };
+        console.log('');
+        for (const p of plugins) {
+            console.log(`  ${p.name} v${p.version}  [${badge[p.trusted] || p.trusted}]`);
+            if (p.description) console.log(`    ${p.description}`);
+            if (p.commands && p.commands.length) {
+                console.log(`    命令: ${p.commands.map(c => `wow ${c}`).join('、')}`);
+            }
+            if (p.error) console.log(`    ⚠️ ${p.error}`);
+        }
+        const untrusted = plugins.filter(p => p.trusted !== 'trusted').length;
+        if (untrusted) {
+            console.log(`\n  ℹ️ ${untrusted} 个插件未信任，启动时会在终端询问是否启用；`);
+            console.log('     非交互环境（脚本 / Web 面板调用）下会被跳过。');
+        }
+    });
+
+pluginCmd
+    .command('info <name>')
+    .description('查看插件详细信息')
+    .action((name) => {
+        const PluginManager = load('./plugin_manager');
+        if (!PluginManager) return;
+        try {
+            new PluginManager().info(name);
+        } catch (e) {
+            console.error(`❌ ${e.message}`);
+        }
+    });
+
+pluginCmd
+    .command('install <source>')
+    .description('安装插件（ZIP 包或插件目录路径）')
+    .option('-f, --force', '覆盖同名插件')
+    .action(async (source, options) => {
+        const PluginManager = load('./plugin_manager');
+        if (!PluginManager) return;
+        const pm = new PluginManager();
+        try {
+            const r = await pm.install(source, { force: options.force === true });
+            console.log(`✅ 插件 ${r.name} v${r.version} 已安装到 ${r.dir}`);
+            console.log('   下次执行 wow 命令时会询问是否信任并加载。');
+        } catch (e) {
+            console.error(`❌ 安装失败: ${e.message}`);
+        }
+    });
+
+pluginCmd
+    .command('remove <name>')
+    .description('卸载插件（删除目录并撤销信任记录）')
+    .action((name) => {
+        const PluginManager = load('./plugin_manager');
+        if (!PluginManager) return;
+        try {
+            new PluginManager().remove(name);
+        } catch (e) {
+            console.error(`❌ 卸载失败: ${e.message}`);
+        }
+    });
+
+pluginCmd
+    .command('trust <name>')
+    .description('信任插件（记录当前内容指纹，之后启动不再询问）')
+    .action((name) => {
+        const trust = load('./plugin_trust');
+        const loader = load('./plugin_loader');
+        if (!trust || !loader) return;
+        const dir = loader.getPluginsDir();
+        let target = path.join(dir, name);
+        if (!fs.existsSync(target)) {
+            console.error(`❌ 插件 ${name} 不存在（目录: ${dir}）`);
+            return;
+        }
+        const fp = trust.fingerprint(target);
+        let displayName = name;
+        try {
+            const meta = JSON.parse(fs.readFileSync(path.join(target, 'plugin.json'), 'utf8'));
+            displayName = meta.name || name;
+        } catch (e) { /* 清单坏了也能记，但提醒一下 */ }
+        trust.grantTrust(displayName, fp);
+        console.log(`✅ 已信任插件 ${displayName}`);
+        console.log(`   指纹: ${fp}`);
+        console.log('   ⚠️ 该插件的内容一旦被修改，启动时会重新要求确认。');
+    });
+
+pluginCmd
+    .command('untrust <name>')
+    .description('撤销信任（下次启动会重新询问）')
+    .action((name) => {
+        const trust = load('./plugin_trust');
+        const loader = load('./plugin_loader');
+        if (!trust || !loader) return;
+        const dir = loader.getPluginsDir();
+        const target = path.join(dir, name);
+        let displayName = name;
+        if (fs.existsSync(path.join(target, 'plugin.json'))) {
+            try {
+                const meta = JSON.parse(fs.readFileSync(path.join(target, 'plugin.json'), 'utf8'));
+                displayName = meta.name || name;
+            } catch (e) { /* 用目录名 */ }
+        }
+        if (trust.revokeTrust(displayName)) {
+            console.log(`✅ 已撤销插件 ${displayName} 的信任，下次启动会重新询问。`);
+        } else {
+            console.log(`ℹ️ 插件 ${displayName} 本来就没有信任记录。`);
+        }
+    });
+
+pluginCmd
+    .command('path')
+    .description('显示插件目录与信任表位置')
+    .action(() => {
+        const loader = load('./plugin_loader');
+        const trust = load('./plugin_trust');
+        if (!loader || !trust) return;
+        console.log(`插件目录: ${loader.getPluginsDir()}`);
+        console.log(`信任表:   ${trust.TRUST_FILE}`);
+        console.log('');
+        console.log('插件目录结构:');
+        console.log('  wow-plugins/');
+        console.log('    hello/');
+        console.log('      plugin.json   （命令清单）');
+        console.log('      index.js      （处理函数实现）');
     });
 
 // ==================== web ====================
@@ -1313,10 +1461,50 @@ async function startRepl(options = {}) {
     });
 }
 
-// V3.5.8：无参数运行（如 ./wow.sh / wow.bat）直接进入数字选择菜单。
-// 长命令 REPL 已移至 `wow L`（见上方命令定义）。
-if (process.argv.length <= 2) {
-    (async () => {
+// ==================== V3.5.21：加载外部插件 ====================
+//
+// 位置很关键：必须在 program.parse(process.argv) 之前，而且必须放在下面
+// 「无参数 → 数字菜单」的 if 分支**之前**。否则：
+//   - 带参数执行时，插件命令还没注册，commander 会报 unknown command；
+//   - 无参数进菜单 / 长命令 REPL 时，REPL 里会先预校验命令是否存在
+//     （见 startRepl 里的 known 判断），未注册的插件命令直接被判为未知。
+//
+// 加载失败绝不阻断主程序：插件系统的定位是「可选的扩展点」，
+// 插件坏了 wow 必须照常能用。
+async function registerPlugins() {
+    // 尊重配置开关：plugins.enabled_loader = false 时完全不碰 wow-plugins/
+    if (config.getConfig('plugins.enabled_loader', true) !== true) return;
+
+    // 管理插件本身的那几条命令不需要先加载插件。
+    // 若不跳过，`wow plugin list` / `plugin trust` / `plugin remove` 会先对
+    // 尚未信任的插件打一条「非交互环境已跳过」的告警——用户正是在执行
+    // 「我要看看/我要授权」的动作，却被先告知「跳过」，非常费解
+    // （尤其 plugin trust 紧接着又说「已信任」，自相矛盾）。
+    const argv = process.argv.slice(2);
+    let head = String(argv[0] || '').toLowerCase();
+    if (head === 'wow') head = String(argv[1] || '').toLowerCase();
+    if (head === 'plugin') return;
+    try {
+        const loader = require('./plugin_loader');
+        const quiet = config.getConfig('plugins.quiet', false) === true;
+        const r = await loader.loadPlugins(program, { quiet });
+        if (r.loaded.length) {
+            logger()?.info(`已加载 ${r.loaded.length} 个插件：${r.loaded.map(p => p.name).join(', ')}`);
+        }
+    } catch (e) {
+        // 插件加载器本身出问题（例如 wow-plugins/ 权限异常）也要静默降级
+        console.error(`⚠️ 插件系统初始化失败（已忽略）: ${e.message}`);
+    }
+}
+
+// 顶层 await 需要 ESM 或 --input-type=module，这里改成「先加载再解析」的
+// 异步 IIFE，把原来的 parse / 菜单调用整体搬进 then 里。
+(async () => {
+    await registerPlugins();
+
+    // V3.5.8：无参数运行（如 ./wow.sh / wow.bat）直接进入数字选择菜单。
+    // 长命令 REPL 已移至 `wow L`（见上方命令定义）。
+    if (process.argv.length <= 2) {
         const interactive = load('./interactive');
         if (!interactive) return;
         logger()?.impt('进入数字选择菜单（无参数启动）');
@@ -1326,7 +1514,7 @@ if (process.argv.length <= 2) {
             console.error(`菜单启动失败: ${e.message}`);
             logger()?.erro(`菜单启动失败: ${e.message}`);
         }
-    })();
-} else {
-    program.parse(process.argv);
-}
+    } else {
+        program.parse(process.argv);
+    }
+})();

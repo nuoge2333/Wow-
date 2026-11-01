@@ -40,7 +40,7 @@ const ALLOWED_CONSOLE = new Set([
     'pool stats',
     'mail test', 'mail send-code', 'mail crash',
     'down',
-    'plugin list', 'plugin info',
+    'plugin list', 'plugin info', 'plugin trust', 'plugin path',
     'theme list', 'theme info',
     'help'
 ]);
@@ -53,7 +53,7 @@ const DENIED_CONSOLE = new Set([
     'mod remove', 'mod sync', 'mod toggle',
     'pack install', 'pack generate',
     'theme install', 'theme switch', 'theme delete',
-    'plugin install', 'plugin remove',
+    'plugin install', 'plugin remove', 'plugin untrust',
     'install',
     'init',
     'pool prune',
@@ -87,6 +87,23 @@ function classifyConsoleInput(rawLine) {
     }
 
     const head = tokens[0].toLowerCase();
+
+    // V3.5.21：插件命令也属于 wow 命名空间（运行期才知道），
+    // 但绝不能被当成 MC 指令转发给服务端（否则插件命令会变成「unknown command in game」）。
+    // 插件命令在开服控制台里直接拒绝：它们多半带长驻 / 交互逻辑，
+    // 而且此时方案文件正在被正在运行的服务端使用。
+    // 注：这里不 require command_policy，避免 server.js 依赖链里多一个模块；
+    // 直接用同名规则判断（两者必须保持一致，见 plugin_loader.registerPluginCommand）。
+    try {
+        const policy = require('./command_policy');
+        if (policy.RUNTIME_PLUGIN_CMDS.has(head)) {
+            return {
+                action: 'deny',
+                reason: `插件命令 ${head} 不提供在开服控制台中执行，请另开终端运行`
+            };
+        }
+    } catch (e) { /* 策略模块不可用则不额外拦截 */ }
+
     if (!WOW_NAMESPACES.has(head)) return { action: 'mc' }; // 非 wow 命名空间 → 当作 MC 指令
 
     const two = tokens.slice(0, 2).join(' ').toLowerCase();
@@ -1384,6 +1401,9 @@ function enqueueConsoleCommand(line) {
 }
 
 module.exports = ServerManager;
+// V3.5.21：把开服控制台的输入分类器挂到导出上，供单测直接验证
+// 「插件命令不会被当成 MC 指令转发」这一行为（它是模块内私有函数，原本无法从外部调用）。
+ServerManager.classifyConsoleInput = classifyConsoleInput;
 // V3.5.19：Web 面板需要判断中继是否在线、并往队列里投递指令
 ServerManager.isConsoleRelayAlive = isConsoleRelayAlive;
 ServerManager.enqueueConsoleCommand = enqueueConsoleCommand;

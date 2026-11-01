@@ -1,0 +1,6 @@
+{
+  "name": "no-handler",
+  "version": "0.0.1",
+  "description": "声明的 handler 在 index.js 里不存在",
+  "commands": [{ "name": "ghost", "description": "x", "handler": "notExist" }]
+}

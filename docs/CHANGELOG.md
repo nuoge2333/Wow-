@@ -8,7 +8,8 @@
 
 | 版本 | 状态 | 发布时间 |
 |------|------|------|
-| **3.5.20-26.3b** | 当前版本 |2026-11-01|
+| **3.5.21-26.3c** | 当前版本 |2026-11-02|
+| **3.5.20-26.3b** | 上一版本 |2026-11-01|
 | **3.5.19-26.3a** | 上一版本 |2026-10-31|
 | **3.5.18-26.39** | 上一版本 |2026-10-31|
 | **3.5.17-26.38** | 上一版本 |2026-10-31|
@@ -72,6 +73,82 @@
 | **3.0.0** | 上一版本 |2026-07-23|
 | **2.0.0** | 内部迭代 |2026-02-27|
 | **1.0.0** | 内部迭代 |2026-02-07|
+
+---
+
+## [3.5.21-26.3c] — 2026-11-02
+
+> 主题：**插件系统实装**——把「主程序 + 外部插件」的微内核架构真正落地。
+> 此前 `docs/WOW-PLUGINS.md` 写了一份相当完整的开发指南，但代码侧：
+> `plugin_manager.install()` 是「功能开发中」的占位、CLI 没有 `plugin` 命令组、
+> 启动时没有任何插件加载逻辑。文档描述的能力一样都用不了。
+
+### 新增：Microkernel 插件加载
+
+- **`core/src/plugin_loader.js`**（新）——扫描 `<项目根>/wow-plugins/`，
+  读各子目录的 `plugin.json`，把声明的命令动态注册成 wow 顶层命令。
+  调用点在 `cli.js` 的 `program.parse()` **之前**，且放在「无参数 → 数字菜单」
+  分支之外的前置 IIFE 里——否则菜单/长命令 REPL 里敲插件命令会得到 unknown command。
+- **`core/src/plugin_context.js`**（新）——构造传给插件的 `context`。
+  注入 10 个能力（`config` / `utils` / `log` / `event` / `server` / `mod` /
+  `scheme` / `theme` / `mail` / `pack`），用 `defineProperty` getter 做**懒加载**：
+  不读就不 `new`，避免「只用 server 的插件顺带建了 scheme/ 与 pool/ 一堆目录」。
+  单实例缓存 + 只读 + 禁止扩展（插件不能给 context 挂字段影响别人）。
+- **`core/src/plugin_trust.js`**（新）——内容指纹与信任表。
+  指纹算法与 SchemeManager 的内容指纹同源（路径归一化 + 排序 + sha256），
+  跳过 `node_modules` / `.git`，超过 2MB 的文件只取「大小 + 首尾 4KB」。
+
+### 安全模型：三条真能生效的闸
+
+明确**不引入 `node:vm`**——require 进来的是同进程同权限，
+而 vm 也能用 `this.constructor.constructor('return process')()` 一行逃逸，
+只会带来虚假的安全感。改为：
+
+1. **首次启用确认**：终端里列出作者、说明、将新增的命令、明确告知「同权限」，默认否。
+2. **内容指纹校验**：插件文件改一个字节，下次启动重新问。
+3. **非交互环境一律拒绝**：CI / 定时脚本 / Web 面板 spawn 的子进程没有终端可问，
+   未信任插件直接跳过而不是默默执行。
+4. **Web 端默认禁用**：新增 `web.allow_plugins`（默认 `false`），
+   插件命令经 `RUNTIME_PLUGIN_CMDS` 判定后一律拒绝，除非显式打开。
+
+### 新增 CLI：`wow plugin` 命令组（7 个子命令）
+
+`list` / `info` / `install` / `remove` / `trust` / `untrust` / `path`。
+`plugin_manager.install()` 从占位实装为真安装（ZIP 或目录、`--force` 覆盖、
+兼容 zip 里多套一层目录、断言文件头是 `PK`），并可读写信任状态。
+
+### 修复：插件命令曾被当成 MC 指令转发
+
+`server.js` 的 `classifyConsoleInput` 用「命令头是否在 `WOW_NAMESPACES` 里」
+区分 wow 指令与 MC 指令。插件命令是**运行期**才知道的名字，不在这个常量里，
+于是 `wow server start` 的开服控制台里输入插件命令会被转发给 Minecraft 服务端
+（表现成「游戏里报 unknown command」，极难排查）。现在显式拦截并给出指引。
+
+同时把 `classifyConsoleInput` 挂到 `ServerManager` 导出上，供单测直接验证。
+
+### 命令策略与配置
+
+- `command_policy.js` 新增 `RUNTIME_PLUGIN_CMDS` / `registerPluginCommand` /
+  `resetPluginCommands` / `isWowNamespace`；Web 端对插件命令默认拒绝；
+  `auditDangerousConfig` 把 `web.allow_plugins` 纳入危险开关审计。
+- `config.js` 新增 `web.allow_plugins`、`plugins.enabled_loader`、`plugins.quiet`；
+  `config_schema.js` 把 `web.allow_plugins` 登记进面板设置表单（标注 danger）。
+- `.gitignore` 加入 `core/.plugins.trust.json`。
+
+### 测试
+
+新增 3 个测试文件（`plugin_context` / `plugin_trust` / `plugin_loader`）共 61 项，
+外加 `plugin_policy.test.js` 的 23 项策略管控断言，全套 **24 个文件**通过。
+`core/test/fixtures/plugins/` 提供 5 个形态各异的样例插件
+（正常 / 清单损坏 / 加载即崩 / 命令名冲突 / handler 缺失），走真实加载路径。
+
+### 文档
+
+- `docs/WOW-PLUGINS.md` **整份重写**：删掉「尚未实装」警告，
+  补上「插件不是沙箱」开篇、快速开始、信任三态、指纹算法、崩溃隔离表、
+  Web/控制台行为对照、完整可跑示例。
+- `docs/COMMANDS.md` 新增「五之二、插件管理」7 条命令说明（53 → 60 个命令）。
+- `docs/CONFIG.md` 补 `web.allow_plugins` 与 `plugins.enabled_loader/quiet`。
 
 ---
 

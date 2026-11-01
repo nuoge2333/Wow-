@@ -26,6 +26,9 @@ logs/
 *.tmp
 core/.web.pid
 core/.web.port
+# V3.5.21：插件信任表（记录各插件的内容指纹，属本机运行时状态，不进版本库）
+core/.plugins.trust.json
+core/.plugins.trust.json.tmp
 
 # ====================
 # 编辑器 / 系统

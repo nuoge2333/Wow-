@@ -1,0 +1,26 @@
+{
+  "name": "good-hello",
+  "version": "1.2.3",
+  "author": "wow test",
+  "description": "测试用插件：验证命令注册与 context 注入",
+  "commands": [
+    {
+      "name": "hello",
+      "description": "打印一句问候",
+      "options": [
+        { "flag": "-n, --name <name>", "description": "称呼" }
+      ],
+      "handler": "hello"
+    },
+    {
+      "name": "hello-ctx",
+      "description": "检查 context 注入的模块",
+      "handler": "ctxKeys"
+    },
+    {
+      "name": "hello-boom",
+      "description": "故意抛错，验证运行期崩溃隔离",
+      "handler": "boom"
+    }
+  ]
+}

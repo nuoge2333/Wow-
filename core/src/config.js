@@ -43,7 +43,10 @@ const DEFAULT_CONFIG = {
         cors_origins: [],       // V3.5.3：允许的跨源域名白名单；空数组=仅同源
         // V3.5.7：危险指令开关（默认全关，保持安全基线）
         allow_scheme_ops: false,     // true = 放开 scheme create/switch/delete/edit/pull/prune/register/export/import
-        allow_remote_install: false  // true = 放开 install <http(s)://...> 远程下载（等同任意代码执行入口）
+        allow_remote_install: false, // true = 放开 install <http(s)://...> 远程下载（等同任意代码执行入口）
+        // V3.5.21：true = 放开插件注册的自定义命令经 Web 端执行。
+        // 插件是第三方代码、与主程序同权限，Web 又是远程入口，两者叠加风险最高，故默认关闭。
+        allow_plugins: false
     },
     mail: {
         smtp: {
@@ -72,7 +75,12 @@ const DEFAULT_CONFIG = {
     },
     plugins: {
         port: 9000,
-        enabled: false
+        enabled: false,        // 旧版「插件服务端口」开关，保留键位仅为兼容老配置
+        // V3.5.21：是否在启动时自动加载 wow-plugins/ 下的插件。
+        // false = 完全不加载（插件命令不可用，也不用确认任何东西）
+        enabled_loader: true,
+        // 是否在启动时打印插件加载统计（false 则只在出错时说话）
+        quiet: false
     },
     verbose: false,
     // pool 相关路径（相对于 core/）

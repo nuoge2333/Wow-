@@ -563,7 +563,33 @@ V3.5.19 新增的文本编辑器接口，参数与 `/api/files/content` 完全�
 `total` 为 pool 中资源文件总数，`refs` 为已被方案引用的数量（按文件名匹配）。
 
 ### `GET /api/plugins`
-列出已安装的 wow 插件：`{ "success": true, "plugins": [ { "name": "...", "author": "...", "version": "...", "active": true } ] }`
+列出已安装的 wow 插件（只读）：
+
+```json
+{
+  "success": true,
+  "plugins": [
+    {
+      "name": "hello",
+      "dirName": "hello",
+      "version": "1.0.0",
+      "author": "wow Team",
+      "description": "打招呼",
+      "commands": ["hello", "hello-status"],
+      "trusted": "trusted",
+      "active": true
+    }
+  ]
+}
+```
+
+`trusted` 三态：`trusted`（指纹一致）/ `new`（从未信任）/ `changed`（信任后被改过）。
+`active` 恒等于 `trusted === 'trusted'`，即「下次启动会被真正加载」。
+
+> ⚠️ **插件命令默认不能经 Web 端执行**（`web.allow_plugins: false`）。
+> 本接口只是列出插件，不提供执行入口；即便插件已被信任，
+> 它的命令经 `/api/exec` 调用也会被 `command_policy` 拒绝，
+> 除非用户在配置里显式打开 `web.allow_plugins`。
 
 ### `GET /api/logs/analysis`
 获取最近一次日志 AI 分析报告。无报告时返回 `{ "success": true, "result": "", "message": "暂无分析报告，请先执行「日志分析」。" }`（而非 404）。

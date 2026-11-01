@@ -152,6 +152,11 @@ const SCHEMA = [
         desc: '放开面板的 URL 远程下载安装。⚠️ 等同于把「任意地址下载并执行」的入口开到公网，默认关闭。',
         advanced: true, danger: true
     },
+    {
+        key: 'web.allow_plugins', type: 'boolean', group: 'Web 面板', label: '允许执行插件命令',
+        desc: '放开插件注册的自定义命令经面板执行。⚠️ 插件是第三方代码、与主程序同权限，默认关闭。',
+        advanced: true, danger: true
+    },
 
     // ==================== 邮件 ====================
     {

@@ -53,6 +53,49 @@ const DENIED_WEB_ALWAYS = new Set([
 /** 兼容导出：完整拒绝清单（两档合并后的静态快照） */
 const DENIED_WEB = new Set([...SCHEME_OPS, ...DENIED_WEB_ALWAYS]);
 
+// ==================== 插件命令（V3.5.21-26.3c）====================
+/**
+ * 运行期由插件注册进来的顶层命令名（小写）。
+ *
+ * 为什么不直接把插件命令塞进 WOW_NAMESPACES：
+ *   WOW_NAMESPACES 是「wow 自己的命名空间」，用于 server.js 区分
+ *   「wow 指令」和「MC 指令」；插件命令是**运行期**才知道的，而
+ *   WOW_NAMESPACES 是模块加载时就定下的常量。混在一起会让
+ *   「当前装了什么插件」影响主程序的静态语义，不好推理。
+ *   因此单独一个 Set，由 registerPluginCommand 在插件加载时填充。
+ *
+ * 安全默认：插件命令**一律不在 Web 端放行**，除非用户显式打开
+ * web.allow_plugins。理由：插件是第三方任意代码，Web 面板是远程入口，
+ * 两者叠加等于「远程可控的任意代码执行」，默认必须关。
+ */
+const RUNTIME_PLUGIN_CMDS = new Set();
+
+/**
+ * 插件加载时登记一条命令名，使 Web/控制台能把它识别为「wow 命名空间」。
+ * @param {string} name 顶层命令名（不含 wow 前缀）
+ */
+function registerPluginCommand(name) {
+    const key = String(name || '').trim().toLowerCase();
+    if (!key) return;
+    RUNTIME_PLUGIN_CMDS.add(key);
+}
+
+/** 清空运行期插件命令（测试 / 重新扫描插件前调用） */
+function resetPluginCommands() {
+    RUNTIME_PLUGIN_CMDS.clear();
+}
+
+/**
+ * 该 head 是否属于「wow 指令命名空间」（含插件命令）。
+ * server.js 与 command_policy 共用，避免两边判断不一致导致插件命令被当 MC 指令转发。
+ * @param {string} head
+ * @returns {boolean}
+ */
+function isWowNamespace(head) {
+    const key = String(head || '').trim().toLowerCase();
+    return WOW_NAMESPACES.has(key) || RUNTIME_PLUGIN_CMDS.has(key);
+}
+
 /**
  * 读取开关配置。
  * 注意：每次调用都实时读，便于运行中改配置后立即生效（无需重启）。
@@ -61,14 +104,16 @@ const DENIED_WEB = new Set([...SCHEME_OPS, ...DENIED_WEB_ALWAYS]);
 function readSwitches() {
     let allowSchemeOps = false;
     let allowRemoteInstall = false;
+    let allowPlugins = false;
     try {
         const config = require('./config');
         allowSchemeOps = config.getConfig('web.allow_scheme_ops', false) === true;
         allowRemoteInstall = config.getConfig('web.allow_remote_install', false) === true;
+        allowPlugins = config.getConfig('web.allow_plugins', false) === true;
     } catch (e) {
         // 配置模块不可用时保守收紧
     }
-    return { allowSchemeOps, allowRemoteInstall };
+    return { allowSchemeOps, allowRemoteInstall, allowPlugins };
 }
 
 /**
@@ -97,7 +142,16 @@ function isWebCommandAllowed(command) {
 
     const head = tokens[0];
     const two = tokens.slice(0, 2).join(' ');
-    const { allowSchemeOps, allowRemoteInstall } = readSwitches();
+    const { allowSchemeOps, allowRemoteInstall, allowPlugins } = readSwitches();
+
+    // 插件命令：第三方任意代码，默认完全禁止经 Web 执行。
+    // 只能由用户在配置里显式打开 web.allow_plugins。
+    if (RUNTIME_PLUGIN_CMDS.has(head) && !allowPlugins) {
+        return {
+            allowed: false,
+            reason: `插件命令 ${head} 默认禁止在 Web 端执行（如需放开，请在配置中设置 web.allow_plugins: true）`
+        };
+    }
 
     // 远程 URL 下载：默认禁止（任意远程代码/文件拉取），可由 web.allow_remote_install 放开。
     // 面板仅用 `install <本地文件> -o ./` 做本地上传安装，本地路径始终放行。
@@ -149,12 +203,13 @@ function isWebCommandAllowed(command) {
  */
 function auditDangerousConfig() {
     const warnings = [];
-    const { allowSchemeOps, allowRemoteInstall } = readSwitches();
+    const { allowSchemeOps, allowRemoteInstall, allowPlugins } = readSwitches();
 
     // 是否有任何危险开关被打开
     const opened = [];
     if (allowSchemeOps) opened.push('web.allow_scheme_ops');
     if (allowRemoteInstall) opened.push('web.allow_remote_install');
+    if (allowPlugins) opened.push('web.allow_plugins');
     if (opened.length === 0) return warnings;
 
     let host = '127.0.0.1';
@@ -188,13 +243,24 @@ function auditDangerousConfig() {
         );
     }
 
+    if (allowPlugins) {
+        warnings.push(
+            'web.allow_plugins 已开启：面板可执行插件注册的自定义命令。' +
+            '插件是第三方代码、与主程序同权限，请只安装你信任的插件。'
+        );
+    }
+
     return warnings;
 }
 
 module.exports = {
     isWebCommandAllowed,
     auditDangerousConfig,
+    isWowNamespace,
+    registerPluginCommand,
+    resetPluginCommands,
     WOW_NAMESPACES,
+    RUNTIME_PLUGIN_CMDS,
     DENIED_WEB,
     DENIED_WEB_ALWAYS,
     SCHEME_OPS

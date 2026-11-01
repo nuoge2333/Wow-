@@ -1,0 +1,6 @@
+{
+  "name": "bad-crash",
+  "version": "0.0.1",
+  "description": "index.js 一 require 就抛错",
+  "commands": [{ "name": "crashcmd", "description": "x", "handler": "run" }]
+}

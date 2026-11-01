@@ -1,0 +1,6 @@
+{
+  "name": "conflict-init",
+  "version": "0.0.1",
+  "description": "命令名与内置 init 冲突",
+  "commands": [{ "name": "init", "description": "x", "handler": "run" }]
+}

@@ -151,8 +151,11 @@ console.log('\n— V3.5.8 启动方式（cli.js）—');
         assert.ok(!/\.command\('m /.test(cli), 'm 命令应已移除');
     });
     check('cli.js 无参数分支进入数字菜单（showMainMenu）', () => {
-        // 从 `if (process.argv.length <= 2) {` 截到 `} else {`，取整个分支体
-        const m = cli.match(/if \(process\.argv\.length <= 2\) \{[\s\S]{0,600}?\n\} else \{/);
+        // 从 `if (process.argv.length <= 2) {` 截到 `} else {`，取整个分支体。
+        // V3.5.21：该分支被整体缩进进了 `(async () => { ... })()` 内
+        // （插件加载需要 await，而顶层 await 要 ESM），因此不能再用
+        // `\n} else {` 这种行首零缩进的锚点，改为允许任意缩进。
+        const m = cli.match(/if \(process\.argv\.length <= 2\) \{[\s\S]{0,900}?\n\s*\} else \{/);
         assert.ok(m, '未找到无参数分支');
         assert.ok(/showMainMenu\(/.test(m[0]), '无参数分支未调用 showMainMenu');
         assert.ok(!/startRepl\(\)/.test(m[0]), '无参数分支仍在调 startRepl');

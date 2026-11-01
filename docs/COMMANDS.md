@@ -1,6 +1,6 @@
 # 📋 完整命令参考
 
-> wow~ 所有命令按类别分组，共计 53 个命令
+> wow~ 所有命令按类别分组，共计 60 个命令
 
 > 📌 **命令引导词说明（重要）**
 > 本文档中的命令有两种写法：带前缀的（`wow server start`）与只写主干的（`### server start`）。无论哪种，**实际执行时都要加上启动脚本前缀**：
@@ -27,7 +27,10 @@
 > | `theme` | 主题包管理 |
 > | `install` | 彩蛋与 URL 下载（V3.3.10 起已隐藏） |
 >
-> 帮助菜单中保留的是核心工作流命令：`init` / `server` / `scheme` / `pool` / `mod` / `web` / `lan` / `config` / `L`。
+> 帮助菜单中保留的是核心工作流命令：`init` / `server` / `scheme` / `pool` / `mod` / `plugin` / `web` / `lan` / `config` / `L`。
+>
+> 📌 **V3.5.21 起 `plugin` 进入帮助菜单**：插件系统实装后它不再是占位命令，
+> 而是「扩展 wow 命令」的唯一入口，属于核心工作流的一环（详见第五节之二）。
 
 ---
 
@@ -428,6 +431,137 @@ wow theme delete <name>
 ```bash
 wow theme info <name>
 ```
+
+---
+
+## 五之二、插件管理 (7 个)
+
+> 📌 这里的「插件」指 **wow 自身的 CLI 扩展插件**（`wow-plugins/` 目录），
+> 不是 Minecraft 服务端的 Bukkit/Paper 插件。开发指南见 [WOW-PLUGINS.md](WOW-PLUGINS.md)。
+>
+> ⚠️ 插件与主程序同权限，不是沙箱。首次启用需确认，内容改动后需重新确认。
+
+### `plugin list`
+
+列出已安装插件及其信任状态。
+
+```bash
+wow plugin list
+```
+
+输出示例：
+
+```
+插件目录: /path/to/wow/wow-plugins
+
+  hello v1.0.0  [✅ 已信任]
+    打招呼 + 查看服务器状态
+    命令: wow hello、wow hello-status
+```
+
+信任状态三态：`✅ 已信任` / `⏳ 未信任`（从没同意过）/ `⚠️ 已变更`（同意过后文件被改过）。
+
+---
+
+### `plugin info <name>`
+
+查看单个插件详情：作者、版本、信任状态、命令一览。
+
+```bash
+wow plugin info hello
+```
+
+---
+
+### `plugin install <source>`
+
+安装插件。`<source>` 可以是 ZIP 包，也可以直接是插件目录（开发期方便）。
+
+```bash
+wow plugin install ./hello.zip
+wow plugin install ./hello          # 目录形态
+wow plugin install ./hello.zip -f   # 覆盖同名插件
+```
+
+安装只做两件事：断言文件是 ZIP（文件头 `PK`）、断言包内有合法的 `plugin.json`。
+**不验证来源、不验证签名**——是否信任由你决定，见 `plugin trust`。
+
+---
+
+### `plugin remove <name>`
+
+卸载插件：删除 `wow-plugins/<name>/` 目录，同时撤销信任记录。
+
+```bash
+wow plugin remove hello
+```
+
+---
+
+### `plugin trust <name>`
+
+信任插件：记录它**当前内容**的 SHA-256 指纹，之后启动不再询问。
+
+```bash
+wow plugin trust hello
+```
+
+> ⚠️ 只对你自己审查过的插件执行这个命令。建议先 `wow plugin info hello` 看一眼它注册了哪些命令，
+> 再去 `wow-plugins/hello/index.js` 里读一遍它到底做了什么。
+
+---
+
+### `plugin untrust <name>`
+
+撤销信任。下次启动时该插件会被当作新插件，重新要求确认。
+
+```bash
+wow plugin untrust hello
+```
+
+---
+
+### `plugin path`
+
+打印插件目录与信任表位置，并给出目录结构示意。排查「我插件放对地方了吗」时用它。
+
+```bash
+wow plugin path
+```
+
+输出示例：
+
+```
+插件目录: /path/to/wow/wow-plugins
+信任表:   /path/to/wow/core/.plugins.trust.json
+
+插件目录结构:
+  wow-plugins/
+    hello/
+      plugin.json   （命令清单）
+      index.js      （处理函数实现）
+```
+
+---
+
+### 插件注册的自定义命令
+
+插件可以在 `plugin.json` 里声明命令，安装并信任后它们会变成 wow 的**顶层命令**：
+
+```bash
+wow hello --name Steve
+```
+
+这些命令：
+
+| 场景 | 行为 |
+|------|------|
+| CLI 终端 | ✅ 正常执行（执行前会 `require` 插件的 `index.js`） |
+| **Web 面板** | ❌ 默认禁止。需在配置中打开 `web.allow_plugins: true` |
+| **开服控制台**（`wow server start` 里） | ❌ 显式拒绝，不会转发给 Minecraft 服务端 |
+
+最后一项是有意为之：插件命令是运行期才知道的名字，如果不显式拦截，
+它会被当成 MC 指令转发，表现成「游戏里报 unknown command」，非常难排查。
 
 ---
 
