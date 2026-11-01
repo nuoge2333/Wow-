@@ -159,6 +159,15 @@ Web 端任何操作本质上都是「代理发送一条 CLI 指令」，CLI 端�
   异步任务白名单与阶段映射、方案路径越权校验、控制台中继工具
 - 全量 19 个测试文件全部通过
 
+### 打包
+
+- **发行包不再携带 `core/test/`**：在 `.gitattributes` 中标记 `core/test export-ignore`，
+  `git archive`、GitHub 源码 zip、Gitee 源码 zip 三者均会自动排除该目录，
+  自更新脚本 `update.sh` 走的正是源码 zip，因此用户升级后也不会再带回测试文件
+- 测试在仓库内完整保留，开发期 `npm test` 行为不变
+- `npm test` 改为经 `core/scripts/test.js` 转发：发行包内执行时打印友好提示并正常退出，
+  不再抛 `MODULE_NOT_FOUND` 堆栈
+
 ---
 
 ## [3.5.18-26.39] — 2026-10-31

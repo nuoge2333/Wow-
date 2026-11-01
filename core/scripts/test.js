@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * npm test 入口（V3.5.20）
+ * npm test 入口（V3.5.19-26.3a）
  * ----------------------------------------------------------------
  * 背景：
  *   core/test/ 已在 .gitattributes 里标了 export-ignore，不会进入发行包
