@@ -8,3 +8,10 @@
 *.md text eol=lf
 *.yml text eol=lf
 *.yaml text eol=lf
+
+# ====================
+# 打包排除（git archive / GitHub 源码 zip / Gitee 源码 zip 均生效）
+# ====================
+# 测试套件只服务于开发期回归，用户装完不需要它，也不应占发行包体积。
+# 仓库内保留、npm test 照常可用，只是不进入发行包。
+core/test export-ignore
