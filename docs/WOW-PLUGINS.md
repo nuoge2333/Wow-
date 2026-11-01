@@ -14,12 +14,27 @@
 
 插件代码与 wow 主程序**运行在同一个 Node.js 进程里，拥有完全相同的权限**。
 
+**加载方式就是最直白的同进程 `require`**——不是子进程、不是 Worker、也不是 `vm`：
+
+```js
+// core/src/plugin_loader.js:227
+mod = require(entry);   // entry = <项目根>/wow-plugins/<插件>/index.js
+```
+
+也就是说插件模块和 wow 自己的模块挂在**同一个 `module` 缓存、同一个 V8 堆、同一个
+`process` 对象**上。`context` 参数只是一层「推荐用法的 API 面」，不是权限边界——
+插件完全可以不理它，直接 `require('fs')`。
+
 - 插件可以读写你机器上的任意文件；
 - 插件可以发起任意网络请求、启动子进程、`require('fs')` / `require('child_process')`；
-- 插件可以让 wow 进程崩溃。
+- 插件可以调 `process.exit()` 直接结束 wow，也可以改 `global` / `process.env` 污染主程序；
+- 插件可以卡死整个进程（死循环）。
 
-我们**没有**用 `node:vm` 之类的手段假装隔离——那层壳可以一行代码逃逸
+我们**没有**用 `node:vm` 或类似手段假装隔离——那层壳可以一行代码逃逸
 （`this.constructor.constructor('return process')()`），只会带来虚假的安全感。
+真隔离必须换进程（`child_process.fork`），而那意味着 `context` 里的
+`scheme` / `server` 这些有状态实例都得改成 IPC 代理，代价远大于收益，
+所以当前版本**明确选择不隔离**，改用下面三道准入闸。
 
 因此安全靠三道**真能生效**的闸：
 
@@ -358,10 +373,25 @@ CLI 每次启动时：
 | `plugin.json` 不是合法 JSON | 跳过该插件，warn 一行 |
 | `index.js` require 时抛错 | `❌ 插件 X 崩溃，已跳过：<原因>` |
 | handler 名对不上 | `❌ 插件 X 崩溃，已跳过：index.js 缺少处理函数：a, b` |
-| handler 运行期抛错 | `❌ 插件 X 的命令 Y 执行失败：<原因>`，进程继续，退出码置 1 |
+| handler 运行期同步抛错 / `await` 到的 reject | `❌ 插件 X 的命令 Y 执行失败：<原因>`，进程继续，退出码置 1 |
 | 命令名冲突 | `⚠️ 插件 X 已跳过：命令名冲突：...` |
 
-**任何一种都不会让 wow 主程序挂掉。** 插件系统是可选扩展点，插件坏了 wow 必须照常能用。
+**上表只覆盖「加载期」和「handler 同步执行期」。** 插件是同进程 `require` 的，
+所以下面这些**兜不住**——它们不是被隔离，而是根本不在被监视的栈上：
+
+| 兜不住的情况 | 后果 |
+|---|---|
+| `process.exit()` / `process.abort()` | **主程序立刻退出**，退出码就是插件给的值。`log.js` 的 `uncaughtException` 钩子拦不住主动退出 |
+| 逃出 `await` 链的异步抛错（`setTimeout` / `setInterval` / 事件回调 / 未 `await` 的 Promise） | 被全局 `uncaughtException` 钩子接住，记一条 `ERRO` 后进程继续。**但那次操作已经半途而废**，插件内部状态可能不一致 |
+| 死循环 / 长时间同步阻塞 | 整个 wow 卡死，面板与 CLI 一起无响应 |
+| 内存泄漏 | 拖着主程序一起 OOM |
+| 改 `global` / `process.env` / 内置原型 | 直接污染主程序和其它插件，且**无法回滚** |
+
+> ⚠️ 对长期运行的 `wow web start` 尤其要留意：面板进程被插件 `process.exit` 带走时，
+> 由它管理的 MC 服务端可能变成孤儿进程继续占着端口，需要手动清理。
+
+插件系统是可选扩展点，**但「插件坏了 wow 必须照常能用」只对受控的异常成立**，
+对上面这五类不成立。装插件前请把它当成「往主程序里加代码」看待，而不是「装个扩展」。
 
 ---
 
