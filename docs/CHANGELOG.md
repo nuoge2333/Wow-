@@ -8,7 +8,8 @@
 
 | 版本 | 状态 | 发布时间 |
 |------|------|------|
-| **3.5.23-26.3e** | 当前版本 |2026-11-01|
+| **3.5.24-26.3f** | 当前版本 |2026-11-03|
+| **3.5.23-26.3e** | 上一版本 |2026-11-01|
 | **3.5.22-26.3d** | 上一版本 |2026-11-02|
 | **3.5.21-26.3c** | 上一版本 |2026-11-02|
 | **3.5.20-26.3b** | 上一版本 |2026-11-01|
@@ -75,6 +76,89 @@
 | **3.0.0** | 上一版本 |2026-07-23|
 | **2.0.0** | 内部迭代 |2026-02-27|
 | **1.0.0** | 内部迭代 |2026-02-07|
+
+---
+
+## [3.5.24-26.3f] — 2026-11-03
+
+> 主题：**隧道等于暴露，必须配 token**。补上公网隧道的认证闸门。
+
+### 背景：一个被绕过的安全闸门
+
+V3.5.16 加了 `isExposedHost` 闸门——绑定到非回环地址（`0.0.0.0`、局域网 IP）时必须配
+`web.auth_token`，否则拒绝启动。但它只看**绑定地址**。
+
+而隧道的典型用法恰恰是 `wow web start --tunnel`：
+
+```
+面板绑 127.0.0.1   →  isExposedHost() 返回 false  →  闸门放行
+cloudflared 把它映射成 https://xxx.trycloudflare.com  →  实际已是公网服务
+```
+
+结果就是：**用户以为自己只开了本地，实际上面板已经挂在公网上了**，
+而这条路径恰好是 `isExposedHost` 唯一漏掉的暴露方式，也是最危险的一种。
+
+### 新增：`checkTunnelAuth()`
+
+在 `core/src/web_service.js` 中新增并导出：
+
+```js
+function checkTunnelAuth(options = {})
+```
+
+判定逻辑：`web.auth_token` 或 `web.auth_password` 任一非空（**纯空白字符不算**，
+防 `wow config set web.auth_token " "` 绕过）即放行。
+
+拒绝时打印四段提示，含可直接照做的修复命令：
+
+```
+❌ 拒绝建立隧道：公网隧道等于对外暴露，必须先配置认证凭据！
+   ...
+     wow config set web.auth_token  一串足够长的随机字符
+     wow config set web.auth_password 你的密码    # 离线密码登录
+```
+
+同时导出常量 `TUNNEL_AUTH_ERR`，便于 CLI 预检与测试复用。
+
+### 两道闸门的位置
+
+| 闸门 | 位置 | 作用 |
+|------|------|------|
+| 一 | `startWeb()` 的 `options.tunnel` 分支 | **面板已起来之后**、调 `startTunnelForLocal()` **之前** |
+| 二 | `startTunnelForLocal()` 函数体第一行 | 在 `require('./tunnel')` **之前**，即下载 cloudflared **之前** |
+
+闸门二的位置很关键：`require('./tunnel')` 之后才会触发 cloudflared 下载（几十 MB）。
+若闸门放在后面，用户会在被拒绝前先白等一次下载。
+
+两处措辞不同，是刻意的：
+
+- 闸门一（`web start --tunnel`）：**面板本身已正常启动，只是隧道被跳过**，
+  并打印本地地址 + 「补齐凭据后可用 `wow web tunnel` 单独补建隧道」。
+  避免用户看到一行错误就误以为整个 `web start` 失败了。
+- 闸门二（`web tunnel` 单命令）：直接抛错终止，因为没有「面板还活着」这层可安慰的事。
+
+### 顺带修复：外部 `close()` 后 `isRunning` 残留
+
+`startWeb()` 返回的 server 若由调用方自己 `close()`（同进程嵌入式用法的标准姿势），
+不会经过 `stopWeb()`，于是模块级 `isRunning` 永远停在 `true`——
+之后任何一次 `startWeb()` 都只打印「Web 服务已在运行中」然后返回 `undefined`。
+
+现为返回的 server 挂 `close` 监听，回收 `isRunning` / `httpServer` / 隧道句柄 / 日志推送。
+这个问题是写测试时被稳定复现出来的：不是测试写法问题，是真的会让嵌入式调用方卡死。
+
+### 测试
+
+新增 `core/test/tunnel_auth_gate.test.js`（19 项）：
+
+- `checkTunnelAuth` 六种凭据组合（含纯空白、`null`/`undefined`）
+- `startTunnelForLocal` 无凭据时抛错，且**断言 `startTunnel` 未被调用**（不白下几十 MB）
+- 错误信息含可直接照做的修复命令
+- `startWeb({tunnel:true})` 无凭据 → 面板照常起、返回值有效、隧道被跳过
+- `startWeb({tunnel:true})` 有凭据 → 隧道被启动，且 `close()` 后 `isRunning` 归位
+- 源码级结构断言：两道闸门都必须出现在正确位置（闸门在 `require('./tunnel')` 之前）
+- 与 `isExposedHost` 的分工：回环地址 `isExposedHost` 为 `false`，但隧道闸门仍须拒绝
+
+全程不联网、不起真隧道（`tunnel` 模块打桩计数）。
 
 ---
 

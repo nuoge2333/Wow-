@@ -54,6 +54,54 @@ function isExposedHost(host) {
     return true;
 }
 
+/**
+ * V3.5.24：公网隧道的前置闸门——「隧道等于暴露，必须配 token」。
+ *
+ * 为什么单列一条而不复用 isExposedHost：
+ *   两者管的是不同维度。isExposedHost 看的是**绑定地址**（0.0.0.0 / 局域网 IP）；
+ *   而隧道的场景恰恰相反——面板往往老老实实绑在 127.0.0.1，只监听回环，
+ *   isExposedHost 返回 false，但这个「本地面板」马上会被 cloudflared 映射到
+ *   https://xxx.trycloudflare.com，成为任何人都能访问的公网服务。
+ *   也就是说：**只查绑定地址会漏掉隧道这条路径**，那才是最危险的一种暴露——
+ *   用户以为自己只开了本地，实际已经挂在公网上。
+ *
+ * 判断依据与 isExposedHost 分支保持一致：web.auth_token 或 web.auth_password
+ * 任一非空即视为已配置凭据（两者都能通过登录校验）。
+ *
+ * @param {object} [options]
+ * @param {boolean} [options.quiet] 不打印，只返回结果（供测试 / 预检用）
+ * @returns {{ok: boolean, token: string, password: string}}
+ */
+function checkTunnelAuth(options = {}) {
+    const token = config.getConfig('web.auth_token', null);
+    const password = config.getConfig('web.auth_password', null);
+    const hasToken = !!(token && String(token).trim());
+    const hasPassword = !!(password && String(password).trim());
+    const ok = hasToken || hasPassword;
+
+    if (ok || options.quiet) {
+        return { ok, token, password };
+    }
+
+    console.error('');
+    console.error('❌ 拒绝建立隧道：公网隧道等于对外暴露，必须先配置认证凭据！');
+    console.error('');
+    console.error('   隧道会把本地面板映射成 https://xxx.trycloudflare.com，');
+    console.error('   任何人拿到这个地址都能访问——等同于把面板挂到公网上。');
+    console.error('   但 wow.yaml 里 web.auth_token 与 web.auth_password 都为空。');
+    console.error('');
+    console.error('   任选一种方式补齐后再试：');
+    console.error('     wow config set web.auth_token  一串足够长的随机字符');
+    console.error('     wow config set web.auth_password 你的密码    # 离线密码登录');
+    console.error('');
+    return { ok: false, token, password };
+}
+
+/** 给隧道闸门用的标准错误文案（throw 场景） */
+const TUNNEL_AUTH_ERR =
+    '公网隧道等于对外暴露，必须先配置认证凭据（web.auth_token 或 web.auth_password）。' +
+    '请执行 `wow config set web.auth_token <随机字符>` 后重试。';
+
 // ==================== Web ↔ CLI 回显（V3.5.19）====================
 
 /**
@@ -1612,15 +1660,42 @@ function startWeb(options = {}) {
 
     // V3.5.16：Cloudflare Tunnel（--tunnel）
     // 服务先起来再拉隧道，避免隧道抢在 listen 之前连不上 127.0.0.1。
+    //
+    // V3.5.24：隧道前先过认证闸门。这里必须在调 startTunnelForLocal **之前**
+    // 就地检查一次，不能只依赖函数内部那道——否则面板已经起来了，
+    // 用户看到的是一句「隧道启动失败」，容易误以为整个 web start 失败。
+    // 这里的措辞要点明：面板本身是好的，只是隧道没建。
     if (options.tunnel) {
-        startTunnelForLocal(port).catch(e => {
+        if (!checkTunnelAuth().ok) {
             console.error('');
-            console.error(`❌ Cloudflare Tunnel 启动失败: ${e.message}`);
-            console.error('   Web 面板本身仍在本地正常运行，可继续用本机地址访问。');
+            console.error('   ⚠️  已跳过隧道：面板本身已正常启动，但隧道未建立（缺认证凭据）。');
+            console.error(`   本地地址: http://127.0.0.1:${port}`);
+            console.error('   补齐凭据后可用 `wow web tunnel` 单独补建隧道。');
             console.error('');
-            logger.erro(`Cloudflare Tunnel 启动失败: ${e.message}`);
-        });
+            try {
+                logger.warn('Cloudflare Tunnel 已跳过：未配置 web.auth_token / web.auth_password');
+            } catch (e) { /* 日志失败不影响 */ }
+        } else {
+            startTunnelForLocal(port).catch(e => {
+                console.error('');
+                console.error(`❌ Cloudflare Tunnel 启动失败: ${e.message}`);
+                console.error('   Web 面板本身仍在本地正常运行，可继续用本机地址访问。');
+                console.error('');
+                logger.erro(`Cloudflare Tunnel 启动失败: ${e.message}`);
+            });
+        }
     }
+
+    // V3.5.24：外部直接对返回的 server 调 close() 时回收内部状态。
+    // 场景：同进程嵌入式用法（测试脚本、被别的程序 require 后自管生命周期），
+    // 调用方拿到 server 后自己 close()，不会走 stopWeb()，于是 isRunning 永远停在 true，
+    // 之后任何一次 startWeb() 都只会打印「Web 服务已在运行中」然后返回 undefined。
+    server.on('close', () => {
+        isRunning = false;
+        if (httpServer === server) httpServer = null;
+        stopTunnelHandle();
+        stopLogTail();
+    });
 
     return server;
 }
@@ -1630,6 +1705,13 @@ function startWeb(options = {}) {
  * 独立成函数，便于 web start --tunnel 与 web tunnel 复用。
  */
 async function startTunnelForLocal(port) {
+    // V3.5.24：「隧道等于暴露，必须配 token」。
+    // 放在最前面，是在下载 cloudflared（几十 MB）和建立连接**之前**就拦下，
+    // 而不是等隧道拉起来、公网地址都打印出来了才发现没凭据。
+    if (!checkTunnelAuth().ok) {
+        throw new Error(TUNNEL_AUTH_ERR);
+    }
+
     const Tunnel = require('./tunnel');
     const localUrl = `http://127.0.0.1:${port}`;
     console.log('');
@@ -2135,6 +2217,9 @@ module.exports = {
     startTunnelForLocal,
     stopTunnelHandle,
     isExposedHost,
+    // V3.5.24：隧道认证闸门（测试与预检用）
+    checkTunnelAuth,
+    TUNNEL_AUTH_ERR,
     // V3.5.19：供 CLI 长命令模式接管回显、供测试直接验证清洗逻辑
     setEchoSink,
     sanitizeCommandText,

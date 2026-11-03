@@ -36,18 +36,48 @@ wow web stop
 | `-p, --port <port>` | 监听端口 | `8080` |
 | `--host <host>` | 绑定地址 | `127.0.0.1` |
 | `--public` | 等价 `--host 0.0.0.0`，**强制要求已配置认证凭据**，否则拒绝启动 | — |
-| `--tunnel` | 同时建立 Cloudflare 快速隧道，输出公网 https 地址 | — |
+| `--tunnel` | 同时建立 Cloudflare 快速隧道，输出公网 https 地址。**强制要求已配置认证凭据**，否则只起面板、不建隧道 | — |
 
 - 当 `--host` 为 `127.0.0.1` 或 `localhost` 时，启动后会**自动打开浏览器**。
 - 默认只监听本机；如需局域网/公网访问，用 `--host 0.0.0.0` 或 `--public`。
 - 绑定非回环地址且 `web.auth_token` 为空时，**`web start` 会直接拒绝启动**（V3.5.16 起是硬闸门，不是建议）。
   先执行 `wow config wow web.auth_token <一串随机字符>` 再启动。
+- 用 `--tunnel` 时，即便绑的是 `127.0.0.1` 也**必须**配 `web.auth_token` 或 `web.auth_password`
+  （V3.5.24 起）。见下一节。
+
+> **为什么绑了 127.0.0.1 还要凭据？**
+>
+> 上面那条「非回环地址才拦」的闸门看的是**绑定地址**。而隧道的工作方式恰恰是：
+> 面板老实绑在 `127.0.0.1`（不触发闸门），由 cloudflared 从内部连上去，
+> 再映射成 `https://xxx.trycloudflare.com` 对公网开放。
+> 也就是说，**隧道会把一个原本只在本机的面板变成公网服务**——
+> 这是「绑定地址闸门」唯一漏掉的暴露路径，也是最容易让人误判的一种。
+> 所以判定规则补上一句：**隧道等于暴露，必须配 token。**
 
 ### 公网穿透（Cloudflare 快速隧道）
 
 `--tunnel` / `wow web tunnel` 会调用官方 **cloudflared** 的快速隧道，
 由 Cloudflare 分配一个临时的 `https://xxx.trycloudflare.com` 地址，**无需域名、无需端口映射**。
 注意该地址每次启动都会变，适合临时分享，不适合长期绑定。
+
+#### 隧道前的认证闸门
+
+**V3.5.24 起，建立隧道前必须先配认证凭据**：`web.auth_token` 或 `web.auth_password`
+任一非空即可（纯空白字符不算，防 `wow config set web.auth_token " "` 空转）。
+
+没配的时候：
+
+- `wow web start --tunnel`：**面板照常启动**，只是隧道被跳过，终端会打印本地地址并提示
+  「补齐凭据后可用 `wow web tunnel` 单独补建隧道」。不会让整个启动看起来像失败了。
+- `wow web tunnel`（单独补建命令）：直接报错退出，因为此时没有「面板还活着」这层可安慰的事。
+
+```bash
+# 任选其一
+wow config set web.auth_token 一串足够长的随机字符
+wow config set web.auth_password 你的密码      # 离线密码登录
+```
+
+拒绝发生在**下载 cloudflared 之前**——不会先白下 40MB 再告诉你没配凭据。
 
 首次使用会自动下载 cloudflared（约 40MB）。**V3.5.22 起改为国内镜像优先**：
 
@@ -129,7 +159,7 @@ wow config wow web.auth_password "你的密码"
 | 配置键 | 说明 | 默认值 |
 |--------|------|--------|
 | `mail.whitelist` | **登录邮箱白名单**，名单外邮箱无法获取验证码（V3.5.8） | `[]`（不限制） |
-| `web.auth_token` | JWT 签名密钥；也可手动指定。绑定非回环地址时必填 | 自动生成 |
+| `web.auth_token` | JWT 签名密钥；也可手动指定。绑定非回环地址**或使用 `--tunnel`** 时必填 | 自动生成 |
 | `web.auth_password` | 离线登录密码（scrypt 哈希存储，V3.5.3） | `null` |
 | `web.session_timeout` | 登录会话有效期（秒） | `86400`（24 小时） |
 | `web.dev_mode` | 开发模式。未配 SMTP 时会回显验证码，**生产环境务必关闭** | `false` |
@@ -180,5 +210,6 @@ wow config wow web.auth_password "你的密码"
 - **验证码没收到邮件**：多半是 SMTP 未配置。要么配 SMTP，要么用离线密码 `web.auth_password`；开发模式（`web.dev_mode: true`）下验证码会打印在终端。
 - **想换端口 / 允许远程访问**：用 `wow web start --port <端口> --host 0.0.0.0`，或 `--public`（强制校验凭据）。
 - **远程访问时启动被拒绝**：提示「暴露公网必须设置 auth_token 或管理员密码」。先 `wow config wow web.auth_token <随机串>`，或设 `web.auth_password`，再启动。
+- **`--tunnel` 起来了但没给公网地址**：提示「已跳过隧道：面板本身已正常启动，但隧道未建立（缺认证凭据）」。面板是好的，只是没建隧道。补齐 `web.auth_token` / `web.auth_password` 后执行 `wow web tunnel` 补建，或重启时带上凭据。
 - **控制台发指令报「当前服务端进程没有控制台接收器」**：服务端是旧版本 `wow server start` 拉起的，用新版本重启服务器即可建立控制台中继。
 - **方案操作提示「该指令已在 Web 端禁用」**：`web.allow_scheme_ops` 默认 `false`。确认风险后设为 `true`（或直接到终端执行对应 `wow scheme ...` 命令）。
