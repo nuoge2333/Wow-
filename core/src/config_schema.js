@@ -86,6 +86,16 @@ const SCHEMA = [
         desc: '搜索模组时优先查询的来源，每行一个。可选 curseforge / modrinth。',
         placeholder: 'curseforge\nmodrinth'
     },
+    // V3.5.25：CurseForge 请求层
+    {
+        key: 'curseforge.api_key', type: 'secret', group: '模组', label: 'CurseForge API Key',
+        desc: '前往 console.curseforge.com 免费申请。填了之后，公共代理不可用时会自动直连官方 API。不填也能用，但要依赖代理或本地缓存。'
+    },
+    {
+        key: 'curseforge.proxy_url', type: 'string', group: '模组', label: 'CurseForge 代理地址',
+        desc: '自建 cfproxy 之类的代理后填在这里，例如 http://127.0.0.1:3000。留空 = 不走代理，直接用 API Key 请求官方接口。',
+        placeholder: 'http://127.0.0.1:3000', advanced: true
+    },
 
     // ==================== 备份 ====================
     {

@@ -8,6 +8,8 @@ package-lock.json
 # 运行时自动生成（体积大）
 # ====================
 core/pool/
+# V3.5.25：CurseForge 元数据缓存（本地可重建，不入库）
+core/cache/
 core/jre/
 core/node/
 core/lan/

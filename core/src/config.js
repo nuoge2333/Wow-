@@ -27,6 +27,17 @@ const DEFAULT_CONFIG = {
         auto_dependencies: true,
         sources: ['curseforge', 'modrinth']
     },
+    // V3.5.25：CurseForge 请求层（三层降级：代理 → BYOK → 本地缓存）
+    curseforge: {
+        // 公共代理地址（cfproxy 之类）。**默认空 = 不走代理**。
+        // 为什么不给一个默认公共实例：bmpm-mc/cfproxy 的公共实例 cfproxy.fly.dev
+        // 早在 2022 年后就停服了（实测 DNS 无法解析），写死它等于让所有用户
+        // 先白等 5 秒超时再降级。需要的话自建一个再填这里，见 docs/CF_PROXY.md。
+        proxy_url: '',
+        // BYOK：自己的 CurseForge API Key。空 = 只走代理或缓存。
+        // 历史键名 api_keys.curseforge / download.curseforge_key 仍然兼容。
+        api_key: ''
+    },
     backup: {
         dir: '../scheme/backups',
         auto: false,

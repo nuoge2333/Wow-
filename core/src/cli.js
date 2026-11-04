@@ -822,6 +822,67 @@ webCmd
         webService.webStatus();
     });
 
+// ==================== cf (V3.5.25 CurseForge 请求层) ====================
+
+const cfCmd = program.command('cf').description('CurseForge 请求层：状态与缓存管理');
+
+cfCmd
+    .command('status')
+    .description('查看三层降级配置状态（代理 / API Key / 本地缓存）')
+    .action(() => {
+        const cfc = load('./cf_client');
+        if (!cfc) return;
+        const st = cfc.status();
+
+        console.log('');
+        console.log('  CurseForge 请求层状态');
+        console.log('  ────────────────────────────────────────');
+        st.layers.forEach((l, i) => {
+            const mark = l.enabled ? '✅' : '⬜';
+            console.log(`  ${mark} 第${['一', '二', '三'][i]}层 · ${l.name}`);
+            console.log(`      ${l.detail}`);
+        });
+        console.log('  ────────────────────────────────────────');
+        console.log(`  缓存目录: ${st.cache.dir}`);
+        console.log(`  缓存条目: ${st.cache.count} 条（新鲜 ${st.cache.fresh} / 过期 ${st.cache.stale}，共 ${(st.cache.bytes / 1024).toFixed(1)} KB）`);
+
+        if (!st.proxy && !st.hasKey) {
+            console.log('');
+            console.log('  ⚠️  代理与 API Key 都没配，目前只能靠本地缓存。');
+            console.log('     → 前往 console.curseforge.com 免费申请 Key，填入 curseforge.api_key');
+        }
+        console.log('');
+    });
+
+cfCmd
+    .command('cache')
+    .description('查看缓存统计')
+    .action(() => {
+        const cfc = load('./cf_client');
+        if (!cfc) return;
+        const s = cfc.cacheStats();
+        console.log('');
+        console.log(`  目录: ${s.dir}`);
+        console.log(`  条目: ${s.count}（新鲜 ${s.fresh} / 过期 ${s.stale}）`);
+        console.log(`  体积: ${(s.bytes / 1024).toFixed(1)} KB`);
+        console.log('');
+    });
+
+cfCmd
+    .command('clear')
+    .description('清空 CurseForge 本地缓存')
+    .action(() => {
+        const cfc = load('./cf_client');
+        if (!cfc) return;
+        const before = cfc.cacheStats().count;
+        if (cfc.clearCache()) {
+            console.log(`✅ 已清空 ${before} 条缓存`);
+        } else {
+            console.error('❌ 清空缓存失败（目录可能被占用）');
+            process.exitCode = 1;
+        }
+    });
+
 // ==================== lan (V3.3.0 陶瓦内网穿透 / 联机) ====================
 
 const lanCmd = program.command('lan').description('联机 / 内网穿透（陶瓦 Terracotta）');

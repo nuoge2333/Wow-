@@ -1,17 +1,17 @@
 /**
  * 模组搜索服务（V3.5.6）
  * - Modrinth：公开 API，无需密钥，开箱可用
- * - CurseForge：需在配置中提供 api_keys.curseforge，否则返回明确提示
+ * - CurseForge：V3.5.25 起走 cf_client 的三层降级（代理 → BYOK → 本地缓存），
+ *   不再硬性要求先配 Key。
  *
  * 只负责「查询」，下载交由既有 ModManager / down 命令完成。
  */
 
 const path = require('path');
 const axios = require('axios');
-const config = require('./config');
+const cf = require('./cf_client');
 
 const MODRINTH_API = 'https://api.modrinth.com/v2';
-const CURSEFORGE_API = 'https://api.curseforge.com/v1';
 const MINECRAFT_GAME_ID = 432;
 
 const UA = 'wow-server-panel/3.5.6 (+https://gitee.com/nuoge233/wow)';
@@ -143,13 +143,11 @@ async function pickModrinthFile(projectId, loader, version) {
 
 /**
  * CurseForge 搜索
+ *
+ * V3.5.25：不再强制要 Key。走 cf_client 的三层降级：
+ *   代理 → BYOK 直连 → 本地缓存（搜索不缓存，见 cf_client 注释）
  */
 async function searchCurseForge(query, loader, version, limit) {
-    const apiKey = getCurseForgeKey();
-    if (!apiKey) {
-        throw httpError('CurseForge 需要 API Key。请在「设置 → 下载」中填写 api_keys.curseforge，或改用 Modrinth 源。', 400);
-    }
-
     const params = {
         gameId: MINECRAFT_GAME_ID,
         searchFilter: query,
@@ -160,18 +158,18 @@ async function searchCurseForge(query, loader, version, limit) {
     const modLoaderType = curseForgeLoaderId(loader);
     if (modLoaderType) params.modLoaderType = modLoaderType;
 
-    let resp;
+    let respData;
     try {
-        resp = await axios.get(`${CURSEFORGE_API}/mods/search`, {
-            params,
-            headers: { 'x-api-key': apiKey, 'Accept': 'application/json' },
-            timeout: 15000
-        });
+        // 搜索是关键词查询，结果随时间变化，不缓存
+        const r = await cf.cfSearch('/mods/search', params);
+        respData = r.data;
     } catch (e) {
-        throw httpError(`CurseForge 请求失败: ${describeAxiosError(e)}`);
+        // cf_client 的报错已经是完整可读的中文说明，别再套一层「请求失败:」
+        if (e && e.cfError) throw httpError(e.message, 502);
+        throw httpError(`CurseForge 请求失败: ${describeAxiosError(e)}`, 502);
     }
 
-    const data = (resp.data && resp.data.data) || [];
+    const data = (respData && respData.data) || [];
     return data.map(m => {
         const file = pickCurseForgeFile(m, version);
         return {
@@ -200,10 +198,7 @@ function pickCurseForgeFile(mod, version) {
     return files[0];
 }
 
-function getCurseForgeKey() {
-    const k = config.getConfig('api_keys.curseforge', '') || config.getConfig('download.curseforge_key', '');
-    return k ? String(k).trim() : '';
-}
+// V3.5.25：Key 的读取已统一到 cf_client.getApiKey()（兼容旧键名），此处不再重复实现。
 
 function curseForgeLoaderId(loader) {
     const ld = normalizeLoader(loader);
@@ -312,20 +307,16 @@ async function getModrinthDependencies(projectId) {
 }
 
 async function getCurseForgeInfo(id) {
-    const apiKey = getCurseForgeKey();
-    if (!apiKey) {
-        throw httpError('CurseForge 需要 API Key。请在「设置 → 下载」中填写 api_keys.curseforge。', 400);
-    }
-    let resp;
+    // V3.5.25：走三层降级并缓存项目详情（24h）
+    let m;
     try {
-        resp = await axios.get(`${CURSEFORGE_API}/mods/${encodeURIComponent(id)}`, {
-            headers: { 'x-api-key': apiKey, 'Accept': 'application/json' },
-            timeout: 15000
-        });
+        const r = await cf.getProject(id);
+        m = r.data || {};
     } catch (e) {
-        throw httpError(`CurseForge 项目查询失败: ${describeAxiosError(e)}`, e.response && e.response.status === 404 ? 404 : 502);
+        if (e && e.cfError) throw httpError(e.message, 502);
+        throw httpError(`CurseForge 项目查询失败: ${describeAxiosError(e)}`,
+            e.response && e.response.status === 404 ? 404 : 502);
     }
-    const m = (resp.data && resp.data.data) || {};
     const file = pickCurseForgeFile(m, null);
     return {
         name: m.name,
