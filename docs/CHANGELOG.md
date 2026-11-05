@@ -42,7 +42,7 @@
 
 | 版本 | 状态 | 发布时间 |
 |------|------|------|
-| **未发布** | 开发中（CurseForge 三层降级 / 客户端模组隔离 / 客户端克隆为方案） | — |
+| **未发布** | 开发中（CurseForge 三层降级 / 客户端模组隔离 / 客户端克隆为方案 / 跨设备方案同步） | — |
 | **3.5.24-26.40** | 当前版本 |2026-11-03|
 | **3.5.23-26.3e** | 上一版本 |2026-11-01|
 | **3.5.22-26.3d** | 上一版本 |2026-11-02|
@@ -111,6 +111,73 @@
 | **3.0.0** | 上一版本 |2026-07-23|
 | **2.0.0** | 内部迭代 |2026-02-27|
 | **1.0.0** | 内部迭代 |2026-02-07|
+
+---
+
+## [未发布] — 跨设备方案同步
+
+> 状态：**已开发完成，尚未发行**。
+
+### 为什么要做
+
+同一份服务端方案要在两台机器之间搬家：家里电脑调好了方案，VPS 上跑 `wow web start`。
+以前靠手工 scp + 逐个目录对齐，容易漏文件、漏配置。现在一条 `wow sync push` 完成：
+清单先行、差量上传、哈希校验、执行端自动组装入池。
+
+两端跑的都是同一份 wow（谁都可以是控制端或执行端），没有角色区分的协议差异。
+
+### 架构
+
+- **控制端**：方案所在的一方。`wow sync login <url>` 存 JWT，`wow sync push` 生成清单并上传缺口。
+- **执行端**：跑 `wow web start` 的一方。开放 `/api/sync/check`、`/api/sync/upload`、`/api/sync/upload/status`、`/api/sync/finalize` 四个端点（全部走认证中间件）。
+- 网络路径：公网 IP / Cloudflare Tunnel / EasyTier 虚拟 IP 均可，只要控制端能 HTTP 访问到执行端即可。
+
+### 四阶段流程
+
+1. **清单先行**：控制端扫描方案，产出 `manifest.protocol = 1`（核心 + 模组 + 插件 + 其它文件 + root 配置，全部带 SHA-256 与大小）。
+2. **执行端预检**：逐文件判定缺口（missing / already_present），方案名冲突拒绝（同步来源的方案允许重推做增量）。
+3. **差量上传**：小文件（≤4MB）打包 JSON 束（base64）；大文件走 8MB 分块上传，断点续传（偏移不连续返回 409 + `expected_offset`；收齐后哈希不匹配返回 422 并清掉 staging）。所有上传统一进 `core/temp/sync_staging/<方案>/<sha256>.part`。
+4. **组装**：finalize 是唯一往方案目录写文件的地方——staging 校验落盘、核心走 installer 装配（与 `scheme create` 共用）、`server.properties` 覆盖前备份为 `.bak`、入池登记、写 `sync_source`/`synced_at`/`sync_report`、state: full。**不自动启动**，由用户 `scheme switch` 后手动开服。
+
+### 安全边界
+
+| 边界 | 规则 |
+|------|------|
+| 方案名冲突 | 非同步来源一律 409 拒绝，不覆盖不合并 |
+| 配置文件 | `server.properties`/`eula.txt` 默认不覆盖；`--with-config` 才覆盖且先备份 `.bak` |
+| 存档 | `world` 仅在显式 `--with-world` 时同步 |
+| 单向 | 只能控制端 → 执行端，执行端不回传 |
+| 类型白名单 | `.jar/.json/.toml/.yaml/.yml/.properties/.cfg/.txt/.dat/.mca/.mcr/.tar` |
+| 路径白名单 | `mods/plugins/config/kubejs/scripts/datapacks/world` + root 两文件；拒绝 `..`/绝对路径/盘符/UNC/符号链接（safeResolve 主闸门 + isPathAllowed 纵深） |
+| 大小限制 | 单文件 ≤200MB，总量 ≤2GB |
+| 哈希 | 上传声明哈希 + 落盘前重算，双保险 |
+| 认证 | 复用 Web 面板 JWT（`wow sync login` 存凭据） |
+
+### 实现过程中的关键取舍
+
+- **核心装配放 finalize 不放 check**：Forge 安装器要下几十 MB + 跑 Java，挂在 HTTP 请求里会被 Cloudflare Tunnel ~100s 超时掐断。
+- **同步来源的方案允许重推**：单纯按方案名冲突拒绝会挡住增量同步与断点续传；判据是 `scheme.yaml` 里的 `sync_source` 标记，手工方案 / clone-client 产物仍然拒绝。
+- **断点续传以执行端为准**：控制端本地进度文件（`core/temp/sync_progress.json`）只做展示参考——执行端 staging 可能被清理，本地「已传完」不可信。
+- **Modrinth 补齐未实现**：pool 未命中时目前只标记需上传；按 modID 查 Modrinth 补齐留待后续版本。
+
+### 命令
+
+```bash
+wow sync login <url> [-p password]   # 存 JWT 凭据（keyed by URL）
+wow sync push <url> [--scheme X] [--name Y] [--with-world] [--with-config]
+wow sync list                        # 查看已保存的执行端
+```
+
+### 测试
+
+- 新增 `core/test/sync_module.test.js`：路径白名单 17 项、清单结构 13 项、multipart 解析 5 项、staging 续传基建 5 项。
+- 全量回归 31 个测试文件通过。
+- 端到端实测：全量推送 6 文件（含 6MB 分块上传）、增量重推（5 就位 + 1 分块续传从 8MB 断点恢复）、`.bak` 备份、手工方案 409、路径白名单拒绝、422 哈希校验 + staging 清理、执行端 `scheme info` 正确识别。
+
+### 文档
+
+- 新增 `docs/SYNC.md`（架构 / 命令 / 网络路径 / 边界表）。
+- `docs/COMMANDS.md` 增加 `sync` 命令组。
 
 ---
 

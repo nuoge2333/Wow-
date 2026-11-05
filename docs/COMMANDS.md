@@ -753,6 +753,53 @@ wow web status
 
 ---
 
+## 六之三、跨设备方案同步 (3 个)
+
+> 详见 [SYNC.md](SYNC.md)。控制端推送方案到跑 `wow web start` 的执行端，单向、增量、断点续传。
+
+### `sync login <url>`
+
+登录执行端并保存 JWT 凭据（按 URL 区分，可保存多个执行端）。
+
+```bash
+wow sync login http://your-vps:8080 [-p 密码]
+```
+
+### `sync push <url>`
+
+推送方案到执行端。清单先行 → 预检缺口 → 差量上传 → 执行端组装入池（不自动开服）。
+
+```bash
+wow sync push http://your-vps:8080 [options]
+```
+
+| 选项 | 说明 |
+|------|------|
+| `-s, --scheme <name>` | 控制端要推的方案名（缺省用当前激活方案） |
+| `-n, --name <name>` | 推到执行端时用的方案名（缺省同名） |
+| `--with-world` | 连存档一起同步（默认不带） |
+| `--with-config` | 允许覆盖执行端 `server.properties`/`eula.txt`（先备份 `.bak`） |
+
+**示例：**
+```bash
+# 首次：登录再推
+wow sync login http://your-vps:8080 -p mypass
+wow sync push http://your-vps:8080 --scheme 生存服 --with-config
+
+# 断了重跑同一条命令即可续传（增量上传，已就位的文件自动跳过）
+wow sync push http://your-vps:8080 --scheme 生存服 --with-config
+```
+
+### `sync list`
+
+查看已保存的执行端凭据。
+
+```bash
+wow sync list
+```
+
+---
+
 ## 七、日志与 AI 分析 (3 个)
 
 ### `logs tail`

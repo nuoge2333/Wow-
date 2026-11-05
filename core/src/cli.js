@@ -689,6 +689,85 @@ schemeCmd
         }
     });
 
+// ==================== sync（跨设备方案同步） ====================
+
+const syncCmd = program.command('sync').description('跨设备方案同步（控制端 → 执行端单向）');
+
+syncCmd
+    .command('login <url>')
+    .description('登录执行端（存 token，后续 push 自动携带）')
+    .option('-p, --password <password>', '执行端的面板密码（不填则交互输入）')
+    .action(async (url, options) => {
+        const syncClient = load('./sync_client');
+        if (!syncClient) return;
+        let password = options.password;
+        if (!password) {
+            const readline = require('readline');
+            const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+            password = await new Promise(r => rl.question('执行端面板密码: ', a => { rl.close(); r(a); }));
+        }
+        try {
+            const r = await syncClient.login(url, password);
+            if (!r.ok) {
+                console.error(`❌ 登录失败：${r.reason}`);
+                process.exitCode = 1;
+                return;
+            }
+            console.log(`✅ 已登录并保存凭据：${r.url}`);
+            console.log('   之后可执行：wow sync push ' + r.url);
+        } catch (e) {
+            console.error(`❌ ${e.message}`);
+            process.exitCode = 1;
+        }
+    });
+
+syncCmd
+    .command('push <url>')
+    .description('把当前方案（或 --scheme 指定的方案）推送到执行端')
+    .option('-s, --scheme <name>', '要推送的方案名（默认当前激活方案）')
+    .option('-n, --name <name>', '执行端使用的方案名（默认与本地同名）')
+    .option('--with-world', '包含存档（默认不同步存档）')
+    .option('--with-config', '包含 server.properties / eula.txt（执行端已有的会先备份为 .bak）')
+    .action(async (url, options) => {
+        const syncClient = load('./sync_client');
+        if (!syncClient) return;
+        try {
+            const r = await syncClient.push({
+                baseUrl: url,
+                schemeName: options.scheme,
+                remoteName: options.name,
+                withWorld: options.withWorld === true,
+                withConfig: options.withConfig === true
+            });
+            if (!r.ok) {
+                console.error(`\n❌ 同步失败：${r.reason}`);
+                process.exitCode = 1;
+                return;
+            }
+            console.log(r.report);
+        } catch (e) {
+            console.error(`\n❌ 同步异常：${e.message}`);
+            process.exitCode = 1;
+        }
+    });
+
+syncCmd
+    .command('list')
+    .description('查看已保存的执行端凭据')
+    .action(() => {
+        const syncClient = load('./sync_client');
+        if (!syncClient) return;
+        const servers = syncClient.listServers();
+        if (servers.length === 0) {
+            console.log('还没有保存任何执行端。先执行：wow sync login <执行端地址>');
+            return;
+        }
+        console.log(`已保存 ${servers.length} 个执行端：`);
+        for (const s of servers) {
+            console.log(`   - ${s.url}（token: ${s.token_preview}，保存于 ${s.saved_at}）`);
+        }
+    });
+
 // ==================== pool（资源共享池） ====================
 
 const poolCmd = program.command('pool').description('资源共享池');

@@ -518,7 +518,7 @@ function createSkeleton(opts = {}) {
             type: type || loader || 'vanilla',
             build: null,
             state: 'partial',
-            source: 'clone-client',
+            source: opts.source || 'clone-client',
             source_path: sourcePath || null,
             created_at: now,
             updated_at: now,

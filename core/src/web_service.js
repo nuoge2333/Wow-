@@ -383,6 +383,9 @@ function startWeb(options = {}) {
     // 认证中间件（保护 /api/* 路由）
     app.use(authMiddleware);
 
+    // ===== 方案同步端点（V3.5.25，继承 JWT 认证） =====
+    require('./sync_server').registerSyncRoutes(app);
+
     // ===== 认证 API =====
 
     /**
@@ -2197,6 +2200,7 @@ function parseMultipart(buf, boundary) {
             const cleanName = rawName.replace(/\\/g, '/').split('/').pop() || rawName;
             // 保留完整相对路径（目录层级交由 file_manager 再次净化）
             files.push({
+                fieldName,
                 name: cleanName,
                 rel: rawName,
                 buffer: body
@@ -2226,5 +2230,7 @@ module.exports = {
     flattenConfigPatch,
     webCliEcho,
     systemEcho,
+    // V3.5.25：方案同步（multipart 解析复用）
+    parseMultipart,
     isRunning: () => isRunning
 };
