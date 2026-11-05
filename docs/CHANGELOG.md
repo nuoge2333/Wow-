@@ -197,6 +197,31 @@ wow cf clear     # 清空缓存
 新增 `docs/CF_PROXY.md`：三层矩阵图解、降级触发表、cfproxy 的 Docker 部署、
 `/v1` 的坑、缓存管理、常见问题。
 
+### 自建代理：Cloudflare Workers 版
+
+新增 `deploy/cfproxy-worker/`，提供一个**单文件、零依赖**的 Worker，
+可直接粘到 Cloudflare 控制台在线编辑器部署（不需要 Wrangler CLI）。
+
+比 Docker 版多出的能力：
+
+- **多 Key 轮换**：`CF_API_KEYS` 支持逗号/分号/换行分隔，随机挑选
+- **单 Key 熔断**：429/403 后标记不健康，冷却 10 分钟
+- **单请求兜底**：一个请求内会把所有未试过的 Key 试一遍（上限 3），
+  不会因一个坏 Key 整体失败
+- **403 语义区分**：换 Key 后仍 403 → 是作者禁用分发，原样透传
+- **`GET /__health`**：自检端点，返回 Key 数量与健康状态（Key 打码，不泄露明文）
+- CORS 自动处理；路径白名单只放行 `/v1/`
+
+路径**完全透传不改写**，因此 wow~ 侧只需 `curseforge.proxy_url` 填 Worker 地址，
+`buildUrl()` 无需任何改动。
+
+已知局限（已在代码注释与文档中写明）：`keyState` 是 isolate 内的内存状态，
+**不跨边缘节点共享**，也不持久化。要全局共享需 Durable Objects / KV，
+但会让每次请求多一次跨网络往返，对纯转发代理不值得——正确性由
+「单请求内试完所有 Key」保证，跨请求的加速只是优化。
+
+测试：`deploy/cfproxy-worker/worker.test.mjs`（19 项，打桩不联网）。
+
 ### 测试
 
 新增 `core/test/cf_fallback.test.js`（33 项）：凭据组合、代理优先、5s 超时、

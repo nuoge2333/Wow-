@@ -132,7 +132,36 @@ wow cf status
 代理层是**完全可选**的。如果你经常用 CurseForge，或者有多个机器要共享一个 Key，
 自建的好处是：Key 只存在代理上，本地配置里不落 Key；还能加缓存和更大的限流额度。
 
-### Docker 一键部署
+有两种自建方式，按自己的条件选：
+
+| 方式 | 适合 | 入口 |
+|------|------|------|
+| **Cloudflare Workers**（推荐） | 不想管服务器、有 CF 账号 | [`deploy/cfproxy-worker/`](../deploy/cfproxy-worker/README.md) |
+| Docker 自托管 | 有 VPS / NAS | 见下方 |
+
+### 方式一：Cloudflare Workers（免服务器）
+
+`deploy/cfproxy-worker/worker.js` 是一个**单文件、零依赖**的 Worker，
+可以直接粘到 Cloudflare 控制台的在线编辑器里，不需要装 Wrangler CLI。
+
+它比 Docker 版多了几样东西：
+
+- **多 Key 轮换**（`CF_API_KEYS` 支持逗号分隔，随机挑选 + 单 Key 熔断）
+- 单请求内会把所有 Key 试一遍，不会因为一个坏 Key 整体失败
+- `GET /__health` 自检端点，返回 Key 数量与健康状况（Key 打码）
+- CORS 自动处理
+
+部署步骤见 [`deploy/cfproxy-worker/README.md`](../deploy/cfproxy-worker/README.md)，
+大致就五步：建 Worker → 粘贴代码 → 加 `CF_API_KEYS` 变量 → Deploy → 填到 wow。
+
+```bash
+# 部署完只需这一行
+wow config set curseforge.proxy_url https://cfproxy.你的子域.workers.dev
+```
+
+免费额度每天 10 万次请求，个人用完全够。
+
+### 方式二：Docker 自托管
 
 ```bash
 docker run -d --name cfproxy \
