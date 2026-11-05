@@ -25,7 +25,17 @@ const DEFAULT_CONFIG = {
     },
     mod: {
         auto_dependencies: true,
-        sources: ['curseforge', 'modrinth']
+        sources: ['curseforge', 'modrinth'],
+        // V3.5.25：客户端专用模组自动隔离。
+        // 启动前扫一遍 mods/，把 Sodium / Iris 这类纯客户端模组挪到
+        // mods_client_disabled/ —— 只移动不删除，随时可以挪回来。
+        client_only: {
+            enabled: true,
+            // 用户追加的 modid，每行一个；写 `-sodium` 表示从内置名单里剔除
+            extra: [],
+            // true = 完全不用内置名单（只用 extra 里的）
+            disable_builtin: false
+        }
     },
     // V3.5.25：CurseForge 请求层（三层降级：代理 → BYOK → 本地缓存）
     curseforge: {

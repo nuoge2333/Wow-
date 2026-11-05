@@ -799,6 +799,73 @@ class ServerManager {
     }
 
     /**
+     * V3.5.25：开服前隔离客户端专用模组。
+     *
+     * 为什么不拦着不让启动：客户端模组留在 mods/ 里，最坏情况是服务端直接起不来，
+     * 而报错通常指向「某个 mixin 注入失败」，用户根本看不出是装错了模组。
+     * 这里把确定的客户端模组挪进 mods_client_disabled/，把「必然崩」变成「不崩」。
+     *
+     * 原则：
+     *   1. 只移动不删除；
+     *   2. 任何异常只警告，绝不阻断启动；
+     *   3. 原版 / 纯插件端直接跳过（那里根本没有 mods/ 的加载器）。
+     */
+    _quarantineClientMods() {
+        try {
+            if (this.config.getConfig('mod.client_only.enabled', true) !== true) return;
+
+            // 加载器来源：方案 scheme.yaml 的 loader 优先，回退到 server.type。
+            let loader = '';
+            const activeScheme = this.config.getConfig('server.scheme', null);
+            if (activeScheme) {
+                try {
+                    const SchemeManager = require('./scheme_manager');
+                    const meta = new SchemeManager()._loadSchemeMeta(activeScheme);
+                    if (meta && meta.loader) loader = meta.loader;
+                } catch (e) { /* 方案元数据读不到就退回 server.type */ }
+            }
+            if (!loader) loader = this.config.getConfig('server.type', '');
+
+            const filter = require('./client_mod_filter');
+            if (!filter.loaderSupportsMods(loader)) return;
+
+            const modsDir = path.join(this.serverDir, 'mods');
+            if (!fs.existsSync(modsDir)) return;
+
+            const { map } = filter.buildClientModSet({
+                extra: this.config.getConfig('mod.client_only.extra', []) || [],
+                disableBuiltin: this.config.getConfig('mod.client_only.disable_builtin', false) === true
+            });
+
+            const result = filter.scanAndQuarantine({
+                modsDir,
+                quarantineDir: path.join(this.serverDir, filter.QUARANTINE_DIRNAME),
+                clientSet: map,
+                log: (level, msg) => {
+                    if (level === 'warn') console.warn(`⚠️ ${msg}`);
+                    else console.log(`   ${msg}`);
+                }
+            });
+
+            if (result.movedCount > 0) {
+                for (const line of filter.formatSummary(result)) console.log(line);
+                try {
+                    logger.warn(
+                        `启动前隔离客户端专用模组 ${result.movedCount} 个: ` +
+                        result.quarantined.map(q => q.file).join(', ')
+                    );
+                } catch (e) {}
+            }
+            for (const err of result.errors) {
+                console.warn(`⚠️ 检查模组 ${err.file} 失败（已跳过）: ${err.reason}`);
+            }
+        } catch (e) {
+            // 隔离是「锦上添花」，任何意外都不该阻断启动
+            console.warn(`⚠️ 客户端模组隔离检查失败（不影响启动）: ${e.message}`);
+        }
+    }
+
+    /**
      * 启动服务器
      */
     async start(memory = '2G', extraJvmArgs = '') {
@@ -831,6 +898,11 @@ class ServerManager {
 
         fs.ensureDirSync(this.serverDir);
         fs.ensureDirSync(path.join(this.serverDir, 'logs'));
+
+        // V3.5.25：开服前隔离客户端专用模组（钠 / Iris 之类）。
+        // 放在核心检查之前、EULA 之后：此时方案目录已确定且已补齐，
+        // 若隔离出问题也只是警告 —— 隔离逻辑绝不能成为「服务器起不来」的新理由。
+        this._quarantineClientMods();
 
         // 自动同意 EULA
         const eulaFile = path.join(this.serverDir, 'eula.txt');

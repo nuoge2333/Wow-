@@ -290,7 +290,7 @@ wow pool stats
 
 ---
 
-## 三、模组管理 (4 个)
+## 三、模组管理 (5 个)
 
 ### `mod list`
 
@@ -339,6 +339,43 @@ wow mod sync [options]
 |------|------|
 | `--loader <loader>` | 加载器 (默认: forge) |
 | `-v, --mc-version <version>` | 版本 (默认: 1.20.1) |
+
+---
+
+### `mod client-filter`
+
+扫描 `mods/` 并隔离客户端专用模组（钠、铷、Iris 这一类）。
+
+```bash
+wow mod client-filter [options]
+```
+
+| 选项 | 说明 |
+|------|------|
+| `--dry-run` | 只列出将会被隔离的模组，不实际移动 |
+| `--list <modid>` | 检查单个 modid 是否在内置名单里 |
+
+**行为说明：**
+
+- 读取 jar 内部元数据（`fabric.mod.json` / `mods.toml` / `mcmod.info`）判断真正的 modid
+- 元数据声明「纯客户端」（`environment: client`，或 entrypoints 只有 `client`）
+  或 modid 命中内置名单时，把 `jar` 移到 `mods_client_disabled/`
+- **只移动不删除**，需要恢复时把 jar 挪回 `mods/` 即可
+- 目标重名时不覆盖，改名为 `xxx.<时间戳>.jar`
+- 原版 / 纯插件端（vanilla / paper / purpur / spigot / bukkit / leaves）直接跳过
+
+**开服时会自动执行**（受 `mod.client_only.enabled` 控制），一般无需手动运行。
+
+```bash
+# 先看看会动哪些文件
+wow mod client-filter --dry-run
+
+# 查某个模组在不在内置名单里
+wow mod client-filter --list sodium
+```
+
+自定义名单：在 `wow.yaml` 的 `mod.client_only.extra` 里每行写一个 modid，
+`xxx` 表示额外隔离，`-xxx` 表示从内置名单里剔除。
 
 ---
 

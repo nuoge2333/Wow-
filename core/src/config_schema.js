@@ -86,6 +86,21 @@ const SCHEMA = [
         desc: '搜索模组时优先查询的来源，每行一个。可选 curseforge / modrinth。',
         placeholder: 'curseforge\nmodrinth'
     },
+    // V3.5.25：客户端专用模组自动隔离
+    {
+        key: 'mod.client_only.enabled', type: 'boolean', group: '模组', label: '启动时隔离客户端模组',
+        desc: '开服前扫描 mods/，把钠、Iris 这类服务端装不上的纯客户端模组移到 mods_client_disabled/。只移动不删除，需要时挪回来即可。'
+    },
+    {
+        key: 'mod.client_only.extra', type: 'list', group: '模组', label: '追加 / 剔除的 modid',
+        desc: '每行一个 modid。写 `xxx` 表示额外隔离它；写 `-xxx` 表示内置名单里的这个不要隔离（例如你确信某个模组服务端也需要）。',
+        placeholder: 'my-client-mod\n-jade', advanced: true
+    },
+    {
+        key: 'mod.client_only.disable_builtin', type: 'boolean', group: '模组', label: '停用内置名单',
+        desc: '开启后只按上面「追加 / 剔除」里的名单判断，完全不用自带的客户端模组表。',
+        advanced: true, danger: true
+    },
     // V3.5.25：CurseForge 请求层
     {
         key: 'curseforge.api_key', type: 'secret', group: '模组', label: 'CurseForge API Key',

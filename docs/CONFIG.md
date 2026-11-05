@@ -109,6 +109,9 @@ download:
 |------|------|--------|------|
 | `auto_dependencies` | boolean | `true` | 是否自动安装模组依赖 |
 | `sources` | array | `["curseforge", "modrinth"]` | 模组搜索来源 |
+| `client_only.enabled` | boolean | `true` | 开服前是否自动隔离客户端专用模组 |
+| `client_only.extra` | array | `[]` | 追加 / 剔除的 modid，每行一个 |
+| `client_only.disable_builtin` | boolean | `false` | `true` = 完全不用内置名单 |
 
 **示例：**
 ```yaml
@@ -117,7 +120,50 @@ mod:
   sources:
     - curseforge
     - modrinth
+  client_only:
+    enabled: true
+    extra:
+      - my-client-hud        # 追加：这个也是客户端专用
+      - -jade                # 剔除：jade 我这服服务端确实要用
+    disable_builtin: false
 ```
+
+**`client_only` 说明：**
+
+内置一份常见客户端专用模组名单（钠、铷、Iris、ModMenu、小地图等），
+开服前扫描 `mods/`，命中的 jar 移到 **`mods_client_disabled/`**（只移动不删除）。
+
+判定依据优先看 jar 内部元数据：
+
+| 依据 | 优先级 | 说明 |
+|------|--------|------|
+| `fabric.mod.json` 的 `environment: client` | 最高 | 作者明确声明纯客户端 |
+| `fabric.mod.json` 的 entrypoints 只有 `client` | 高 | 没有 `main` / `server` 入口 |
+| modid 命中内置名单 | 中 | 见 `wow mod client-filter --list <modid>` |
+
+`extra` 里 `xxx` 表示额外隔离、`-xxx` 表示从内置名单里剔除，
+也支持 `xxx: 我的说明` 让日志更有信息量。
+
+原版 / 纯插件端（vanilla、paper、purpur、spigot、bukkit、leaves）不加载 `mods/`，
+因此完全跳过。
+
+---
+
+### `curseforge` — CurseForge 请求层
+
+| 字段 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `api_key` | string | `null` | 自己的 CurseForge API Key（BYOK），留空则只走代理或缓存 |
+| `proxy_url` | string | `null` | 自建 cfproxy 地址，留空 = 不走代理 |
+
+**示例：**
+```yaml
+curseforge:
+  api_key: $2a$10$xxxxxxxx      # console.curseforge.com 免费申请
+  proxy_url: http://127.0.0.1:3000
+```
+
+详见 [`CF_PROXY.md`](CF_PROXY.md)。
 
 ---
 

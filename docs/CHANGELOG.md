@@ -42,7 +42,7 @@
 
 | 版本 | 状态 | 发布时间 |
 |------|------|------|
-| **未发布** | 开发中（CurseForge 三层降级） | — |
+| **未发布** | 开发中（CurseForge 三层降级 / 客户端模组隔离） | — |
 | **3.5.24-26.40** | 当前版本 |2026-11-03|
 | **3.5.23-26.3e** | 上一版本 |2026-11-01|
 | **3.5.22-26.3d** | 上一版本 |2026-11-02|
@@ -111,6 +111,116 @@
 | **3.0.0** | 上一版本 |2026-07-23|
 | **2.0.0** | 内部迭代 |2026-02-27|
 | **1.0.0** | 内部迭代 |2026-02-07|
+
+---
+
+## [未发布] — 客户端专用模组自动隔离
+
+> 状态：**已开发完成，尚未发行**。按 `docs/RELEASE_POLICY.md`，版本号待「发行」时统一定。
+
+### 为什么要做
+
+整合包（尤其 CurseForge 一键导入）常把客户端模组和通用模组混在同一个 `mods/` 里。
+Sodium、Iris 这类纯客户端模组被服务端加载时，轻则 `ClassNotFoundException` 刷屏，
+重则整个服务端起不来——而报错通常指向「某个 mixin 注入失败」，
+与「你装了个客户端模组」这件事**完全看不出因果关系**。
+
+本版在开服前扫一遍 `mods/`，把确定的客户端模组挪进 `mods_client_disabled/`，
+把「必然崩」变成「不崩」。
+
+### 新增 `core/src/client_mod_filter.js`
+
+四条设计原则，每条都对应一个具体的失败模式：
+
+| 原则 | 防的是什么 |
+|------|-----------|
+| **只移动不删除** | 误判的代价必须可逆。全进 `mods_client_disabled/`，挪回即恢复 |
+| **以 jar 内部元数据为准** | 文件名带 `sodium` 的可能是服务端兼容版；名字无害的可能就是客户端模组 |
+| **宁可漏杀不可错杀** | 读不出元数据就放过（计入 skipped），只有铁证才动手 |
+| **不阻断启动** | 整个流程包在 try 里，任何异常只警告。隔离逻辑不能成为「起不来」的新理由 |
+
+### 判定依据（分两层，元数据优先）
+
+**第一层 · 元数据铁证**（`by: 'meta'`）：
+
+- `fabric.mod.json` 的 `environment` 为 `client` / `client_only` / `clientside`
+- `fabric.mod.json` 的 `entrypoints` **只有 `client`**，没有 `main` 也没有 `server`
+
+**第二层 · modid 命中名单**（`by: 'modid'`）：内置 92 条，覆盖
+
+- 渲染 / 性能：`sodium` `rubidium` `embeddium` `xenon` `magnesium` `iris` `oculus`
+  `nvidium` `entityculling` `optifine` `canvas` …
+- HUD / 界面：`modmenu` `jade` `wthit` `journeymap` `xaeros-minimap` `appleskin`
+  `betterf3` `mouse-tweaks` `controlling` …
+- 键位 / 声音 / 视觉：`amecs` `presence-footsteps` `not-enough-animations` `3d-skin-layers` …
+- 连接 / 服务器列表：`serverselector` `serverlistplus` `lan-server-properties`
+
+> 收录标准是**「服务端上要么完全无用、要么会直接崩」**。凡是存在
+> 「服务端也需要」歧义的（比如 `fabric-api`、`lithium`、`carpet`）一律不收——
+> 误杀比漏杀更难被发现。
+
+**Forge 的 `clientSideOnly` 不参与判定**：`mods.toml` 里没有可靠的
+「这个模组只能客户端加载」标记（`displayTest` / `side="CLIENT"` 的语义不同），
+硬猜会错杀，所以 Forge 端只按 modid 名单判断。
+
+### 支持的元数据格式
+
+| 加载器 | 文件 |
+|--------|------|
+| Fabric | `fabric.mod.json` |
+| Quilt | `quilt.mod.json`（读嵌套的 `quilt_loader.id`） |
+| Forge / NeoForge | `META-INF/mods.toml`、`META-INF/neoforge.mods.toml` |
+| 老 Forge | `mcmod.info` |
+
+条目路径**大小写不敏感**（jar 内路径大小写不规范是常见现象）。
+不引入 TOML 解析库——只需要 `[[mods]]` 段里的 `modId`，手写正则足够，
+且不会因为某个模组写了奇怪的 TOML 而整体抛异常。
+
+### 跳过的情况
+
+- **原版 / 纯插件端**（`vanilla` `paper` `purpur` `spigot` `bukkit` `leaves`）
+  根本不加载 `mods/`，直接不处理
+- `mods/` 目录不存在（未装模组 / 原版端）
+- 非 `.jar` 文件（`.zip` / `.jar.disabled` / 说明文件）
+- 读不出元数据的 jar（插件、资源包、损坏文件）
+- 未知 loader → 放行（不知道就别拦）
+
+### 覆盖名单
+
+| 配置键 | 默认 | 说明 |
+|--------|------|------|
+| `mod.client_only.enabled` | `true` | 总开关 |
+| `mod.client_only.extra` | `[]` | 每行一个。`xxx` 追加隔离；`-xxx` 从内置名单剔除 |
+| `mod.client_only.disable_builtin` | `false` | `true` = 完全不用内置名单 |
+
+`extra` 里支持 `xxx: 我的说明` 写法，说明会出现在日志里。
+
+### 命令
+
+```bash
+wow mod client-filter              # 立即扫描并隔离
+wow mod client-filter --dry-run    # 只预览，不动文件
+wow mod client-filter --list sodium  # 查某个 modid 在不在内置名单里
+```
+
+### 边界细节
+
+- 隔离目录与 `mods/` 同级：`mods_client_disabled/`
+- **目标重名不覆盖**：已有同名文件时改名为 `xxx.<时间戳>.jar`，
+  绝不覆盖用户之前手动挪过去的文件
+- 单个 jar 元数据读取有 256 KB 上限，防 zip 炸弹
+- 文件移动用 `fs.moveSync`，同分区内是 `rename`（原子、零拷贝）
+- 幂等：第二次运行扫不到东西就静默返回
+
+### 测试
+
+新增 `core/test/client_mod_filter.test.js`（61 项）：名单合成（追加 / 剔除 / 停用内置）、
+TOML 解析（多段 / 段外 modId 不误判 / 单引号）、四种加载器元数据读取、
+判定优先级（元数据铁证压过名单剔除）、加载器白名单、
+移动行为（字节一致 / 不覆盖 / dryRun / 幂等）、`server.js` 接入点位置断言、
+配置项与 schema 校验。
+
+全程不联网、不碰真实方案目录（临时目录里现造 zip 当 jar）。
 
 ---
 

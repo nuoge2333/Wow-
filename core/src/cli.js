@@ -318,6 +318,86 @@ modCmd
         modManager.syncFromPool(loader, version);
     });
 
+// V3.5.25：客户端专用模组隔离
+modCmd
+    .command('client-filter')
+    .description('扫描 mods/ 并隔离客户端专用模组（钠、Iris 等）')
+    .option('--dry-run', '只列出将会被隔离的模组，不实际移动')
+    .option('--list <modid>', '检查单个 modid 是否在内置名单里')
+    .action((options) => {
+        if (options.list) {
+            const filter = load('./client_mod_filter');
+            if (!filter) return;
+            const id = String(options.list).trim().toLowerCase();
+            const desc = filter.isBuiltinClientMod(id);
+            if (desc) {
+                console.log(`✅ ${id} 在内置客户端模组名单里`);
+                console.log(`   ${desc}`);
+            } else {
+                console.log(`❌ ${id} 不在内置名单里`);
+                console.log(`   如确认它是客户端专用，可在 wow.yaml 的 mod.client_only.extra 里加上它。`);
+            }
+            return;
+        }
+
+        const filter = load('./client_mod_filter');
+        if (!filter) return;
+
+        // 加载器判定与 server.js 保持一致：方案元数据优先，回退 server.type
+        let loader = '';
+        const activeScheme = config.getConfig('server.scheme', null);
+        if (activeScheme) {
+            try {
+                const SchemeManager = load('./scheme_manager');
+                if (SchemeManager) {
+                    const meta = new SchemeManager()._loadSchemeMeta(activeScheme);
+                    if (meta && meta.loader) loader = meta.loader;
+                }
+            } catch (e) {}
+        }
+        if (!loader) loader = config.getConfig('server.type', '');
+
+        if (!filter.loaderSupportsMods(loader)) {
+            console.log(`当前服务端类型「${loader || '未知'}」不加载 mods/，无需隔离。`);
+            return;
+        }
+
+        const serverDir = utils.getServerDir();
+        const modsDir = path.join(serverDir, 'mods');
+        if (!fs.existsSync(modsDir)) {
+            console.log(`模组目录不存在: ${modsDir}`);
+            return;
+        }
+
+        const { map, removed } = filter.buildClientModSet({
+            extra: config.getConfig('mod.client_only.extra', []) || [],
+            disableBuiltin: config.getConfig('mod.client_only.disable_builtin', false) === true
+        });
+        if (removed.length > 0) {
+            console.log(`ℹ️ 已按你的配置从内置名单剔除: ${removed.join(', ')}`);
+        }
+
+        const result = filter.scanAndQuarantine({
+            modsDir,
+            quarantineDir: path.join(serverDir, filter.QUARANTINE_DIRNAME),
+            clientSet: map,
+            dryRun: options.dryRun === true
+        });
+
+        console.log(`扫描 ${result.scanned} 个 jar，名单 ${map.size} 条。`);
+        if (result.movedCount === 0) {
+            console.log('未发现需要隔离的客户端专用模组。');
+        } else {
+            for (const line of filter.formatSummary(result, options.dryRun === true)) console.log(line);
+        }
+        for (const err of result.errors) {
+            console.warn(`⚠️ ${err.file}: ${err.reason}`);
+        }
+        if (options.dryRun && result.movedCount > 0) {
+            console.log('（这是预览，文件没有变动。去掉 --dry-run 即真正执行。）');
+        }
+    });
+
 // ==================== scheme ====================
 
 const schemeCmd = program.command('scheme').description('方案管理');
