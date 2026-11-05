@@ -324,6 +324,8 @@ modCmd
     .description('扫描 mods/ 并隔离客户端专用模组（钠、Iris 等）')
     .option('--dry-run', '只列出将会被隔离的模组，不实际移动')
     .option('--list <modid>', '检查单个 modid 是否在内置名单里')
+    .option('--restore [file]', '把隔离区里的模组挪回 mods/（不填 = 全部恢复）')
+    .option('--show', '只列出隔离区里有什么，不做任何改动')
     .action((options) => {
         if (options.list) {
             const filter = load('./client_mod_filter');
@@ -357,13 +359,57 @@ modCmd
         }
         if (!loader) loader = config.getConfig('server.type', '');
 
+        const serverDir = utils.getServerDir();
+        const modsDir = path.join(serverDir, 'mods');
+        const quarantineDir = path.join(serverDir, filter.QUARANTINE_DIRNAME);
+
+        // ---- 查看隔离区 ----
+        if (options.show) {
+            const list = filter.listQuarantined(quarantineDir);
+            if (list.length === 0) {
+                console.log(`隔离区是空的（${quarantineDir}）`);
+                return;
+            }
+            console.log(`隔离区 ${filter.QUARANTINE_DIRNAME}/ 里有 ${list.length} 个模组：`);
+            for (const f of list) {
+                console.log(`   - ${f.file}（${(f.size / 1024).toFixed(0)} KB）`);
+            }
+            console.log(`\n恢复全部：wow mod client-filter --restore`);
+            console.log(`恢复单个：wow mod client-filter --restore <文件名>`);
+            return;
+        }
+
+        // ---- 恢复 ----
+        if (options.restore !== undefined) {
+            const r = filter.restoreQuarantined({
+                quarantineDir,
+                modsDir,
+                file: options.restore === true ? '*' : String(options.restore)
+            });
+            if (!r.ok) {
+                console.error(`❌ ${r.reason}`);
+                process.exitCode = 1;
+                return;
+            }
+            console.log(`✅ 已恢复 ${r.restored.length} 个模组到 mods/：`);
+            for (const it of r.restored) {
+                if (it.conflict) {
+                    console.log(`   - ${it.file} → ${it.restoredAs}（mods/ 里已有同名文件，改名保住两份）`);
+                } else {
+                    console.log(`   - ${it.file}`);
+                }
+            }
+            for (const f of r.failed) {
+                console.warn(`⚠️ ${f.file}: ${f.reason}`);
+            }
+            return;
+        }
+
         if (!filter.loaderSupportsMods(loader)) {
             console.log(`当前服务端类型「${loader || '未知'}」不加载 mods/，无需隔离。`);
             return;
         }
 
-        const serverDir = utils.getServerDir();
-        const modsDir = path.join(serverDir, 'mods');
         if (!fs.existsSync(modsDir)) {
             console.log(`模组目录不存在: ${modsDir}`);
             return;
@@ -379,7 +425,7 @@ modCmd
 
         const result = filter.scanAndQuarantine({
             modsDir,
-            quarantineDir: path.join(serverDir, filter.QUARANTINE_DIRNAME),
+            quarantineDir,
             clientSet: map,
             dryRun: options.dryRun === true
         });
@@ -504,9 +550,21 @@ schemeCmd
             console.log(`  版本: ${meta.version}`);
             console.log(`  加载器: ${meta.loader}`);
             console.log(`  类型: ${meta.type}`);
+            console.log(`  状态: ${meta.state || '未知'}`);
             console.log(`  创建时间: ${meta.created_at}`);
-            console.log(`  模组数: ${(meta.mods || []).length}`);
-            console.log(`  兼容性: Java ${meta.compatibility?.java || '未知'}`);
+            // 模组数在 resources.mods 里。旧实现读 meta.mods —— 该字段从不存在，
+            // 于是任何方案的「模组数」都打印 0（连装了几十个模组的方案也是 0）。
+            const modCount = (meta.resources && Array.isArray(meta.resources.mods))
+                ? meta.resources.mods.length
+                : 0;
+            console.log(`  模组数: ${modCount}`);
+            console.log(`  兼容性: Java ${(meta.compatibility && meta.compatibility.java) || '未知'}`);
+            if (meta.source === 'clone-client') {
+                console.log(`  来源: 客户端克隆（${meta.source_path || '未知路径'}）`);
+            }
+            if (meta.clone_report && meta.clone_report.mods_disabled > 0) {
+                console.log(`  克隆时禁用客户端模组: ${meta.clone_report.mods_disabled} 个（见 mods-disabled/）`);
+            }
         } catch (e) {
             console.error(`❌ 获取信息失败: ${e.message}`);
         }
@@ -558,6 +616,76 @@ schemeCmd
             schemeManager.status(name);
         } catch (e) {
             console.error(`❌ 获取状态失败: ${e.message}`);
+        }
+    });
+
+// ==================== scheme clone-client ====================
+
+schemeCmd
+    .command('clone-client <path>')
+    .description('把一个 Minecraft 客户端实例克隆成 wow 方案')
+    .option('-n, --name <name>', '方案名（默认取实例目录名）')
+    .option('-t, --type <type>', '手动指定核心类型（识别失败时用）')
+    .option('-v, --version <version>', '手动指定 Minecraft 版本（识别失败时用）')
+    .option('--save <name>', '要迁移的存档名（不填则交互选择；填 - 表示不迁移）')
+    .option('--dry-run', '只做识别与检查，不创建任何东西')
+    .option('--yes', '不进行任何交互，全部使用默认值')
+    .option('--extra-client-mods <list>', '追加的客户端模组 modid，逗号分隔')
+    .option('--keep-mods <list>', '强制保留的模组 modid，逗号分隔（优先级最高）')
+    .action(async (clientPath, options) => {
+        const clone = load('./client_clone');
+        if (!clone) return;
+
+        const isTTY = Boolean(process.stdin.isTTY);
+        const io = (options.yes || !isTTY) ? clone.makeSilentIO() : clone.makeTerminalIO();
+
+        // --save 未给 = undefined（交互询问）；给 '-' = 不迁移
+        let saveName;
+        if (options.save !== undefined) {
+            saveName = options.save.trim() === '-' ? '' : options.save.trim();
+        }
+
+        const splitList = (s) => String(s || '').split(',').map(x => x.trim()).filter(Boolean);
+
+        try {
+            const r = await clone.cloneClient({
+                clientPath,
+                name: options.name,
+                typeOverride: options.type,
+                versionOverride: options.version,
+                saveName,
+                dryRun: options.dryRun === true,
+                io,
+                extraClientMods: splitList(options.extraClientMods),
+                forceKeepMods: splitList(options.keepMods)
+            });
+
+            if (!r.ok) {
+                console.error(`\n❌ 克隆失败：${r.reason}`);
+                if (r.rolledBack) console.error('   已回滚，未留下半残方案。');
+                process.exitCode = 1;
+                return;
+            }
+
+            if (r.dryRun) {
+                const p = r.plan;
+                console.log('\n🔍 预检结果（--dry-run，未创建任何东西）');
+                console.log('─'.repeat(52));
+                console.log(`   源实例  ：${p.instanceDir}`);
+                console.log(`   MC 版本 ：${p.mcVersion}${p.guessed ? '（推测）' : ''}`);
+                console.log(`   加载器  ：${p.type}${p.loaderVersion ? ' ' + p.loaderVersion : ''}`);
+                console.log(`   方案名  ：${p.schemeName}`);
+                console.log('─'.repeat(52));
+                console.log('   确认无误后去掉 --dry-run 即可正式克隆。');
+                return;
+            }
+
+            console.log(r.report);
+        } catch (e) {
+            console.error(`\n❌ 克隆异常：${e.message}`);
+            process.exitCode = 1;
+        } finally {
+            if (io.close) io.close();
         }
     });
 

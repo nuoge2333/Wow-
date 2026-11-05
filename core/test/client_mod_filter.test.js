@@ -608,6 +608,111 @@ t('用户剔除名单后该模组留在原地', () => {
     assert.ok(fs.existsSync(path.join(modsDir, 'jade.jar')));
 });
 
+console.log('\n— 恢复（listQuarantined / restoreQuarantined）—');
+
+t('listQuarantined 只列 jar，目录不存在返回空', () => {
+    const dir = makeTmp('restore-list');
+    assert.deepStrictEqual(filter.listQuarantined(path.join(dir, 'nope')), []);
+
+    const q = path.join(dir, 'q');
+    fs.ensureDirSync(q);
+    makeFabricJar(path.join(q, 'a.jar'), { id: 'a' });
+    makeFabricJar(path.join(q, 'b.jar'), { id: 'b' });
+    fs.writeFileSync(path.join(q, 'readme.txt'), 'x');
+    const list = filter.listQuarantined(q);
+    assert.strictEqual(list.length, 2);
+    assert.deepStrictEqual(list.map(x => x.file).sort(), ['a.jar', 'b.jar']);
+});
+
+t('恢复单个文件', () => {
+    const dir = makeTmp('restore-one');
+    const q = path.join(dir, 'q');
+    const mods = path.join(dir, 'mods');
+    fs.ensureDirSync(q);
+    makeFabricJar(path.join(q, 'a.jar'), { id: 'a' });
+    makeFabricJar(path.join(q, 'b.jar'), { id: 'b' });
+
+    const r = filter.restoreQuarantined({ quarantineDir: q, modsDir: mods, file: 'a.jar' });
+    assert.strictEqual(r.ok, true);
+    assert.strictEqual(r.restored.length, 1);
+    assert.ok(fs.existsSync(path.join(mods, 'a.jar')));
+    assert.ok(!fs.existsSync(path.join(q, 'a.jar')));
+    assert.ok(fs.existsSync(path.join(q, 'b.jar')), '另一个不该动');
+});
+
+t('恢复全部（file 省略 = *）', () => {
+    const dir = makeTmp('restore-all');
+    const q = path.join(dir, 'q');
+    const mods = path.join(dir, 'mods');
+    fs.ensureDirSync(q);
+    makeFabricJar(path.join(q, 'a.jar'), { id: 'a' });
+    makeFabricJar(path.join(q, 'b.jar'), { id: 'b' });
+
+    const r = filter.restoreQuarantined({ quarantineDir: q, modsDir: mods });
+    assert.strictEqual(r.ok, true);
+    assert.strictEqual(r.restored.length, 2);
+    assert.deepStrictEqual(fs.readdirSync(mods).sort(), ['a.jar', 'b.jar']);
+    assert.strictEqual(filter.listQuarantined(q).length, 0);
+});
+
+t('恢复时 mods/ 已有同名文件 → 改名保住两份，不覆盖', () => {
+    const dir = makeTmp('restore-conflict');
+    const q = path.join(dir, 'q');
+    const mods = path.join(dir, 'mods');
+    fs.ensureDirSync(q);
+    fs.ensureDirSync(mods);
+    makeFabricJar(path.join(q, 'iris.jar'), { id: 'iris', v: 'old' });
+    makeFabricJar(path.join(mods, 'iris.jar'), { id: 'iris', v: 'new' });
+
+    const r = filter.restoreQuarantined({ quarantineDir: q, modsDir: mods, file: 'iris.jar' });
+    assert.strictEqual(r.restored.length, 1);
+    assert.strictEqual(r.restored[0].conflict, true);
+    assert.ok(/^iris\.restored-\d+\.jar$/.test(r.restored[0].restoredAs));
+
+    const files = fs.readdirSync(mods);
+    assert.strictEqual(files.length, 2, '两份都要在');
+    // 原文件内容不能被改
+    const orig = fs.readFileSync(path.join(mods, 'iris.jar'));
+    assert.ok(orig.length > 0);
+});
+
+t('隔离目录不存在 → ok=false 带原因', () => {
+    const dir = makeTmp('restore-nodir');
+    const r = filter.restoreQuarantined({ quarantineDir: path.join(dir, 'nope'), modsDir: path.join(dir, 'mods') });
+    assert.strictEqual(r.ok, false);
+    assert.ok(r.reason.includes('不存在'));
+});
+
+t('隔离目录为空 → ok=false 提示是空的', () => {
+    const dir = makeTmp('restore-empty');
+    const q = path.join(dir, 'q');
+    fs.ensureDirSync(q);
+    const r = filter.restoreQuarantined({ quarantineDir: q, modsDir: path.join(dir, 'mods') });
+    assert.strictEqual(r.ok, false);
+    assert.ok(r.reason.includes('空的'));
+});
+
+t('指定的文件不在隔离区 → ok=false', () => {
+    const dir = makeTmp('restore-missing');
+    const q = path.join(dir, 'q');
+    fs.ensureDirSync(q);
+    makeFabricJar(path.join(q, 'a.jar'), { id: 'a' });
+    const r = filter.restoreQuarantined({ quarantineDir: q, modsDir: path.join(dir, 'mods'), file: 'zzz.jar' });
+    assert.strictEqual(r.ok, false);
+    assert.ok(r.reason.includes('没有'));
+});
+
+t('恢复后 mods/ 自动创建', () => {
+    const dir = makeTmp('restore-mkdir');
+    const q = path.join(dir, 'q');
+    const mods = path.join(dir, 'mods');
+    fs.ensureDirSync(q);
+    makeFabricJar(path.join(q, 'a.jar'), { id: 'a' });
+    assert.ok(!fs.existsSync(mods));
+    filter.restoreQuarantined({ quarantineDir: q, modsDir: mods });
+    assert.ok(fs.existsSync(mods));
+});
+
 console.log('\n— 摘要格式 —');
 
 t('有隔离时输出条目与恢复提示', () => {

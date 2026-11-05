@@ -42,7 +42,7 @@
 
 | 版本 | 状态 | 发布时间 |
 |------|------|------|
-| **未发布** | 开发中（CurseForge 三层降级 / 客户端模组隔离） | — |
+| **未发布** | 开发中（CurseForge 三层降级 / 客户端模组隔离 / 客户端克隆为方案） | — |
 | **3.5.24-26.40** | 当前版本 |2026-11-03|
 | **3.5.23-26.3e** | 上一版本 |2026-11-01|
 | **3.5.22-26.3d** | 上一版本 |2026-11-02|
@@ -111,6 +111,115 @@
 | **3.0.0** | 上一版本 |2026-07-23|
 | **2.0.0** | 内部迭代 |2026-02-27|
 | **1.0.0** | 内部迭代 |2026-02-07|
+
+---
+
+## [未发布] — 客户端一键克隆为方案
+
+> 状态：**已开发完成，尚未发行**。
+
+### 为什么要做
+
+玩家手里通常已经有一个调好的客户端整合包（Forge 实例 + 几十个模组 + 配置 + 存档）。
+想开服只能手动搬：复制 mods、找服务端核心、跑 Forge 安装器、清客户端模组、搬存档、
+删 session.lock……每一步都有坑，最后还往往起不来。
+
+本版把它压成一条命令：`wow scheme clone-client <客户端路径>`。
+
+### 核心约定：产物是方案，不是目录
+
+不是「把 `.minecraft` 复制一份」，而是三步：
+
+1. **先建方案骨架**（复用 `scheme create` 的目录与 `scheme.yaml` 逻辑，但**不触发核心下载**）；
+2. **再往方案目录里填内容**（白名单复制 → 核心装配 → 存档迁移 → 模组清洗）；
+3. **结束时入池登记、状态转 `full`**。
+
+所以克隆完成后 `scheme list` / `scheme switch` / `server start` 全套可用。
+
+### 新增 `core/src/client_clone.js`
+
+九步流水线，每步都是独立可测的函数：
+
+| 步骤 | 函数 | 关键决策 |
+|------|------|----------|
+| 0 · 定位实例 | `resolveInstance` / `detectInstanceMeta` | 支持根目录 / 实例目录 / 未开隔离，向上找 2 级 |
+| 1 · 建骨架 | `createSkeleton` | `state: partial`，识别失败就不建 |
+| 2 · 白名单复制 | `copyWhitelisted` | `saves/` 不在这里搬；关键文件失败即中止 |
+| 3 · 核心装配 | `installCore` | 走 `installer.install()`，不是 `wow install` |
+| 4 · 存档迁移 | `migrateWorld` | 删 `session.lock`，保留 `datapacks/` |
+| 5 · 模组清洗 | `cleanMods` | 元数据 > 名单，`force_keep` 最高 |
+| 6 · 平台兜底 | `fillPlatformDefaults` | 已存在就不覆盖 |
+| 7 · 入池登记 | `registerToPool` | 核心 + 模组入池，写 `clone_report` |
+| 8 · 报告 | `buildReport` | 逐条列出被禁模组的名字与原因 |
+
+### 实现过程中发现并修正的四个判断错误
+
+**1. 现代 Forge 的 `mainClass` 里没有 "forge"**
+
+1.17 之后 Forge/NeoForge 客户端的 `mainClass` 是
+`cpw.mods.bootstraplauncher.BootstrapLauncher`，`libraries` 里也可能只有分包。
+只按 `mainClass` 判断会把 Forge 实例误判成原版 —— 然后拿 vanilla 核心去跑
+几十个 Forge 模组。补了三条兜底：`--launchTarget` 参数 → `--fml.forgeVersion` → 实例目录名。
+
+**2. `mods.toml` 里没有「纯客户端」标记**
+
+需求原文写的是「`META-INF/mods.toml` 的 `side = "CLIENT"`」，但 Forge 的
+`mods.toml` 里并没有这个字段。真实语义是 `[[dependencies.<modid>]]` 段里的
+`side="CLIENT"`，意思是「这条依赖只在客户端需要」，**不代表模组本身不能加载**。
+拿它判定会错杀（比如某个服务端也需要的模组只是声明了客户端依赖）。
+所以 Forge 端只认 `mcmod.info` 的 `clientSideOnly: true`（那是真正可靠的），
+其余靠 modid 名单兜底。
+
+**3. `isCriticalPath` 的 config 判断偏了一位**
+
+`rel.indexOf('/', 'config/'.length)` 会跳过 `config/a.toml` 这种直属文件，
+只认 `config/sub/x`。结果 `config/` 下的普通文件失败时不中止，与需求不符。已改成正则。
+
+**4. `wow scheme info` 的模组数永远是 0**
+
+既有缺陷：`info` 读 `meta.mods`，但该字段从不存在（真实位置是 `meta.resources.mods`），
+所以任何方案都打印「模组数: 0」，连装了几十个模组的方案也是 0。顺手修了，
+并补了「状态」「来源」「克隆时禁用数」三行。
+
+### 不删任何文件
+
+需求总则是「不自动删除任何文件」，落实到三个具体位置：
+
+| 场景 | 处理 |
+|------|------|
+| 客户端核心 `<实例名>.jar` 混进方案目录 | 改名 `<实例名>.jar.client-jar.bak` |
+| 目标 `world/` 已有内容 | 挪成 `world.pre-clone-<时间戳>.bak` |
+| 客户端模组 | 移到 `mods-disabled/` |
+
+（`session.lock` 是例外 —— 它是服务端会自己重建的运行时锁，带着它服务端直接启动失败。）
+
+### 命令
+
+```bash
+wow scheme clone-client <路径>                    # 交互式
+wow scheme clone-client <路径> --dry-run          # 只识别不创建
+wow scheme clone-client <路径> --yes              # 全默认值
+wow scheme clone-client <路径> -n mysrv --save 生存世界 --keep-mods jei
+```
+
+### 测试
+
+新增 `core/test/client_clone.test.js`（60 项）：路径展开（`~` / 转义 / 引号 / `file://`）、
+方案名校验（路径分隔符 / 保留名 / 点开头结尾）、五种加载器识别（含现代 Forge 的
+`launchTarget` 兜底）、路径判定（根目录 / 实例 / 未开隔离 / 向上 2 级 / 完全不相关）、
+白名单复制（剔除项 / `saves` 不由第 2 步搬 / 未列出目录保守保留）、
+核心装配（走 `installer.install` / 客户端 jar 改名）、存档迁移（删 `session.lock` /
+保留 `datapacks` / `world` 冲突留档）、模组清洗（四种判定 / `force_keep` 压过元数据 /
+只移动不删除 / 重名不覆盖）、平台兜底（不覆盖已有文件）、报告（列出模组名与原因）、
+整体流程（核心失败回滚 / 全流程成功且产物可被 `_schemeExists` 认回）。
+
+不联网、不动真实 `scheme/` 目录 —— 核心装配用打桩 installer。
+真实 Forge 装配要下安装器跑十几分钟，不适合单测。
+
+### 文档
+
+新增 `docs/CLONE_CLIENT.md`：九步流水线逐条说明、四个判断错误的来龙去脉、
+边界保证表、常见问题。
 
 ---
 
@@ -198,10 +307,16 @@ Sodium、Iris 这类纯客户端模组被服务端加载时，轻则 `ClassNotFo
 ### 命令
 
 ```bash
-wow mod client-filter              # 立即扫描并隔离
-wow mod client-filter --dry-run    # 只预览，不动文件
-wow mod client-filter --list sodium  # 查某个 modid 在不在内置名单里
+wow mod client-filter                 # 立即扫描并隔离
+wow mod client-filter --dry-run       # 只预览，不动文件
+wow mod client-filter --list sodium   # 查某个 modid 在不在内置名单里
+wow mod client-filter --show          # 看隔离区里有什么
+wow mod client-filter --restore       # 全部挪回 mods/
+wow mod client-filter --restore x.jar # 只恢复一个
 ```
+
+`--restore` 遇到 `mods/` 里已有同名文件时不覆盖，改名为 `xxx.restored-<时间戳>.jar`，
+保证两份都在。
 
 ### 边界细节
 
@@ -211,14 +326,15 @@ wow mod client-filter --list sodium  # 查某个 modid 在不在内置名单里
 - 单个 jar 元数据读取有 256 KB 上限，防 zip 炸弹
 - 文件移动用 `fs.moveSync`，同分区内是 `rename`（原子、零拷贝）
 - 幂等：第二次运行扫不到东西就静默返回
+- 恢复时遇到同名文件改名为 `xxx.restored-<时间戳>.jar`，两份都保住
 
 ### 测试
 
-新增 `core/test/client_mod_filter.test.js`（61 项）：名单合成（追加 / 剔除 / 停用内置）、
+新增 `core/test/client_mod_filter.test.js`（69 项）：名单合成（追加 / 剔除 / 停用内置）、
 TOML 解析（多段 / 段外 modId 不误判 / 单引号）、四种加载器元数据读取、
 判定优先级（元数据铁证压过名单剔除）、加载器白名单、
-移动行为（字节一致 / 不覆盖 / dryRun / 幂等）、`server.js` 接入点位置断言、
-配置项与 schema 校验。
+移动行为（字节一致 / 不覆盖 / dryRun / 幂等）、恢复（单个 / 全部 / 冲突改名 / 目录自动创建）、
+`server.js` 接入点位置断言、配置项与 schema 校验。
 
 全程不联网、不碰真实方案目录（临时目录里现造 zip 当 jar）。
 

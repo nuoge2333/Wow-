@@ -142,7 +142,7 @@ wow server status
 
 ---
 
-## 二、方案管理 (8 个)
+## 二、方案管理 (9 个)
 
 方案是独立的 Minecraft 服务器实例，支持模板模式（自动资源共享）。
 
@@ -271,6 +271,49 @@ wow scheme status survival
 
 ---
 
+### `scheme clone-client <path>`
+
+把一个 Minecraft 客户端实例克隆成 wow 方案。
+
+```bash
+wow scheme clone-client ~/.minecraft/versions/1.20.1-forge-47.2.0 [options]
+```
+
+| 选项 | 说明 |
+|------|------|
+| `-n, --name <name>` | 方案名（默认取实例目录名） |
+| `-t, --type <type>` | 手动指定核心类型（识别失败时用） |
+| `-v, --version <version>` | 手动指定 Minecraft 版本（识别失败时用） |
+| `--save <name>` | 要迁移的存档名；填 `-` 表示不迁移 |
+| `--dry-run` | 只做识别与检查，不创建任何东西 |
+| `--yes` | 不进行任何交互，全部使用默认值 |
+| `--extra-client-mods <list>` | 追加的客户端模组 modid，逗号分隔 |
+| `--keep-mods <list>` | 强制保留的模组 modid，逗号分隔（优先级最高） |
+
+**九步流程：** 定位实例 → 建方案骨架 → 白名单复制 → 核心装配 → 存档迁移 →
+模组清洗 → 平台兜底 → 入池登记 → 输出报告。
+
+**关键行为：**
+
+- **产物是方案**，克隆完成后 `scheme list` / `switch` / `server start` 全套可用
+- 核心走方案的**核心装配流程**（installer 模块），Forge/NeoForge 会跑官方安装器
+- **不删除任何文件**：客户端核心改名 `.client-jar.bak`、模组移到 `mods-disabled/`、
+  `world/` 冲突时挪成 `.bak`
+- 关键文件（`world/level.dat`、`mods/*.jar`、`config/`）复制失败时**中止并回滚**方案目录
+- 模组判定：`force_keep_mods` > 元数据 > 名单
+
+```bash
+# 先看看能不能识别
+wow scheme clone-client ~/.minecraft --dry-run
+
+# 全自动，保留 jei
+wow scheme clone-client ~/.minecraft -n mysrv --save 生存世界 --keep-mods jei --yes
+```
+
+详见 [`CLONE_CLIENT.md`](CLONE_CLIENT.md)。
+
+---
+
 ## 二之二、资源池管理 (1 个)
 
 ### `pool stats`
@@ -354,13 +397,15 @@ wow mod client-filter [options]
 |------|------|
 | `--dry-run` | 只列出将会被隔离的模组，不实际移动 |
 | `--list <modid>` | 检查单个 modid 是否在内置名单里 |
+| `--show` | 列出隔离区里有什么，不做任何改动 |
+| `--restore [file]` | 把隔离区里的模组挪回 `mods/`（不填 = 全部恢复） |
 
 **行为说明：**
 
 - 读取 jar 内部元数据（`fabric.mod.json` / `mods.toml` / `mcmod.info`）判断真正的 modid
 - 元数据声明「纯客户端」（`environment: client`，或 entrypoints 只有 `client`）
   或 modid 命中内置名单时，把 `jar` 移到 `mods_client_disabled/`
-- **只移动不删除**，需要恢复时把 jar 挪回 `mods/` 即可
+- **只移动不删除**，需要恢复时用 `--restore` 挪回来
 - 目标重名时不覆盖，改名为 `xxx.<时间戳>.jar`
 - 原版 / 纯插件端（vanilla / paper / purpur / spigot / bukkit / leaves）直接跳过
 
@@ -372,6 +417,13 @@ wow mod client-filter --dry-run
 
 # 查某个模组在不在内置名单里
 wow mod client-filter --list sodium
+
+# 看看隔离区里有什么
+wow mod client-filter --show
+
+# 全部恢复 / 只恢复一个
+wow mod client-filter --restore
+wow mod client-filter --restore sodium.jar
 ```
 
 自定义名单：在 `wow.yaml` 的 `mod.client_only.extra` 里每行写一个 modid，

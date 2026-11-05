@@ -541,6 +541,90 @@ function formatSummary(result, dryRun = false) {
     return lines;
 }
 
+/**
+ * 列出隔离区里的文件，供 `--restore` 与 `mod list` 使用。
+ * @param {string} quarantineDir
+ * @returns {Array<{file:string, size:number, mtime:string}>}
+ */
+function listQuarantined(quarantineDir) {
+    const out = [];
+    if (!quarantineDir || !fs.existsSync(quarantineDir)) return out;
+    let entries = [];
+    try {
+        entries = fs.readdirSync(quarantineDir).sort();
+    } catch (e) {
+        return out;
+    }
+    for (const file of entries) {
+        if (!/\.jar$/i.test(file)) continue;
+        try {
+            const st = fs.statSync(path.join(quarantineDir, file));
+            if (!st.isFile()) continue;
+            out.push({ file, size: st.size, mtime: st.mtime.toISOString() });
+        } catch (e) { /* 读不到就跳过 */ }
+    }
+    return out;
+}
+
+/**
+ * 把隔离区里的文件挪回 mods/。
+ *
+ * 为什么不直接 fs.move：目标可能已存在同名文件（用户后来又装了一样的模组），
+ * 直接 move 会覆盖。这里遇到冲突时给恢复的文件加时间戳后缀，保证两个都在。
+ *
+ * @param {object} opts
+ *   quarantineDir, modsDir
+ *   file   指定要恢复的文件名（'*' 或省略 = 全部）
+ * @returns {{ok:boolean, reason?:string, restored:Array, missing:Array, failed:Array}}
+ */
+function restoreQuarantined(opts = {}) {
+    const { quarantineDir, modsDir } = opts;
+    const want = String(opts.file || '*').trim();
+    const out = { ok: true, restored: [], missing: [], failed: [] };
+
+    if (!quarantineDir || !fs.existsSync(quarantineDir)) {
+        return { ...out, ok: false, reason: `隔离目录不存在: ${quarantineDir || '(未指定)'}` };
+    }
+
+    const all = listQuarantined(quarantineDir);
+    const targets = want === '*' ? all : all.filter(f => f.file === want);
+
+    if (targets.length === 0) {
+        return { ...out, ok: false, reason: want === '*' ? '隔离目录是空的' : `隔离目录里没有 ${want}` };
+    }
+
+    try {
+        fs.ensureDirSync(modsDir);
+    } catch (e) {
+        return { ...out, ok: false, reason: `mods 目录不可写: ${e.message}` };
+    }
+
+    for (const item of targets) {
+        const src = path.join(quarantineDir, item.file);
+        let dest = path.join(modsDir, item.file);
+        try {
+            if (fs.existsSync(dest)) {
+                const ext = path.extname(item.file);
+                const base = path.basename(item.file, ext);
+                const alt = path.join(modsDir, `${base}.restored-${Date.now()}${ext}`);
+                fs.moveSync(src, alt, { overwrite: false });
+                out.restored.push({ file: item.file, restoredAs: path.basename(alt), conflict: true });
+            } else {
+                fs.moveSync(src, dest, { overwrite: false });
+                out.restored.push({ file: item.file, restoredAs: item.file, conflict: false });
+            }
+        } catch (e) {
+            out.failed.push({ file: item.file, reason: e.message });
+        }
+    }
+
+    if (out.restored.length === 0 && out.failed.length > 0) {
+        out.ok = false;
+        out.reason = '全部恢复失败';
+    }
+    return out;
+}
+
 module.exports = {
     QUARANTINE_DIRNAME,
     MAX_META_BYTES,
@@ -552,5 +636,7 @@ module.exports = {
     judgeJar,
     loaderSupportsMods,
     scanAndQuarantine,
-    formatSummary
+    formatSummary,
+    listQuarantined,
+    restoreQuarantined
 };
