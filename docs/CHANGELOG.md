@@ -42,8 +42,8 @@
 
 | 版本 | 状态 | 发布时间 |
 |------|------|------|
-| **未发布** | 开发中（CurseForge 三层降级 / 客户端模组隔离 / 客户端克隆为方案 / 跨设备方案同步） | — |
-| **3.5.24-26.40** | 当前版本 |2026-11-03|
+| **3.6.0-26.41** | 当前版本 |2026-11-06|
+| **3.5.24-26.40** | 上一版本 |2026-11-03|
 | **3.5.23-26.3e** | 上一版本 |2026-11-01|
 | **3.5.22-26.3d** | 上一版本 |2026-11-02|
 | **3.5.21-26.3c** | 上一版本 |2026-11-02|
@@ -114,11 +114,26 @@
 
 ---
 
-## [未发布] — 跨设备方案同步
+## [3.6.0-26.41] — 2026-11-06
 
-> 状态：**已开发完成，尚未发行**。
+> 本版本主题：**把「方案」变成可搬运的资产**——从客户端克隆方案、跨设备同步方案，
+> 再到执行端自动从 Modrinth 补齐模组。同时补齐 CurseForge 的多层降级链路。
 
-### 为什么要做
+### 本版本一览
+
+| 能力 | 命令 | 一句话 |
+|------|------|--------|
+| 跨设备方案同步 | `wow sync login/push/list` | 清单先行、差量上传、断点续传、执行端组装入池 |
+| Modrinth 补齐 | （同步内置） | pool 未命中 → 查 Modrinth → SHA-256 校验 → 复用 |
+| 客户端一键克隆 | `wow scheme clone-client` | 从 .minecraft 实例直接产出可用方案 |
+| 客户端模组隔离 | `wow mod client-filter` | 开服前自动剔除钠之类的客户端专用 mod |
+| CurseForge 降级 | （mod 安装内置） | 代理 → BYOK → 本地缓存 |
+| cfproxy Workers 版 | （部署件） | 单文件零依赖的 Cloudflare Workers 代理 |
+
+### 1. 跨设备方案同步（`wow sync`）
+
+
+#### 为什么要做
 
 同一份服务端方案要在两台机器之间搬家：家里电脑调好了方案，VPS 上跑 `wow web start`。
 以前靠手工 scp + 逐个目录对齐，容易漏文件、漏配置。现在一条 `wow sync push` 完成：
@@ -126,20 +141,20 @@
 
 两端跑的都是同一份 wow（谁都可以是控制端或执行端），没有角色区分的协议差异。
 
-### 架构
+#### 架构
 
 - **控制端**：方案所在的一方。`wow sync login <url>` 存 JWT，`wow sync push` 生成清单并上传缺口。
 - **执行端**：跑 `wow web start` 的一方。开放 `/api/sync/check`、`/api/sync/upload`、`/api/sync/upload/status`、`/api/sync/finalize` 四个端点（全部走认证中间件）。
 - 网络路径：公网 IP / Cloudflare Tunnel / EasyTier 虚拟 IP 均可，只要控制端能 HTTP 访问到执行端即可。
 
-### 四阶段流程
+#### 四阶段流程
 
 1. **清单先行**：控制端扫描方案，产出 `manifest.protocol = 1`（核心 + 模组 + 插件 + 其它文件 + root 配置，全部带 SHA-256 与大小）。
 2. **执行端预检**：逐文件判定缺口（missing / already_present），方案名冲突拒绝（同步来源的方案允许重推做增量）。
 3. **差量上传**：小文件（≤4MB）打包 JSON 束（base64）；大文件走 8MB 分块上传，断点续传（偏移不连续返回 409 + `expected_offset`；收齐后哈希不匹配返回 422 并清掉 staging）。所有上传统一进 `core/temp/sync_staging/<方案>/<sha256>.part`。
 4. **组装**：finalize 是唯一往方案目录写文件的地方——staging 校验落盘、核心走 installer 装配（与 `scheme create` 共用）、`server.properties` 覆盖前备份为 `.bak`、入池登记、写 `sync_source`/`synced_at`/`sync_report`、state: full。**不自动启动**，由用户 `scheme switch` 后手动开服。
 
-### 安全边界
+#### 安全边界
 
 | 边界 | 规则 |
 |------|------|
@@ -153,13 +168,40 @@
 | 哈希 | 上传声明哈希 + 落盘前重算，双保险 |
 | 认证 | 复用 Web 面板 JWT（`wow sync login` 存凭据） |
 
-### 实现过程中的关键取舍
+#### 实现过程中的关键取舍
 
 - **核心装配放 finalize 不放 check**：Forge 安装器要下几十 MB + 跑 Java，挂在 HTTP 请求里会被 Cloudflare Tunnel ~100s 超时掐断。
 - **同步来源的方案允许重推**：单纯按方案名冲突拒绝会挡住增量同步与断点续传；判据是 `scheme.yaml` 里的 `sync_source` 标记，手工方案 / clone-client 产物仍然拒绝。
 - **断点续传以执行端为准**：控制端本地进度文件（`core/temp/sync_progress.json`）只做展示参考——执行端 staging 可能被清理，本地「已传完」不可信。
 
-### Modrinth 补齐（216 号议题）
+#### 实现过程中遇到的坑
+
+- **Modrinth CDN 慢到离谱时没有兜底**：最初只有 socket 空闲超时（60s），但「一直有数据但极慢」的情况会挂满整个请求。加了整体时限 + 总预算两道闸。
+- **单批失败被误判为「未收录」**：`consecutiveFailures` 只数到 1 就结束循环，返回 `ok: true`，导致 reason 显示「Modrinth 未收录」而不是「不可达」。修正为「一批都没成功 = 不可达」。
+- **`downloadToTemp` 漏掉 URL 参数**：日志里原本不带下载地址，排障时不知道是哪个文件失败。
+
+#### 命令
+
+```bash
+wow sync login <url> [-p password]   # 存 JWT 凭据（keyed by URL）
+wow sync push <url> [--scheme X] [--name Y] [--with-world] [--with-config]
+wow sync list                        # 查看已保存的执行端
+```
+
+#### 测试
+
+- 新增 `core/test/sync_module.test.js`：路径白名单 17 项、清单结构与三路哈希 18 项、multipart 解析 5 项、staging 续传基建 5 项、Modrinth 补齐 21 项（命中 / 哈希不匹配 / 未收录 / 不可达 / 单批不可达 / 分批 / 预算耗尽 / 旧清单 / 临时目录清理）。
+- 全量回归 31 个测试文件通过。
+- 端到端实测：全量推送 6 文件（含 6MB 分块上传）、增量重推（5 就位 + 1 分块续传从 8MB 断点恢复）、`.bak` 备份、手工方案 409、路径白名单拒绝、422 哈希校验 + staging 清理、执行端 `scheme info` 正确识别。
+
+#### 文档
+
+- 新增 `docs/SYNC.md`（架构 / 命令 / 网络路径 / 边界表）。
+- `docs/COMMANDS.md` 增加 `sync` 命令组。
+
+---
+
+### 2. Modrinth 补齐（216 号议题）
 
 缺口补齐从「pool 未命中 → 需上传」补成「pool 未命中 → 查 Modrinth → 哈希匹配则复用 → 不匹配才需上传」。
 
@@ -171,38 +213,10 @@
 - **报告可读**：控制端新增「模组来源分布」——pool 命中 / Modrinth 补齐 / 需上传（并说明每个文件为什么还要传）。
 - 不查 CurseForge，全程不碰。
 
-### 实现过程中遇到的坑
+### 3. 客户端一键克隆为方案（`wow scheme clone-client`）
 
-- **Modrinth CDN 慢到离谱时没有兜底**：最初只有 socket 空闲超时（60s），但「一直有数据但极慢」的情况会挂满整个请求。加了整体时限 + 总预算两道闸。
-- **单批失败被误判为「未收录」**：`consecutiveFailures` 只数到 1 就结束循环，返回 `ok: true`，导致 reason 显示「Modrinth 未收录」而不是「不可达」。修正为「一批都没成功 = 不可达」。
-- **`downloadToTemp` 漏掉 URL 参数**：日志里原本不带下载地址，排障时不知道是哪个文件失败。
 
-### 命令
-
-```bash
-wow sync login <url> [-p password]   # 存 JWT 凭据（keyed by URL）
-wow sync push <url> [--scheme X] [--name Y] [--with-world] [--with-config]
-wow sync list                        # 查看已保存的执行端
-```
-
-### 测试
-
-- 新增 `core/test/sync_module.test.js`：路径白名单 17 项、清单结构与三路哈希 18 项、multipart 解析 5 项、staging 续传基建 5 项、Modrinth 补齐 21 项（命中 / 哈希不匹配 / 未收录 / 不可达 / 单批不可达 / 分批 / 预算耗尽 / 旧清单 / 临时目录清理）。
-- 全量回归 31 个测试文件通过。
-- 端到端实测：全量推送 6 文件（含 6MB 分块上传）、增量重推（5 就位 + 1 分块续传从 8MB 断点恢复）、`.bak` 备份、手工方案 409、路径白名单拒绝、422 哈希校验 + staging 清理、执行端 `scheme info` 正确识别。
-
-### 文档
-
-- 新增 `docs/SYNC.md`（架构 / 命令 / 网络路径 / 边界表）。
-- `docs/COMMANDS.md` 增加 `sync` 命令组。
-
----
-
-## [未发布] — 客户端一键克隆为方案
-
-> 状态：**已开发完成，尚未发行**。
-
-### 为什么要做
+#### 为什么要做
 
 玩家手里通常已经有一个调好的客户端整合包（Forge 实例 + 几十个模组 + 配置 + 存档）。
 想开服只能手动搬：复制 mods、找服务端核心、跑 Forge 安装器、清客户端模组、搬存档、
@@ -210,7 +224,7 @@ wow sync list                        # 查看已保存的执行端
 
 本版把它压成一条命令：`wow scheme clone-client <客户端路径>`。
 
-### 核心约定：产物是方案，不是目录
+#### 核心约定：产物是方案，不是目录
 
 不是「把 `.minecraft` 复制一份」，而是三步：
 
@@ -220,7 +234,7 @@ wow sync list                        # 查看已保存的执行端
 
 所以克隆完成后 `scheme list` / `scheme switch` / `server start` 全套可用。
 
-### 新增 `core/src/client_clone.js`
+#### 新增 `core/src/client_clone.js`
 
 九步流水线，每步都是独立可测的函数：
 
@@ -236,7 +250,7 @@ wow sync list                        # 查看已保存的执行端
 | 7 · 入池登记 | `registerToPool` | 核心 + 模组入池，写 `clone_report` |
 | 8 · 报告 | `buildReport` | 逐条列出被禁模组的名字与原因 |
 
-### 实现过程中发现并修正的四个判断错误
+#### 实现过程中发现并修正的四个判断错误
 
 **1. 现代 Forge 的 `mainClass` 里没有 "forge"**
 
@@ -265,7 +279,7 @@ wow sync list                        # 查看已保存的执行端
 所以任何方案都打印「模组数: 0」，连装了几十个模组的方案也是 0。顺手修了，
 并补了「状态」「来源」「克隆时禁用数」三行。
 
-### 不删任何文件
+#### 不删任何文件
 
 需求总则是「不自动删除任何文件」，落实到三个具体位置：
 
@@ -277,7 +291,7 @@ wow sync list                        # 查看已保存的执行端
 
 （`session.lock` 是例外 —— 它是服务端会自己重建的运行时锁，带着它服务端直接启动失败。）
 
-### 命令
+#### 命令
 
 ```bash
 wow scheme clone-client <路径>                    # 交互式
@@ -286,7 +300,7 @@ wow scheme clone-client <路径> --yes              # 全默认值
 wow scheme clone-client <路径> -n mysrv --save 生存世界 --keep-mods jei
 ```
 
-### 测试
+#### 测试
 
 新增 `core/test/client_clone.test.js`（60 项）：路径展开（`~` / 转义 / 引号 / `file://`）、
 方案名校验（路径分隔符 / 保留名 / 点开头结尾）、五种加载器识别（含现代 Forge 的
@@ -300,18 +314,18 @@ wow scheme clone-client <路径> -n mysrv --save 生存世界 --keep-mods jei
 不联网、不动真实 `scheme/` 目录 —— 核心装配用打桩 installer。
 真实 Forge 装配要下安装器跑十几分钟，不适合单测。
 
-### 文档
+#### 文档
 
 新增 `docs/CLONE_CLIENT.md`：九步流水线逐条说明、四个判断错误的来龙去脉、
 边界保证表、常见问题。
 
 ---
 
-## [未发布] — 客户端专用模组自动隔离
+### 4. 客户端专用模组自动隔离
 
 > 状态：**已开发完成，尚未发行**。按 `docs/RELEASE_POLICY.md`，版本号待「发行」时统一定。
 
-### 为什么要做
+#### 为什么要做
 
 整合包（尤其 CurseForge 一键导入）常把客户端模组和通用模组混在同一个 `mods/` 里。
 Sodium、Iris 这类纯客户端模组被服务端加载时，轻则 `ClassNotFoundException` 刷屏，
@@ -321,7 +335,7 @@ Sodium、Iris 这类纯客户端模组被服务端加载时，轻则 `ClassNotFo
 本版在开服前扫一遍 `mods/`，把确定的客户端模组挪进 `mods_client_disabled/`，
 把「必然崩」变成「不崩」。
 
-### 新增 `core/src/client_mod_filter.js`
+#### 新增 `core/src/client_mod_filter.js`
 
 四条设计原则，每条都对应一个具体的失败模式：
 
@@ -332,7 +346,7 @@ Sodium、Iris 这类纯客户端模组被服务端加载时，轻则 `ClassNotFo
 | **宁可漏杀不可错杀** | 读不出元数据就放过（计入 skipped），只有铁证才动手 |
 | **不阻断启动** | 整个流程包在 try 里，任何异常只警告。隔离逻辑不能成为「起不来」的新理由 |
 
-### 判定依据（分两层，元数据优先）
+#### 判定依据（分两层，元数据优先）
 
 **第一层 · 元数据铁证**（`by: 'meta'`）：
 
@@ -356,7 +370,7 @@ Sodium、Iris 这类纯客户端模组被服务端加载时，轻则 `ClassNotFo
 「这个模组只能客户端加载」标记（`displayTest` / `side="CLIENT"` 的语义不同），
 硬猜会错杀，所以 Forge 端只按 modid 名单判断。
 
-### 支持的元数据格式
+#### 支持的元数据格式
 
 | 加载器 | 文件 |
 |--------|------|
@@ -369,7 +383,7 @@ Sodium、Iris 这类纯客户端模组被服务端加载时，轻则 `ClassNotFo
 不引入 TOML 解析库——只需要 `[[mods]]` 段里的 `modId`，手写正则足够，
 且不会因为某个模组写了奇怪的 TOML 而整体抛异常。
 
-### 跳过的情况
+#### 跳过的情况
 
 - **原版 / 纯插件端**（`vanilla` `paper` `purpur` `spigot` `bukkit` `leaves`）
   根本不加载 `mods/`，直接不处理
@@ -378,7 +392,7 @@ Sodium、Iris 这类纯客户端模组被服务端加载时，轻则 `ClassNotFo
 - 读不出元数据的 jar（插件、资源包、损坏文件）
 - 未知 loader → 放行（不知道就别拦）
 
-### 覆盖名单
+#### 覆盖名单
 
 | 配置键 | 默认 | 说明 |
 |--------|------|------|
@@ -388,7 +402,7 @@ Sodium、Iris 这类纯客户端模组被服务端加载时，轻则 `ClassNotFo
 
 `extra` 里支持 `xxx: 我的说明` 写法，说明会出现在日志里。
 
-### 命令
+#### 命令
 
 ```bash
 wow mod client-filter                 # 立即扫描并隔离
@@ -402,7 +416,7 @@ wow mod client-filter --restore x.jar # 只恢复一个
 `--restore` 遇到 `mods/` 里已有同名文件时不覆盖，改名为 `xxx.restored-<时间戳>.jar`，
 保证两份都在。
 
-### 边界细节
+#### 边界细节
 
 - 隔离目录与 `mods/` 同级：`mods_client_disabled/`
 - **目标重名不覆盖**：已有同名文件时改名为 `xxx.<时间戳>.jar`，
@@ -412,7 +426,7 @@ wow mod client-filter --restore x.jar # 只恢复一个
 - 幂等：第二次运行扫不到东西就静默返回
 - 恢复时遇到同名文件改名为 `xxx.restored-<时间戳>.jar`，两份都保住
 
-### 测试
+#### 测试
 
 新增 `core/test/client_mod_filter.test.js`（69 项）：名单合成（追加 / 剔除 / 停用内置）、
 TOML 解析（多段 / 段外 modId 不误判 / 单引号）、四种加载器元数据读取、
@@ -424,11 +438,11 @@ TOML 解析（多段 / 段外 modId 不误判 / 单引号）、四种加载器�
 
 ---
 
-## [未发布] — CurseForge 三层降级
+### 5. CurseForge 三层降级
 
 > 状态：**已开发完成，尚未发行**。按 `docs/RELEASE_POLICY.md`，版本号待「发行」时统一定。
 
-### 为什么要做
+#### 为什么要做
 
 CurseForge 官方 API 必须带 `x-api-key`，不带返回 `403`（实测：无 Key 与错 Key
 **都是 403，且响应体为空**，无法区分）。于是没有 Key 的用户完全用不了 CurseForge 搜索。
@@ -437,7 +451,7 @@ CurseForge 官方 API 必须带 `x-api-key`，不带返回 `403`（实测：无 
 `cfproxy.fly.dev` **已停服**（实测 DNS 无法解析，仓库最后推送 2022-03-04）。
 所以本版**不把公共实例设为默认值**——写死一个死地址只会让每个用户先白等 5 秒超时。
 
-### 新增 `core/src/cf_client.js`
+#### 新增 `core/src/cf_client.js`
 
 三层降级：**代理 → BYOK 直连 → 本地缓存**。
 
@@ -449,7 +463,7 @@ CurseForge 官方 API 必须带 `x-api-key`，不带返回 `403`（实测：无 
 
 **缓存先于网络读**：24h 内的命中直接返回，0 次网络请求——正好补上代理层无缓存的缺陷。
 
-### 降级判定（这里有个真实踩坑）
+#### 降级判定（这里有个真实踩坑）
 
 实测发现官方 API 对「没带 Key」也返回 **403**，所以不能简单地把 403 当成「不可降级」：
 
@@ -461,7 +475,7 @@ CurseForge 官方 API 必须带 `x-api-key`，不带返回 `403`（实测：无 
 
 区分成三档：`next-layer` / `cache-only` / `fail`，见 `classifyError()`。
 
-### URL 拼接（另一个坑）
+#### URL 拼接（另一个坑）
 
 cfproxy 的语义是「把 base `https://api.curseforge.com` 换成代理地址，**path 原样转发**」。
 所以请求路径必须自带 `/v1`。实测对照：
@@ -471,21 +485,21 @@ cfproxy 的语义是「把 base `https://api.curseforge.com` 换成代理地址�
 
 `buildUrl()` 统一兜底：无论 base 写没写 `/v1`、path 带没带 `/v1`，最终都恰好一个 `/v1`。
 
-### 缓存
+#### 缓存
 
 - 位置：`core/cache/cf_mods/`，按 `file_<projectID>_<fileID>.json` / `project_<projectID>.json`
 - 有效期 24 小时；写文件用 `.tmp` + `rename` 原子替换
 - **只缓存确定性结果**（文件直链、项目详情）。关键词搜索不缓存——缓存 24h 会让用户搜不到新模组
 - 缓存文件损坏时当作无缓存处理，不阻断主流程
 
-### 配置项
+#### 配置项
 
 | 键 | 默认 | 说明 |
 |----|------|------|
 | `curseforge.api_key` | `''` | 新增。兼容旧的 `api_keys.curseforge` / `download.curseforge_key` |
 | `curseforge.proxy_url` | `''` | 新增。留空 = 不走代理 |
 
-### 命令
+#### 命令
 
 ```bash
 wow cf status    # 三层配置状态 + 缓存统计
@@ -493,7 +507,7 @@ wow cf cache     # 缓存统计
 wow cf clear     # 清空缓存
 ```
 
-### 整合包安装（预留接口）
+#### 整合包安装（预留接口）
 
 `getFileDownload(projectId, fileId)` 对「作者禁用 API 分发」（`downloadUrl` 为 null）
 抛出 `code === 'CF_FILE_FORBIDDEN'` 的错误，调用方据此区分「拿不到」与「网络失败」，
@@ -502,12 +516,12 @@ wow cf clear     # 清空缓存
 > 本轮**未**实现 CurseForge 整合包的完整安装流程（现有 `pack_generator.js`
 > 只认自定义格式的 manifest，不处理 `projectID`/`fileID`）。
 
-### 文档
+#### 文档
 
 新增 `docs/CF_PROXY.md`：三层矩阵图解、降级触发表、cfproxy 的 Docker 部署、
 `/v1` 的坑、缓存管理、常见问题。
 
-### 自建代理：Cloudflare Workers 版
+#### 自建代理：Cloudflare Workers 版
 
 新增 `deploy/cfproxy-worker/`，提供一个**单文件、零依赖**的 Worker，
 可直接粘到 Cloudflare 控制台在线编辑器部署（不需要 Wrangler CLI）。
@@ -532,13 +546,24 @@ wow cf clear     # 清空缓存
 
 测试：`deploy/cfproxy-worker/worker.test.mjs`（19 项，打桩不联网）。
 
-### 测试
+#### 测试
 
 新增 `core/test/cf_fallback.test.js`（33 项）：凭据组合、代理优先、5s 超时、
 429/5xx/超时/403/404 的降级分流、缓存命中零请求、缓存过期兜底、缓存损坏容错、
 `CF_FILE_FORBIDDEN` 语义、`buildUrl` 六种拼接组合、源码结构断言。
 
 全程打桩、不联网（实测耗时 0.06s）。
+
+---
+
+### 6. cfproxy Cloudflare Workers 版
+
+把「自建 cfproxy」做成单文件、零依赖的 Workers 脚本，`wrangler deploy` 一条命令上线：
+
+- 只用 Workers 运行时内置的 `fetch`，不引任何 npm 包；
+- 原样转发 path 与 query，仅替换 base 域名，符合 cfproxy 的语义约定；
+- 可选 `CF_PROXY_TOKEN` 环境变量做简单鉴权，避免被陌生人白嫖额度；
+- 用于 CurseForge 三层降级里的「一 · 代理」层，配合 `curseforge.proxy_url` 使用。
 
 ---
 

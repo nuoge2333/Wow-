@@ -95,24 +95,28 @@ git push origin main
 
 ## 五、当前状态
 
-- 已发布的最新版本：`v3.5.24-26.40`
+- 已发布的最新版本：`v3.6.0-26.41`（2026-11-06）
 - **下一个版本号尚未确定**，等用户说「发行」时再定
-- 本周期已累积的未发布改动：见 `git log v3.5.24-26.40..HEAD`
+- 下一周期累积的改动：见 `git log v3.6.0-26.41..HEAD`
 
-### 本周期已累积（待发行）
+### 上一周期已发行（v3.6.0-26.41）
 
 | 内容 | 文档 | 测试 |
 |------|------|------|
-| CurseForge 三层降级（代理 → BYOK → 缓存） | `docs/CF_PROXY.md`、CHANGELOG `[未发布]` | `core/test/cf_fallback.test.js`（33 项） |
+| 跨设备方案同步（`wow sync`） | `docs/SYNC.md` | `core/test/sync_module.test.js` |
+| Modrinth 补齐（216 号议题） | `docs/SYNC.md` § 模组比对 | 同上（Modrinth 21 项） |
+| 客户端一键克隆为方案 | `docs/CLONE_CLIENT.md` | `core/test/client_clone.test.js` |
+| 客户端专用模组自动隔离 | `docs/COMMANDS.md` | `core/test/client_mod_filter.test.js` |
+| CurseForge 三层降级 | `docs/CF_PROXY.md` | `core/test/cf_fallback.test.js` |
 
-> 开发期间**不改版本号**。`wow -V` 会一直显示 `3.5.24-26.40`，
+> 开发期间**不改版本号**。`wow -V` 会一直显示 `3.6.0-26.41`，
 > 这是刻意的——避免「版本号已占用但远端没发布」的中间态。
 
 ### 序号纪律
 
-`26.40` 是新的干净起点。从它开始**严格十六进制递增**，具体约束：
+`26.41` 是新的干净起点。从它开始**严格十六进制递增**，具体约束：
 
-- `39` 之后是 `3a`，`3f` 之后是 `40` —— 正常进位，**不要跳过中间值**
+- `3f` 之后是 `40`，`40` 之后是 `41` —— 正常十六进制递增，**不要跳过中间值**
 - **绝不回绕复用**旧序号。历史上 `26.3a` ~ `26.3f` 因反复回绕被用了 2～3 次，
   导致无法用序号判断版本新旧，详见 `docs/CHANGELOG.md` 文首说明
 - 发版前先 `git tag --list | grep <候选序号>` 确认未被占用
