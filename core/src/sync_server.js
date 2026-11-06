@@ -63,8 +63,9 @@ function slog(msg) {
 async function processManifest(manifest, opts = {}) {
     const out = { missing: [], already_present: [], conflicts: [], core_plan: null, total_missing_bytes: 0 };
 
-    if (!manifest || manifest.protocol !== 1) {
-        return { ok: false, reason: '清单协议版本不支持' };
+    // 支持 v1（单哈希，无 Modrinth 查询）与 v2（mods/plugins 带 sha512/sha1）
+    if (!manifest || ![1, 2].includes(manifest.protocol)) {
+        return { ok: false, reason: `清单协议版本不支持: ${manifest && manifest.protocol}` };
     }
 
     const schemeName = String(manifest.name || '').trim();
@@ -130,6 +131,9 @@ async function processManifest(manifest, opts = {}) {
     out.skeleton_created = true;
 
     // ---- 逐文件判定 ----
+    // mods/plugins 的缺口先攒起来：pool 全未命中时统一去问 Modrinth（批量才有效率）
+    const modCandidates = [];
+
     const judge = async (entry) => {
         const abs = path.join(dir, entry.path);
         if (fs.existsSync(abs)) {
@@ -142,6 +146,10 @@ async function processManifest(manifest, opts = {}) {
                 return;
             }
         }
+        if (entry.kind === 'mods' || entry.kind === 'plugins') {
+            modCandidates.push(entry);
+            return;
+        }
         out.missing.push({ path: entry.path, sha256: entry.sha256, size: entry.size });
         out.total_missing_bytes += entry.size || 0;
     };
@@ -153,6 +161,38 @@ async function processManifest(manifest, opts = {}) {
             if (!['server.properties', 'eula.txt'].includes(e.path)) continue;
         }
         await judge(e);
+    }
+
+    // ---- pool 未命中的模组：尝试 Modrinth 补齐 ----
+    // 注意：命中并下载成功的直接写入方案目录（已通过 SHA-256 校验），
+    // 不进 missing；其余一律降级为「需上传」，任何失败都不中断同步。
+    // resolved_by_pool = 模组总数 - 缺口数（already_present 里哈希一致的已在 judge 里记过）
+    const modPoolHits = out.already_present.filter(a => /^(mods|plugins)\//.test(a.path)).length;
+    out.mod_stats = { total_mods: modCandidates.length + modPoolHits, resolved_by_pool: modPoolHits, resolved_by_modrinth: 0, need_upload: 0 };
+    if (modCandidates.length > 0) {
+        // resolved_by_pool：同名文件哈希一致已经进 already_present 的模组数，这里从总量倒推
+        const mr = await require('./sync_modrinth').fillFromModrinth({
+            entries: modCandidates,
+            protocol: manifest.protocol,
+            schemePath: dir,
+            log: slog
+        });
+        if (mr.skipped) slog(`[Modrinth] ${mr.skipped}`);
+        for (const p of mr.resolved) {
+            out.already_present.push({ path: p, reason: 'Modrinth 补齐（SHA-256 校验通过）' });
+        }
+        out.mod_stats.resolved_by_modrinth = mr.resolved.length;
+        for (const m of mr.needUpload) {
+            const entry = modCandidates.find(c => c.path === m.path);
+            out.missing.push({
+                path: m.path,
+                sha256: entry && entry.sha256,
+                size: entry ? entry.size : 0,
+                reason: m.reason
+            });
+            out.total_missing_bytes += (entry && entry.size) || 0;
+        }
+        out.mod_stats.need_upload = mr.needUpload.length;
     }
 
     return { ok: true, ...out };
@@ -630,7 +670,7 @@ function registerSyncRoutes(app) {
     app.post('/api/sync/finalize', express.json({ limit: '12mb' }), async (req, res) => {
         try {
             const manifest = req.body;
-            if (!manifest || manifest.protocol !== 1) {
+            if (!manifest || ![1, 2].includes(manifest.protocol)) {
                 return res.status(400).json({ success: false, error: '清单协议版本不支持' });
             }
             const r = await finalizeScheme(manifest, {

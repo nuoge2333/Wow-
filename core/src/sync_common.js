@@ -51,8 +51,21 @@ const MAX_TOTAL_BYTES = 2 * 1024 * 1024 * 1024; // 2GB
 /** JSON 束里单文件 base64 上限（config 类文件实际都在几 MB 内） */
 const MAX_BUNDLE_FILE_BYTES = 8 * 1024 * 1024;
 
+/**
+ * 清单协议版本。
+ *   1 — 单哈希（sha256），基线版本
+ *   2 — mods/plugins 增加 sha512/sha1（供执行端查 Modrinth）；执行端收到 v1 清单时
+ *       跳过 Modrinth 查询，直接按「需上传」处理（向后兼容）
+ */
+const PROTOCOL_VERSION = 2;
+
 /** staging 目录名（core/temp/ 下） */
 const STAGING_DIR = path.join('temp', 'sync_staging');
+
+/** core/ 根目录（temp、scheme 等相对它解析） */
+function tempRoot() {
+    return path.join(__dirname, '..');
+}
 
 // ==================== 哈希与清单 ====================
 
@@ -70,6 +83,33 @@ function sha256File(filePath) {
 /** 小内容直接哈希 */
 function sha256Buf(buf) {
     return crypto.createHash('sha256').update(buf).digest('hex');
+}
+
+/**
+ * 一次读盘算三路哈希（SHA-256 / SHA-512 / SHA-1）。
+ *
+ * 只给 mods / plugins 的 .jar 用：SHA-256 是唯一写入依据（pool 比对、
+ * 落盘校验、一致性判定）；SHA-512 / SHA-1 只用于「问 Modrinth 有没有这个文件」，
+ * 不参与任何写入决策。
+ *
+ * 流式三路并行，不重复读盘。
+ */
+function hashTripleFile(filePath) {
+    return new Promise((resolve, reject) => {
+        const h256 = crypto.createHash('sha256');
+        const h512 = crypto.createHash('sha512');
+        const h1 = crypto.createHash('sha1');
+        let bytes = 0;
+        const s = fs.createReadStream(filePath);
+        s.on('data', d => { h256.update(d); h512.update(d); h1.update(d); bytes += d.length; });
+        s.on('error', reject);
+        s.on('end', () => resolve({
+            sha256: h256.digest('hex'),
+            sha512: h512.digest('hex'),
+            sha1: h1.digest('hex'),
+            size: bytes
+        }));
+    });
 }
 
 /** 是否允许该相对路径（扩展名 + 目录白名单） */
@@ -126,7 +166,7 @@ async function buildManifest(opts = {}) {
     }
 
     const manifest = {
-        protocol: 1,
+        protocol: PROTOCOL_VERSION,
         name: meta.name,
         mc_version: meta.version || null,
         loader: meta.loader || meta.type || 'vanilla',
@@ -157,16 +197,19 @@ async function buildManifest(opts = {}) {
         }
     }
 
-    // ---- 模组 / 插件 ----
+    // ---- 模组 / 插件：三路哈希（sha512/sha1 供执行端查 Modrinth） ----
     for (const [key, dir] of [['mods', 'mods'], ['plugins', 'plugins']]) {
         const d = path.join(schemePath, dir);
         for (const f of listFilesRecursively(d)) {
             // listFilesRecursively 返回的是相对 dir 的路径，落回绝对路径要拼上 dir
             const relToScheme = `${dir}/${f.rel}`;
             if (!relToScheme.toLowerCase().endsWith('.jar')) continue;
+            const h = await hashTripleFile(path.join(schemePath, relToScheme));
             manifest[key].push({
                 path: relToScheme,
-                sha256: await sha256File(path.join(schemePath, relToScheme)),
+                sha256: h.sha256,   // 唯一写入依据
+                sha512: h.sha512,   // 仅供 Modrinth 查询
+                sha1: h.sha1,       // 仅供 Modrinth 查询（降级算法）
                 size: f.size
             });
         }
@@ -247,6 +290,9 @@ function receivedBytes(absPartPath) {
 module.exports = {
     ALLOWED_DIRS,
     ALLOWED_EXTS,
+    PROTOCOL_VERSION,
+    tempRoot,
+    hashTripleFile,
     CHUNK_THRESHOLD,
     CHUNK_SIZE,
     MAX_FILE_BYTES,

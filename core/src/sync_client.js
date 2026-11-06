@@ -28,6 +28,18 @@ const { logger } = require('./log');
 
 const UA = 'wow-sync/1.0';
 
+/** 执行端返回的「为什么还要我上传」→ 人话 */
+const REASON_TEXT = {
+    not_in_pool_not_in_modrinth: 'Modrinth 未收录',
+    modrinth_hash_mismatch: 'Modrinth 哈希不匹配',
+    modrinth_download_failed: 'Modrinth 下载失败',
+    modrinth_unreachable: 'Modrinth 不可达',
+    modrinth_no_file: 'Modrinth 无可用文件',
+    modrinth_budget_exceeded: 'Modrinth 下载超时预算',
+    no_modrinth_hashes: '清单无 Modrinth 哈希',
+    path_not_allowed: '路径不在白名单'
+};
+
 // ==================== 凭据 ====================
 
 /** 取某执行端的 token（无则 null） */
@@ -247,7 +259,8 @@ async function push(opts = {}) {
     let check;
     try {
         check = (await apiCall('post', `${baseUrl}/api/sync/check`, token, {
-            timeout: 120000,
+            // 执行端预检里可能带 Modrinth 补齐（默认 90s 预算），这里留足余量
+            timeout: 180000,
             axios: { data: manifest }
         })).data;
     } catch (e) {
@@ -261,7 +274,17 @@ async function push(opts = {}) {
     if (!check.success) return { ok: false, reason: check.error || '预检失败' };
 
     log(`   已就位 ${check.already_present.length} 个，需上传 ${check.missing.length} 个（${(check.total_missing_bytes / 1024 / 1024).toFixed(1)} MB）`);
+    const ms = check.mod_stats || null;
+    if (ms && ms.total_mods > 0) {
+        const parts = [`pool 命中 ${ms.resolved_by_pool || 0}`, `Modrinth 补齐 ${ms.resolved_by_modrinth || 0}`, `需上传 ${ms.need_upload || 0}`];
+        log(`   模组：${parts.join(' / ')}（共 ${ms.total_mods}）`);
+    }
     log(`   核心：执行端将自行装配（${check.core_plan && check.core_plan.action}）`);
+
+    // 需要上传的条目带 reason（Modrinth 未收录 / 哈希不匹配 / 下载失败 / 不可达），
+    // 一并带到报告里，用户才知道「为什么这个文件还得我自己传」。
+    const missingReasons = {};
+    for (const f of check.missing || []) if (f.reason) missingReasons[f.path] = f.reason;
 
     // ---- 3. 差量上传 ----
     const missing = check.missing || [];
@@ -337,6 +360,20 @@ async function push(opts = {}) {
     lines.push('─'.repeat(52));
     lines.push(`   执行端方案：scheme/${rep.schemeName}（state: ${rep.state}）`);
     lines.push(`   文件：写入 ${rep.written ? rep.written.length : 0} 个，失败 ${rep.failed ? rep.failed.length : 0} 个`);
+    if (ms && ms.total_mods > 0) {
+        // 模组来源分布：说清楚「省了多少上传」
+        const mrCount = ms.resolved_by_modrinth || 0;
+        const needCount = ms.need_upload || 0;
+        const reasonCount = {};
+        for (const r of Object.values(missingReasons)) reasonCount[r] = (reasonCount[r] || 0) + 1;
+        const reasonText = Object.entries(reasonCount)
+            .map(([k, v]) => `${v} 个 ${REASON_TEXT[k] || k}`)
+            .join('，');
+        lines.push('   📦 模组来源分布：');
+        lines.push(`      - pool 命中：${ms.resolved_by_pool || 0} 个`);
+        lines.push(`      - Modrinth 补齐：${mrCount} 个（下载后 SHA-256 校验通过）`);
+        lines.push(`      - 需控制端上传：${needCount} 个${reasonText ? `（其中 ${reasonText}）` : ''}`);
+    }
     if (rep.core) {
         if (rep.core.action === 'installed') {
             lines.push(`   核心：${rep.core.file}${rep.core.matches_control === false ? '（与控制端构建不同，属正常 —— 不同平台构建）' : ''}`);

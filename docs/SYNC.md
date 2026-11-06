@@ -50,8 +50,21 @@ wow web start                          # 开面板即可，sync 端点自动挂�
 
 ## 四阶段流程
 
-1. **清单先行**：扫描方案产出 `manifest.protocol = 1`——核心 + 模组 + 插件 + 其它文件 + root 配置，全部带 SHA-256 与大小。
+1. **清单先行**：扫描方案产出 `manifest.protocol = 2`——核心 + 模组 + 插件 + 其它文件 + root 配置，全部带 SHA-256 与大小；模组/插件额外带 SHA-512 与 SHA-1（只用于问 Modrinth，不参与任何写入决策）。执行端收到 v1 旧清单时跳过 Modrinth 查询，全部按需上传处理。
 2. **执行端预检**：逐文件判定缺口。预检通过即建方案骨架（幂等）。方案名冲突时：非同步来源（手工创建、clone-client 等）一律拒绝；同步来源的方案允许重推（增量 / 续传）。
+
+   **模组比对**（pool → Modrinth → 仍缺才要上传）：
+
+   ```
+   1. 查 pool 有无同 SHA-256 → 有则复用；
+   2. 无则用 SHA-512 批量查 Modrinth → 命中则下载；
+   3. 下载后算 SHA-256 与清单比对 → 匹配则复用，不匹配则标记需上传；
+   4. Modrinth 未命中或查询失败 → 标记需上传。
+   ```
+
+   Modrinth 查询细节：每批 100 个哈希、批间隔 200ms、单批 30s 超时、连续 3 批失败即整体放弃；
+   整个补齐阶段有 90s 总预算（`WOW_MODRINTH_BUDGET_MS` 可覆盖），超预算的文件直接降级为需上传。
+   SHA-512 被拒（400/422）时该批自动降级用 SHA-1 重试一次。
 3. **差量上传**：≤4MB 的小文件打包 JSON 束；大文件 8MB 分块上传，支持断点续传（中断后重跑 `push` 自动从已收偏移继续）。所有上传先进 `core/temp/sync_staging/`。
 4. **组装**：执行端把 staging 校验落盘（落盘前重算哈希）、核心走安装器装配、`server.properties` 按需备份覆盖、资源入池、写 `sync_report`、state 置 `full`。**不会自动启动服务器**——需要 `wow scheme switch <名>` 后手动开服。
 
@@ -67,8 +80,11 @@ wow web start                          # 开面板即可，sync 端点自动挂�
 | 路径 | `mods plugins config kubejs scripts datapacks world` + `server.properties`/`eula.txt`；拒绝 `..`、绝对路径、盘符、UNC、符号链接 |
 | 大小 | 单文件 ≤200MB，总量 ≤2GB |
 | 校验 | 上传声明哈希 + 落盘前重算哈希，双保险；不匹配返回 422 并清 staging |
+| Modrinth | 下载的文件必须通过 SHA-256 校验才写入方案目录；不信任 Modrinth 返回的文件名（一律按清单 path 落盘，临时目录 `core/temp/sync-modrinth/` 用完即清） |
 
 ## 已知限制
 
-- **Modrinth 补齐未实现**：执行端 pool 未命中的模组目前直接标记需上传，不会先尝试从 Modrinth 下载。
+- Modrinth 查询有速率限制（约 300 请求/分钟），超大整合包（> 500 模组）首次同步时查询耗时较长。失败会自动降级为需上传，不中断同步。
+- Modrinth 上不存在的模组（本地魔改、私有的）仍需控制端上传。
+- 执行端到 Modrinth CDN 的下行带宽决定补齐速度；极慢时会触发 90s 总预算，剩余模组转为需上传（重跑 `push` 即可补齐）。
 - 核心装配要求执行端有可用的 Java 环境与网络（Forge/Fabric 安装器要下载文件）。

@@ -158,7 +158,24 @@
 - **核心装配放 finalize 不放 check**：Forge 安装器要下几十 MB + 跑 Java，挂在 HTTP 请求里会被 Cloudflare Tunnel ~100s 超时掐断。
 - **同步来源的方案允许重推**：单纯按方案名冲突拒绝会挡住增量同步与断点续传；判据是 `scheme.yaml` 里的 `sync_source` 标记，手工方案 / clone-client 产物仍然拒绝。
 - **断点续传以执行端为准**：控制端本地进度文件（`core/temp/sync_progress.json`）只做展示参考——执行端 staging 可能被清理，本地「已传完」不可信。
-- **Modrinth 补齐未实现**：pool 未命中时目前只标记需上传；按 modID 查 Modrinth 补齐留待后续版本。
+
+### Modrinth 补齐（216 号议题）
+
+缺口补齐从「pool 未命中 → 需上传」补成「pool 未命中 → 查 Modrinth → 哈希匹配则复用 → 不匹配才需上传」。
+
+- **清单协议升到 2**：mods/plugins 条目增加 `sha512` / `sha1`。一次读盘三路哈希并行（`hashTripleFile`），不重复读盘。SHA-256 仍是唯一写入依据，另外两个只用于查询 Modrinth。
+- **批量查询**：`POST /v2/version_files`，每批 100 个哈希、批间隔 200ms、单批 30s 超时；SHA-512 被拒（400/422）时该批降级 SHA-1 重试一次；连续 3 批失败或一批都没成功 → 判为不可达，全部降级需上传。
+- **下载后必须过 SHA-256**：不匹配就丢弃并标记 `modrinth_hash_mismatch`；落盘路径一律用清单 `path`，不用 Modrinth 的 `filename`（防路径注入）；临时目录 `core/temp/sync-modrinth/<session>/` 用完即清，进程被强杀时下次运行兜底清理。
+- **90s 总预算**（`WOW_MODRINTH_BUDGET_MS`）：check 是 HTTP 请求，不能被慢下载挂死；超预算的文件转需上传，同步照常完成。
+- **旧清单兼容**：`protocol: 1` 的清单无 sha512/sha1，直接跳过查询按需上传。
+- **报告可读**：控制端新增「模组来源分布」——pool 命中 / Modrinth 补齐 / 需上传（并说明每个文件为什么还要传）。
+- 不查 CurseForge，全程不碰。
+
+### 实现过程中遇到的坑
+
+- **Modrinth CDN 慢到离谱时没有兜底**：最初只有 socket 空闲超时（60s），但「一直有数据但极慢」的情况会挂满整个请求。加了整体时限 + 总预算两道闸。
+- **单批失败被误判为「未收录」**：`consecutiveFailures` 只数到 1 就结束循环，返回 `ok: true`，导致 reason 显示「Modrinth 未收录」而不是「不可达」。修正为「一批都没成功 = 不可达」。
+- **`downloadToTemp` 漏掉 URL 参数**：日志里原本不带下载地址，排障时不知道是哪个文件失败。
 
 ### 命令
 
@@ -170,7 +187,7 @@ wow sync list                        # 查看已保存的执行端
 
 ### 测试
 
-- 新增 `core/test/sync_module.test.js`：路径白名单 17 项、清单结构 13 项、multipart 解析 5 项、staging 续传基建 5 项。
+- 新增 `core/test/sync_module.test.js`：路径白名单 17 项、清单结构与三路哈希 18 项、multipart 解析 5 项、staging 续传基建 5 项、Modrinth 补齐 21 项（命中 / 哈希不匹配 / 未收录 / 不可达 / 单批不可达 / 分批 / 预算耗尽 / 旧清单 / 临时目录清理）。
 - 全量回归 31 个测试文件通过。
 - 端到端实测：全量推送 6 文件（含 6MB 分块上传）、增量重推（5 就位 + 1 分块续传从 8MB 断点恢复）、`.bak` 备份、手工方案 409、路径白名单拒绝、422 哈希校验 + staging 清理、执行端 `scheme info` 正确识别。
 
