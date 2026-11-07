@@ -208,6 +208,37 @@ console.log('\n— V3.5.8 启动方式（cli.js）—');
     check('buildMenuOptions 注入 startRepl 回调', () => {
         assert.ok(/startRepl: \(\) => startRepl\(\)/.test(cli), '未注入 startRepl 回调');
     });
+
+    // ── V3.6.2：面板启动服务器 → REPL 同步进入日志跟踪 ──
+    check('REPL 含日志跟踪：心跳跳变检测（isConsoleRelayAlive）', () => {
+        assert.ok(/isConsoleRelayAlive\(\)/.test(cli), '未使用控制台中继心跳判断服务器启动');
+        assert.ok(/wasRelayAlive === false && alive/.test(cli), '缺少「死 → 活」跳变判定');
+    });
+    check('日志跟踪增量 tail（半行留到下一轮）', () => {
+        assert.ok(/stdoutLogFile/.test(cli), '未指向 wow-stdout 日志');
+        assert.ok(/lastIndexOf\('\\n'\)/.test(cli), '未按完整行推进 offset');
+        assert.ok(/st\.size < followOffset/.test(cli), '日志被重写（重启）时未重置 offset');
+    });
+    check('跟踪不干扰 REPL 输入（清行 + 重绘提示符）', () => {
+        const m = cli.match(/const printLine = \(line\) => \{[\s\S]{0,400}?\n    \};/);
+        assert.ok(m, '未抽出 printLine');
+        assert.ok(/clearLine/.test(m[0]) && /rl\.prompt\(true\)/.test(m[0]), '打印未重绘提示符');
+        // echoSink 与日志跟踪共用同一打印通道
+        assert.ok(/setEchoSink\(printLine\)/.test(cli), 'echoSink 未复用 printLine');
+    });
+    check('本终端敲 server start 不触发跟踪（交给开服控制台）', () => {
+        assert.ok(/ownServerOp = true/.test(cli), '未标记 ownServerOp');
+        assert.ok(/!ownServerOp\) \{\n            startFollow/.test(cli), 'startFollow 未检查 ownServerOp');
+    });
+    check('服务器停止后自动退出跟踪，REPL 退出时清理定时器', () => {
+        assert.ok(/服务器已停止，已退出日志跟踪/.test(cli), '缺少退出跟踪提示');
+        const m = cli.match(/rl\.on\('close', async \(\) => \{[\s\S]{0,400}?following = false;/);
+        assert.ok(m && /clearInterval\(followTimer\)/.test(m[0]) && /clearInterval\(detectTimer\)/.test(m[0]),
+            'close 回调未清理跟踪定时器');
+    });
+    check('进入 REPL 时服务器已在运行也直接跟进', () => {
+        assert.ok(/服务器正在运行（由 Web 面板或其它进程启动）/.test(cli), '缺少已运行场景提示');
+    });
 }
 
 // ─────────────────────────────────────────────

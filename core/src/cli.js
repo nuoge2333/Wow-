@@ -1848,25 +1848,111 @@ async function startRepl(options = {}) {
     }
     logger()?.impt(options.webMode ? '进入长命令模式（Web 面板运行中）' : '进入交互式 REPL 模式');
 
-    // V3.5.19：Web 端的 [WebCLI] / [System] 回显要打到这个终端上。
+    // V3.6.2：Web 端的 [WebCLI] / [System] 回显要打到这个终端上。
     // 如果直接 console.log，会把用户正在输入的那一行顶乱，所以先清行再打印，然后重绘提示符。
+    const printLine = (line) => {
+        try {
+            readline.clearLine(process.stdout, 0);
+            readline.cursorTo(process.stdout, 0);
+            process.stdout.write(line + '\n');
+            rl.prompt(true);
+        } catch (e) {
+            console.log(line);
+        }
+    };
     if (options.webMode) {
         try {
             const webService = load('./web_service');
             if (webService && typeof webService.setEchoSink === 'function') {
-                webService.setEchoSink((line) => {
-                    try {
-                        readline.clearLine(process.stdout, 0);
-                        readline.cursorTo(process.stdout, 0);
-                        process.stdout.write(line + '\n');
-                        rl.prompt(true);
-                    } catch (e) {
-                        console.log(line);
-                    }
-                });
+                webService.setEchoSink(printLine);
             }
         } catch (e) { /* 回显接管失败则退回 console.log */ }
     }
+
+    // ── V3.6.2：Web 面板启动服务器 → 终端同步进入日志跟踪 ──
+    //
+    // 面板的 server start 走 /api/exec → **子进程**，MC 的输出只落
+    // logs/wow-stdout.log，本进程拿不到 stdout 流。但 ServerManager 的
+    // 控制台中继会每 250ms 刷新心跳文件——用它的「死 → 活」跳变判断
+    // 「服务器刚被面板（或其它进程）启动」，然后增量 tail 日志打到终端。
+    // 在 REPL 里直接敲 server start 不走这条路：那种情况由开服控制台
+    // 接管 stdin（server.js 交互分支），比单纯的日志回显功能更全。
+    let followTimer = null;      // 日志 tail 定时器
+    let detectTimer = null;      // 心跳跳变检测定时器
+    let following = false;
+    let followOffset = 0;
+    let wasRelayAlive = null;    // null = 尚未采样
+    let ownServerOp = false;     // 本终端自己敲的 server start/restart → 开服控制台接管，不跟踪
+
+    const stopFollow = (reason) => {
+        if (followTimer) { clearInterval(followTimer); followTimer = null; }
+        if (following && reason) printLine(reason);
+        following = false;
+    };
+
+    const startFollow = (notice) => {
+        if (following) return;
+        const ServerManager = load('./server');
+        if (!ServerManager) return;
+        let logFile;
+        try { logFile = new ServerManager().stdoutLogFile; } catch (e) { return; }
+        following = true;
+        // 日志每次启动都以 flags:'w' 重写，从头读
+        followOffset = 0;
+        printLine(notice);
+        printLine('   💡 继续输入 wow 指令不受影响；服务器停止后自动退出跟踪。');
+        followTimer = setInterval(() => {
+            // 心跳消失 = 服务器进程退出（中继 250ms 一刷，3s 没刷就是没了）
+            if (!ServerManager.isConsoleRelayAlive()) {
+                stopFollow('⏹ 服务器已停止，已退出日志跟踪。');
+                return;
+            }
+            let st;
+            try { st = fs.statSync(logFile); } catch (e) { return; }
+            if (st.size < followOffset) followOffset = 0;  // 日志被重写（重启）
+            if (st.size <= followOffset) return;
+            let fd;
+            try {
+                fd = fs.openSync(logFile, 'r');
+                const len = st.size - followOffset;
+                const buf = Buffer.alloc(len);
+                fs.readSync(fd, buf, 0, len, followOffset);
+                const text = buf.toString('utf8');
+                const lastNl = text.lastIndexOf('\n');
+                if (lastNl === -1) return;  // 整段都是半行，等下一轮
+                // 只推进到最后一个完整换行，半行留给下一轮拼
+                followOffset += lastNl + 1;
+                for (const ln of text.slice(0, lastNl).split('\n')) {
+                    if (ln.trim()) printLine(ln.replace(/\r$/, ''));
+                }
+            } catch (e) {
+                // 读不动就算了，下一轮再试
+            } finally {
+                try { if (fd !== undefined) fs.closeSync(fd); } catch (e) { /* 忽略 */ }
+            }
+        }, 500);
+        if (followTimer.unref) followTimer.unref();
+    };
+
+    detectTimer = setInterval(() => {
+        const ServerManager = load('./server');
+        if (!ServerManager) { clearInterval(detectTimer); detectTimer = null; return; }
+        const alive = ServerManager.isConsoleRelayAlive();
+        // 本终端自己敲的 start/restart 已由开服控制台接管；服务器停了要把标记放开
+        if (ownServerOp && !alive) ownServerOp = false;
+        if (wasRelayAlive === false && alive && !following && !ownServerOp) {
+            startFollow('📋 检测到服务器已由 Web 面板启动，进入日志跟踪（实时回显 MC 输出）：');
+        }
+        wasRelayAlive = alive;
+    }, 1500);
+    if (detectTimer.unref) detectTimer.unref();
+    // 进入 REPL 时服务器就已在跑（面板先启动、后来才敲 wow L）：直接跟进
+    setTimeout(() => {
+        const ServerManager = load('./server');
+        if (ServerManager && ServerManager.isConsoleRelayAlive() && !following && !ownServerOp) {
+            startFollow('📋 服务器正在运行（由 Web 面板或其它进程启动），进入日志跟踪（实时回显 MC 输出）：');
+        }
+    }, 2000);
 
     rl.prompt();
     rl.on('line', async (line) => {
@@ -1896,6 +1982,11 @@ async function startRepl(options = {}) {
             rl.prompt();
             return;
         }
+        // V3.6.2：本终端自己启动/重启服务器时，开服控制台会接管 stdin
+        // （server.js 交互分支），日志跟踪不能再插进来刷屏。
+        if (args[0] === 'server' && (args[1] === 'start' || args[1] === 'restart')) {
+            ownServerOp = true;
+        }
         // 重置指令日志标记，使每次交互指令都能被事件日志系统记录
         _wowCmdStartLogged = false;
         _wowCmdResolved = false;
@@ -1916,6 +2007,10 @@ async function startRepl(options = {}) {
     });
     rl.on('SIGINT', () => { closed = true; rl.close(); });
     rl.on('close', async () => {
+        // V3.6.2：退出 REPL 前收掉日志跟踪的定时器，别让它们吊住进程
+        if (followTimer) { clearInterval(followTimer); followTimer = null; }
+        if (detectTimer) { clearInterval(detectTimer); detectTimer = null; }
+        following = false;
         // V3.6.1：输入 m 是「回 M 菜单」，不是退出。走这条分支时不打印「再见」、
         // 不关 Web 面板（用户还会回来），也不 process.exit。
         if (toMenu) {
