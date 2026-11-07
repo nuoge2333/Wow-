@@ -19,7 +19,7 @@
 >
 > | 隐藏的命令 | 原用途 |
 > |-----------|--------|
-> | `set` | 快速设置配置项（与 `config wow` 等价） |
+> | `set` | 快速设置配置项（等价 `config set`） |
 > | `down` | 裸 URL 文件下载器 |
 > | `pack` | 客户端整合包安装 / 生成 |
 > | `logs` | 日志查看与 AI 分析 |
@@ -893,11 +893,50 @@ wow logs report
 
 ---
 
-## 八、配置管理 (10 个)
+## 八、配置管理 (13 个)
+
+### `config set <key> <value>`
+
+设置启动器配置（写入 `wow.yaml`）。
+
+```bash
+wow config set server.memory 4G
+wow config set web.auth_token 一串足够长的随机字符
+wow config set web.auth_password 你的密码      # 离线密码登录
+```
+
+> 🔐 **凭据类键不回显明文**：`auth_token` / `auth_password` / `api_key` /
+> `token` / `password` / `secret` 结尾的键，设置后只提示「已设置，长度 N」，
+> 避免密码留在终端录屏或截图里。
+
+---
+
+### `config get <key>`
+
+读取启动器配置。凭据类键打码显示（`ab******op（已设置，长度 16）`），
+未设置时统一显示 `null`。
+
+```bash
+wow config get server.memory
+wow config get web.auth_token
+```
+
+---
+
+### `config unset <key>`
+
+清除启动器配置（写回 `null`）。
+
+```bash
+wow config unset web.auth_token
+```
+
+---
 
 ### `config wow <key> [value]`
 
-查看/设置启动器配置 (wow.yaml)。
+> ⚠️ **历史写法**，等价于 `config get` / `config set`，保留是为了不破坏老脚本。
+> 名字容易误会成「wow 的配置」，实际是「启动器配置」——新写的脚本请用 `config set`。
 
 ```bash
 wow config wow server.dir

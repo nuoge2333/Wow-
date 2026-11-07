@@ -1361,17 +1361,72 @@ program
 
 const configCmd = program.command('config').description('配置管理');
 
+/**
+ * 写一个启动器配置项（wow.yaml）。set / get 与历史 `config wow` 共用同一实现。
+ *
+ * 为什么要统一成 `config set`：文档、错误提示、AI 日志建议里长期写的都是
+ * `wow config set web.auth_token xxx`，但代码里从来没有这个子命令——
+ * 真正能用的是 `wow config wow <key> [value]`（子命令名就是 wow），
+ * 于是照着提示敲的人一律得到 `error: unknown command 'set'`。
+ * 现在把 `set` / `get` 补成正式入口，`config wow` 保留作兼容。
+ */
+function runConfigWow(key, value, opts = {}) {
+    const secret = /(^|\.)(auth_token|auth_password|api_key|token|password|secret)$/i.test(key);
+    if (value !== undefined) {
+        config.setConfig(key, value);
+        if (secret && !opts.plain && value !== null) {
+            // 凭据类不回显明文：终端录屏、共享屏幕、聊天截图都会泄
+            console.log(`✅ ${key} 已设置（凭据类，长度 ${String(value).length}，不显示明文）`);
+        } else {
+            console.log(`✅ ${key} = ${value}`);
+        }
+    } else {
+        const val = config.getConfig(key);
+        console.log(`${key} = ${val !== undefined ? val : 'null'}`);
+    }
+}
+
+configCmd
+    .command('set <key> <value>')
+    .description('设置启动器配置（写入 wow.yaml），如 config set web.auth_token xxx')
+    .action((key, value) => {
+        runConfigWow(key, value);
+    });
+
+configCmd
+    .command('get <key>')
+    .description('读取启动器配置，如 config get web.auth_token')
+    .action((key) => {
+        const val = config.getConfig(key);
+        const secret = /(^|\.)(auth_token|auth_password|api_key|token|password|secret)$/i.test(key);
+        // 先判空再判凭据：null 与 '' 都算「未设置」，不能拿去算长度
+        if (val === undefined || val === null || val === '') {
+            console.log(`${key} = null`);
+            return;
+        }
+        if (secret) {
+            // 凭据只显示前后各 2 位，够确认「设过了没有」
+            const s = String(val);
+            console.log(`${key} = ${s.length <= 6 ? '******' : s.slice(0, 2) + '******' + s.slice(-2)}（已设置，长度 ${s.length}）`);
+            return;
+        }
+        console.log(`${key} = ${val}`);
+    });
+
+configCmd
+    .command('unset <key>')
+    .description('清除启动器配置（写回 null），如 config unset web.auth_token')
+    .action((key) => {
+        config.setConfig(key, null);
+        console.log(`✅ 已清除 ${key}`);
+    });
+
 configCmd
     .command('wow <key> [value]')
-    .description('查看/设置启动器配置')
+    .description('查看/设置启动器配置（兼容旧写法，等价 config get/set）')
     .action((key, value) => {
-        if (value !== undefined) {
-            config.setConfig(key, value);
-            console.log(`✅ ${key} = ${value}`);
-        } else {
-            const val = config.getConfig(key);
-            console.log(`${key} = ${val !== undefined ? val : 'null'}`);
-        }
+        // 旧写法保持原样回显，避免依赖输出的脚本被打断
+        runConfigWow(key, value, { plain: true });
     });
 
 configCmd
