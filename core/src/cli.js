@@ -87,7 +87,7 @@ function logger() {
 program
     .name('wow')
     .description('Minecraft 服务器管理工具 - 默认优先，可以修改')
-    .version('3.6.0-26.41', '-V');
+    .version('3.6.1-26.42', '-V');
 
 // ==================== init ====================
 
