@@ -147,8 +147,10 @@ console.log('\n— V3.5.8 启动方式（cli.js）—');
     check('cli.js 注册了 L（长命令模式）命令', () => {
         assert.ok(/\.command\('L \[cmd\.\.\.\]'\)/.test(cli), '未找到 L 命令注册');
     });
-    check('cli.js 不再注册 m 命令', () => {
-        assert.ok(!/\.command\('m /.test(cli), 'm 命令应已移除');
+    // V3.6.1：m 命令已恢复（双击走的也是这个入口），断言反转为「必须存在」
+    check('cli.js 恢复了 m 命令（M 模式）', () => {
+        assert.ok(/\.command\('m'\)/.test(cli), '未找到 m 命令注册');
+        assert.ok(/\.alias\('M'\)/.test(cli), 'm 命令应有 M 别名');
     });
     check('cli.js 无参数分支进入数字菜单（showMainMenu）', () => {
         // 从 `if (process.argv.length <= 2) {` 截到 `} else {`，取整个分支体。
@@ -157,9 +159,10 @@ console.log('\n— V3.5.8 启动方式（cli.js）—');
         // `\n} else {` 这种行首零缩进的锚点，改为允许任意缩进。
         const m = cli.match(/if \(process\.argv\.length <= 2\) \{[\s\S]{0,900}?\n\s*\} else \{/);
         assert.ok(m, '未找到无参数分支');
-        assert.ok(/showMainMenu\(/.test(m[0]), '无参数分支未调用 showMainMenu');
+        // V3.6.1：菜单入口抽成 enterMainMenu（无参数与 wow m 共用），
+        // 因此不再直接要求分支里出现 showMainMenu/buildMenuOptions
+        assert.ok(/enterMainMenu\(/.test(m[0]), '无参数分支未调用 enterMainMenu');
         assert.ok(!/startRepl\(\)/.test(m[0]), '无参数分支仍在调 startRepl');
-        assert.ok(/buildMenuOptions\(\)/.test(m[0]), '无参数分支未使用 buildMenuOptions');
     });
     check('cli.js 的 L 命令 action 调用 startRepl', () => {
         // 从 `.command('L [cmd...]')` 截到该命令链的收尾 `    });`
@@ -170,6 +173,40 @@ console.log('\n— V3.5.8 启动方式（cli.js）—');
     });
     check('cli.js 提供 buildMenuOptions 供菜单使用', () => {
         assert.ok(/function buildMenuOptions\(\)/.test(cli));
+    });
+
+    // ── V3.6.1：M ↔ L 互跳 ──
+    check('cli.js 抽出 enterMainMenu 供无参数与 wow m 共用', () => {
+        assert.ok(/async function enterMainMenu\(/.test(cli), '未找到 enterMainMenu');
+    });
+    check('wow m 的 action 调用 enterMainMenu', () => {
+        const m = cli.match(/\.command\('m'\)[\s\S]{0,600}?\n    \}\);/);
+        assert.ok(m, '未找到 m 的 action 体');
+        assert.ok(/enterMainMenu\(/.test(m[0]), 'm 应进入菜单');
+    });
+    check('L 模式输入 m 回菜单（toMenu 分支）', () => {
+        assert.ok(/let toMenu = false/.test(cli), '缺少 toMenu 标志');
+        assert.ok(/if \(toMenu\)/.test(cli), 'close 回调未处理回菜单');
+        // 回菜单时不能顺手关掉 Web 面板，也不能打印再见
+        const m = cli.match(/if \(toMenu\) \{[\s\S]{0,800}?\n        \}/);
+        assert.ok(m && /enterMainMenu\(/.test(m[0]), 'toMenu 分支未调用 enterMainMenu');
+        assert.ok(m && !/onExit/.test(m[0]), 'toMenu 分支不应触发 onExit（会关掉面板）');
+    });
+    check('REPL 关闭后忽略残留 line 事件（closed 标志）', () => {
+        assert.ok(/if \(closed\) return;/.test(cli), 'line 回调未做 closed 检查');
+    });
+    check('菜单含 15 号「进入 L 模式」且分发到 startRepl 回调', () => {
+        const itv = fs.readFileSync(path.join(__dirname, '..', 'src', 'interactive.js'), 'utf8');
+        assert.ok(/\['15',/.test(itv), '菜单缺少 15 号项');
+        assert.ok(/num === 15/.test(itv), '菜单未处理 15 号');
+        assert.ok(/options\.startRepl/.test(itv), '15 号未走注入的 startRepl 回调');
+        // 只看真实代码行：注释里提到 require('./cli') 是解释「为什么不这么做」
+        const codeLines = itv.split('\n').filter(l => !/^\s*\//.test(l));
+        assert.ok(!codeLines.some(l => /require\(['"]\.\/cli['"]\)/.test(l)),
+            'interactive 不应 require cli（循环依赖）');
+    });
+    check('buildMenuOptions 注入 startRepl 回调', () => {
+        assert.ok(/startRepl: \(\) => startRepl\(\)/.test(cli), '未注入 startRepl 回调');
     });
 }
 

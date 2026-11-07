@@ -1496,12 +1496,16 @@ mailCmd
         updateMailRateLimit();
     });
 
-// ==================== 菜单 / 长命令模式入口 (V3.5.8 调整) ====================
+// ==================== 菜单 / 长命令模式入口 (V3.5.8 / V3.6.1 调整) ====================
 //
-// V3.5.8 起启动方式调整：
-//   wow            → 直接进入数字选择菜单（替代原 `wow m`，该命令已移除）
-//   wow L          → 长命令模式（原「无参数进入的 REPL」，输入 server start 这类完整命令）
-//   wow L <命令>   → 直接执行单条长命令后退出，如 wow L server start
+// 启动方式（V3.6.1 起 M / L 两种模式可互相跳转）：
+//   wow / wow.bat / ./wow.sh   → 数字选择菜单（M 模式，双击进入的就是它）
+//   wow m                      → 同上。V3.5.8 曾移除该命令，V3.6.1 恢复：
+//                                双击批处理走的就是这条，用户也想在终端里直接敲 wow m
+//   wow L                      → 长命令模式（输入 server start 这类完整命令）
+//   wow L <命令>               → 直接执行单条长命令后退出，如 wow L server start
+//
+// 互跳：M 菜单里选 15 进 L 模式；L 模式里输入 m（或 M）回 M 菜单。
 //
 // 构造交互菜单所需的全部管理器实例（数字菜单与长命令 REPL 共用）。
 // V3.5.9：管理器改为懒加载——单个模块加载失败时对应项传 null，
@@ -1523,8 +1527,38 @@ function buildMenuOptions() {
         packGenerator: PackGenerator ? new PackGenerator() : null,
         logHandler: LogHandler ? new LogHandler() : null,
         config,
-        utils
+        utils,
+        // V3.6.1：M 菜单的 15 号项回跳 L 模式。用回调注入而不是让 interactive
+        // require 回来，避免循环依赖。
+        startRepl: () => startRepl()
     };
+}
+
+/**
+ * 进入数字选择菜单（M 模式）。
+ *
+ * 两条入口共用：无参数启动（双击 wow.bat / ./wow.sh）与 `wow m`；
+ * L 模式里输入 m 也回到这里。返回值：
+ *   - `process.exit` 由 interactive 内部处理（选 0 退出）；
+ *   - 从 L 模式跳进来时，菜单退出会回到 L（见 startRepl 里的 m 分支）。
+ *
+ * interactive 模块缺失时只打印提示，不抛错 —— 菜单是入口，不能把 CLI 拖垮。
+ */
+async function enterMainMenu(source = '无参数启动') {
+    const interactive = load('./interactive');
+    if (!interactive) {
+        console.error('❌ 菜单模块不可用（core/src/interactive.js 加载失败）');
+        return false;
+    }
+    logger()?.impt(`进入数字选择菜单（${source}）`);
+    try {
+        await interactive.showMainMenu(buildMenuOptions());
+        return true;
+    } catch (e) {
+        console.error(`菜单启动失败: ${e.message}`);
+        logger()?.erro(`菜单启动失败: ${e.message}`);
+        return false;
+    }
 }
 
 // wow L：长命令模式（原无参数 REPL 的归宿）
@@ -1550,6 +1584,20 @@ program
         }
         // 不带参数：进入长命令 REPL
         startRepl();
+    });
+
+// wow m：数字选择菜单（V3.6.1 恢复）
+//
+// 为什么恢复：`wow.bat` / `wow.sh` 双击时带不了参数，走的虽是「无参数 → 菜单」分支，
+// 但用户在终端里想主动进菜单时只能重敲 `wow`，且 `wow m` 在 V3.5.8 被移除后
+// 反而成了「未知指令」。恢复它让「双击」与「手敲」两条路指向同一个入口。
+// 别名 M 大写同样可用（Windows 终端里习惯性大写）。
+program
+    .command('m')
+    .alias('M')
+    .description('数字选择菜单（M 模式）：与双击 wow.bat / ./wow.sh 进入的是同一个界面')
+    .action(async () => {
+        await enterMainMenu('wow m');
     });
 
 // ==================== config mods (V3.1 新增) ====================
@@ -1732,6 +1780,11 @@ program.hook('postAction', () => {
 // 注意：函数声明提升，上方 L 命令的 action 可直接调用。
 async function startRepl(options = {}) {
     const readline = require('readline');
+    // V3.6.1：输入 m 时置 true，close 回调据此走「回菜单」而不是「退出」
+    let toMenu = false;
+    // rl.close() 之后仍可能有已排队的 'line' 事件被派发（管道输入尤其明显）。
+    // 用一个标志挡住它们，否则关闭后的残留输入会被当成 REPL 指令执行。
+    let closed = false;
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout, prompt: 'wow> ' });
     if (options.webMode) {
         console.log('Wow~ 长命令模式已就绪（面板仍在后台运行，输入指令无需 wow 前缀；exit / quit 退出）');
@@ -1762,9 +1815,18 @@ async function startRepl(options = {}) {
 
     rl.prompt();
     rl.on('line', async (line) => {
+        if (closed) return;
         const input = line.trim();
         if (!input) { rl.prompt(); return; }
-        if (input === 'exit' || input === 'quit') { rl.close(); return; }
+        if (input === 'exit' || input === 'quit') { closed = true; rl.close(); return; }
+        // V3.6.1：L → M 回跳。先关掉 REPL 释放 stdin，避免菜单与 REPL
+        // 同时挂在同一个 process.stdin 上（那会把按键读两遍）。
+        if (input === 'm' || input === 'M') {
+            toMenu = true;
+            closed = true;
+            rl.close();
+            return;
+        }
         const args = input.split(/\s+/);
         // 顶层命令预校验：未知命令直接给出干净提示，避免 commander 默认报错文案
         // help / -h / --help 为 commander 内置，不在 program.commands 列表中，需单独放行
@@ -1797,8 +1859,22 @@ async function startRepl(options = {}) {
         }
         rl.prompt();
     });
-    rl.on('SIGINT', () => { rl.close(); });
-    rl.on('close', () => {
+    rl.on('SIGINT', () => { closed = true; rl.close(); });
+    rl.on('close', async () => {
+        // V3.6.1：输入 m 是「回 M 菜单」，不是退出。走这条分支时不打印「再见」、
+        // 不关 Web 面板（用户还会回来），也不 process.exit。
+        if (toMenu) {
+            // 关键：rl.close() 的 stdin 释放是异步的。若在 close 回调里同步新建菜单的
+            // readline，两个接口会短暂并存，菜单的首行输入可能被已废弃的 REPL 吃掉。
+            // 让出一轮事件循环再进菜单，保证 stdin 只有一个消费者。
+            await new Promise(r => setImmediate(r));
+            const ok = await enterMainMenu('从 L 模式返回');
+            if (!ok) {
+                console.log('菜单不可用，已退出。');
+                process.exit(0);
+            }
+            return;
+        }
         logger()?.info('退出交互式 REPL 模式');
         // V3.5.19：web 模式下退出 REPL 意味着用户想收工了，顺手关掉面板
         if (typeof options.onExit === 'function') {
@@ -1853,15 +1929,7 @@ async function registerPlugins() {
     // V3.5.8：无参数运行（如 ./wow.sh / wow.bat）直接进入数字选择菜单。
     // 长命令 REPL 已移至 `wow L`（见上方命令定义）。
     if (process.argv.length <= 2) {
-        const interactive = load('./interactive');
-        if (!interactive) return;
-        logger()?.impt('进入数字选择菜单（无参数启动）');
-        try {
-            await interactive.showMainMenu(buildMenuOptions());
-        } catch (e) {
-            console.error(`菜单启动失败: ${e.message}`);
-            logger()?.erro(`菜单启动失败: ${e.message}`);
-        }
+        await enterMainMenu('无参数启动');
     } else {
         program.parse(process.argv);
     }

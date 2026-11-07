@@ -142,7 +142,9 @@ async function showMainMenu(options = {}, directChoice = null) {
             ['11', '错误日志分析'],
             ['12', '服务器状态监控'],
             ['13', 'Web 主题更改'],
-            ['14', '联机 / 我要当房主 (陶瓦)']
+            ['14', '联机 / 我要当房主 (陶瓦)'],
+            // V3.6.1：M ↔ L 互跳。L 模式里敲 m 可回来，这里补上去的路。
+            ['15', '进入 L 模式（长命令模式，直接敲 wow 指令）']
         ];
 
         for (const [num, desc] of menuItems) {
@@ -151,7 +153,7 @@ async function showMainMenu(options = {}, directChoice = null) {
         console.log(`   0. 退出程序`);
         console.log('─'.repeat(60));
 
-        const choice = (await ask(rl, '请选择操作 (输入数字 0-14，命令用法见 README.MD): ')).trim();
+        const choice = (await ask(rl, '请选择操作 (输入数字 0-15，命令用法见 README.MD): ')).trim();
 
         if (choice === '0') {
             const confirm = await ask(rl, '确定要退出吗? (y/N): ');
@@ -162,8 +164,22 @@ async function showMainMenu(options = {}, directChoice = null) {
             continue;
         }
 
-        // 纯数字导航：1-14 直接分发到对应菜单（数值比较，避免字符串比较误判）
+        // 纯数字导航：1-15 直接分发到对应菜单（数值比较，避免字符串比较误判）
         const num = parseInt(choice, 10);
+        if (num === 15) {
+            // V3.6.1：M → L 回跳。回调由 cli.js 注入（见 buildMenuOptions 的 startRepl），
+            // 不在这里 require('./cli') —— 那会形成循环依赖，且 cli 在被 require 时
+            // 可能还没执行到函数定义。
+            // 必须先关掉本菜单的 readline 交还 stdin，否则菜单与 REPL 同时消费
+            // 同一个 process.stdin，每个按键会被读两次（终端回显成双份）。
+            rl.close();
+            if (typeof options.startRepl === 'function') {
+                await options.startRepl();
+            } else {
+                console.log('长命令模式入口不可用，请直接运行 wow L。');
+            }
+            return;
+        }
         if (!isNaN(num) && num >= 1 && num <= 14) {
             const label = menuItems[num - 1] ? menuItems[num - 1][1] : '';
             logger.impt(`菜单操作: ${num} ${label}`);
