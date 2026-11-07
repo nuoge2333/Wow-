@@ -15,3 +15,9 @@
 # 测试套件只服务于开发期回归，用户装完不需要它，也不应占发行包体积。
 # 仓库内保留、npm test 照常可用，只是不进入发行包。
 core/test export-ignore
+
+# 部署件与发版工具不进发行包（仓库内保留，维护者照常使用）：
+# cfproxy-worker 是给自建代理的人单独部署的 Cloudflare Workers 脚本，
+# scripts 是发版打包脚本——两者对装好 wow 的用户都没有用处。
+deploy/cfproxy-worker export-ignore
+scripts export-ignore
