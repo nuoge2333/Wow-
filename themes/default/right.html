@@ -3,10 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>通知栏</title>
+    <title>便签</title>
     <link rel="stylesheet" href="/css/main.css">
     <style>
-        /* 右侧通知栏专用样式 */
+        /* 右侧便签栏（聊天室）专用样式 */
         body {
             margin: 0;
             padding: 0;
@@ -18,7 +18,7 @@
             display: flex;
             flex-direction: column;
         }
-        .notify-header {
+        .notes-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
@@ -26,122 +26,389 @@
             border-bottom: 1px solid #2a3a5e;
             cursor: pointer;
             user-select: none;
+            flex-shrink: 0;
         }
-        .notify-header .title {
+        .notes-header .title {
             font-size: 14px;
             color: #aaa;
         }
-        .notify-header .toggle-btn {
+        .notes-header .toggle-btn {
             font-size: 16px;
             color: #666;
             transition: transform 0.3s;
         }
-        .notify-header .toggle-btn.collapsed {
+        .notes-header .toggle-btn.collapsed {
             transform: rotate(-90deg);
         }
-        .notify-body {
+        .notes-body {
             flex: 1;
             overflow-y: auto;
-            padding: 8px 12px;
-            transition: max-height 0.3s ease;
+            padding: 10px 12px;
         }
-        .notify-body.collapsed {
-            max-height: 0;
-            padding: 0 12px;
-            overflow: hidden;
+        .notes-body.collapsed {
+            display: none;
         }
-        .notify-item {
-            padding: 8px 10px;
-            margin-bottom: 6px;
-            border-radius: 4px;
+        /* 聊天气泡 */
+        .msg-row {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 12px;
+            align-items: flex-start;
+        }
+        .msg-row.mine {
+            flex-direction: row-reverse;
+        }
+        .avatar {
+            width: 26px;
+            height: 26px;
+            border-radius: 50%;
+            flex-shrink: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
             font-size: 13px;
-            border-left: 3px solid;
+            font-weight: 600;
+            color: #fff;
+            margin-top: 14px;
+            user-select: none;
+        }
+        .msg-col {
+            max-width: 78%;
+            display: flex;
+            flex-direction: column;
+        }
+        .msg-row.mine .msg-col {
+            align-items: flex-end;
+        }
+        .msg-meta {
+            font-size: 10px;
+            color: #667;
+            margin-bottom: 3px;
+            padding: 0 4px;
+            word-break: break-all;
+        }
+        .msg-meta .sender {
+            color: #8ab4f8;
+            font-weight: 600;
+        }
+        .msg-row.mine .msg-meta .sender {
+            color: #7fce7f;
+        }
+        .bubble {
+            padding: 7px 10px;
+            border-radius: 10px;
             background: #0f1a2f;
-        }
-        .notify-item.error {
-            border-left-color: #f44336;
-            color: #f44336;
-        }
-        .notify-item.warning {
-            border-left-color: #ff9800;
-            color: #ff9800;
-        }
-        .notify-item.info {
-            border-left-color: #4CAF50;
-            color: #4CAF50;
-        }
-        .notify-item .time {
-            font-size: 11px;
-            color: #666;
-            float: right;
-        }
-        .notify-empty {
-            color: #555;
-            text-align: center;
-            padding: 20px 0;
             font-size: 13px;
+            line-height: 1.5;
+            white-space: pre-wrap;
+            word-break: break-word;
+            border-top-left-radius: 3px;
+        }
+        .msg-row.mine .bubble {
+            background: linear-gradient(135deg, #3d7a3d, #2f5e2f);
+            border-top-left-radius: 10px;
+            border-top-right-radius: 3px;
+            color: #eaffea;
+        }
+        /* 系统通知（原通知栏消息，本地展示不落库） */
+        .sys-note {
+            font-size: 11px;
+            color: #99a;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 8px;
+            padding: 4px 10px;
+            margin: 4px auto 10px;
+            width: fit-content;
+            max-width: 90%;
+            text-align: center;
+        }
+        .sys-note.error   { color: #f44336; }
+        .sys-note.warning { color: #ff9800; }
+        .sys-note.info    { color: #4CAF50; }
+        .notes-empty {
+            color: #556;
+            text-align: center;
+            padding: 30px 0;
+            font-size: 13px;
+        }
+        /* 输入区 */
+        .composer {
+            display: flex;
+            gap: 6px;
+            padding: 8px 10px;
+            border-top: 1px solid #2a3a5e;
+            flex-shrink: 0;
+            background: #16213e;
+        }
+        .composer.collapsed {
+            display: none;
+        }
+        .composer input {
+            flex: 1;
+            min-width: 0;
+            padding: 8px 10px;
+            border: 1px solid #2a3a5e;
+            border-radius: 16px;
+            background: #0f1a2f;
+            color: #ddd;
+            font-size: 13px;
+            outline: none;
+            transition: border 0.2s;
+            box-sizing: border-box;
+        }
+        .composer input:focus {
+            border-color: #4CAF50;
+        }
+        .composer .send-btn {
+            padding: 8px 14px;
+            background: #4CAF50;
+            border: none;
+            border-radius: 16px;
+            color: #fff;
+            font-size: 13px;
+            cursor: pointer;
+            white-space: nowrap;
+            transition: background 0.2s;
+        }
+        .composer .send-btn:hover {
+            background: #45a049;
+        }
+        .composer .send-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .login-hint {
+            color: #777;
+            font-size: 12px;
+            text-align: center;
+            padding: 20px 10px;
         }
     </style>
 </head>
 <body>
-    <div class="notify-header" id="notify-header">
-        <span class="title">🔔 通知</span>
+    <div class="notes-header" id="notes-header">
+        <span class="title">💬 便签</span>
         <span class="toggle-btn" id="toggle-btn">▶</span>
     </div>
-    <div class="notify-body" id="notify-body">
-        <div class="notify-empty">暂无通知</div>
+    <div class="notes-body" id="notes-body">
+        <div class="notes-empty" id="notes-empty">暂无便签，来说第一句吧～</div>
+    </div>
+    <div class="composer" id="composer">
+        <input type="text" id="note-input" placeholder="写便签，回车发送…" maxlength="500" />
+        <button class="send-btn" id="send-btn">发送</button>
     </div>
 
+    <!-- socket.io 实时接收他人便签（服务端托管客户端脚本） -->
+    <script src="/socket.io/socket.io.js"></script>
     <script>
         (function() {
-            const body = document.getElementById('notify-body');
+            const body = document.getElementById('notes-body');
             const toggleBtn = document.getElementById('toggle-btn');
-            let collapsed = false;
+            const composer = document.getElementById('composer');
+            const input = document.getElementById('note-input');
+            const sendBtn = document.getElementById('send-btn');
+            const emptyHint = document.getElementById('notes-empty');
 
-            // 从 localStorage 恢复状态
+            let myEmail = '';
+            let collapsed = false;
+            const seenIds = new Set();   // 已渲染便签 id（去重：轮询 + 广播双通道）
+
+            // ===== 折叠状态（沿用原通知栏习惯） =====
             const saved = localStorage.getItem('notifyCollapsed');
             if (saved === 'true') {
                 collapsed = true;
                 body.classList.add('collapsed');
+                composer.classList.add('collapsed');
                 toggleBtn.classList.add('collapsed');
             }
-
-            // 切换折叠
-            document.getElementById('notify-header').addEventListener('click', function() {
+            document.getElementById('notes-header').addEventListener('click', function() {
                 collapsed = !collapsed;
                 body.classList.toggle('collapsed');
+                composer.classList.toggle('collapsed');
                 toggleBtn.classList.toggle('collapsed');
                 localStorage.setItem('notifyCollapsed', collapsed);
+                if (!collapsed) scrollToBottom();
             });
 
-            // 接收来自父窗口的通知消息
+            function getToken() {
+                try {
+                    return window.parent.sessionStorage.getItem('wow_token') || '';
+                } catch (e) {
+                    return sessionStorage.getItem('wow_token') || '';
+                }
+            }
+
+            async function api(endpoint, method, payload) {
+                const resp = await fetch(endpoint, {
+                    method: method || 'GET',
+                    headers: Object.assign(
+                        { 'Content-Type': 'application/json' },
+                        getToken() ? { 'Authorization': 'Bearer ' + getToken() } : {}
+                    ),
+                    body: payload ? JSON.stringify(payload) : undefined
+                });
+                if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                return resp.json();
+            }
+
+            // ===== 渲染 =====
+            function escTime(ts) {
+                const d = new Date(ts);
+                const now = new Date();
+                const hm = String(d.getHours()).padStart(2, '0') + ':' +
+                           String(d.getMinutes()).padStart(2, '0');
+                if (d.toDateString() === now.toDateString()) return hm;
+                return (d.getMonth() + 1) + '-' + d.getDate() + ' ' + hm;
+            }
+
+            // 邮箱 -> 稳定的头像颜色
+            function avatarColor(email) {
+                let hash = 0;
+                for (let i = 0; i < email.length; i++) {
+                    hash = (hash * 31 + email.charCodeAt(i)) >>> 0;
+                }
+                return 'hsl(' + (hash % 360) + ', 42%, 42%)';
+            }
+
+            function initialsOf(email) {
+                const name = email.split('@')[0] || '?';
+                return name.slice(0, 1).toUpperCase();
+            }
+
+            function upsertNote(note) {
+                if (!note || !note.id || seenIds.has(note.id)) return false;
+                seenIds.add(note.id);
+                if (emptyHint.parentNode) emptyHint.remove();
+
+                const mine = note.email === myEmail;
+                const row = document.createElement('div');
+                row.className = 'msg-row' + (mine ? ' mine' : '');
+
+                const avatar = document.createElement('div');
+                avatar.className = 'avatar';
+                avatar.style.background = avatarColor(note.email);
+                avatar.textContent = initialsOf(note.email);
+                avatar.title = note.email;
+
+                const col = document.createElement('div');
+                col.className = 'msg-col';
+
+                const meta = document.createElement('div');
+                meta.className = 'msg-meta';
+                const sender = document.createElement('span');
+                sender.className = 'sender';
+                sender.textContent = mine ? '我' : note.email;
+                meta.appendChild(sender);
+                meta.appendChild(document.createTextNode(' · ' + escTime(note.ts)));
+
+                const bubble = document.createElement('div');
+                bubble.className = 'bubble';
+                bubble.textContent = note.content;   // textContent 防注入
+
+                col.appendChild(meta);
+                col.appendChild(bubble);
+                row.appendChild(avatar);
+                row.appendChild(col);
+                body.appendChild(row);
+                return true;
+            }
+
+            function addSystemNote(level, message) {
+                const el = document.createElement('div');
+                el.className = 'sys-note ' + (level || 'info');
+                el.textContent = message;
+                body.appendChild(el);
+                scrollToBottom();
+            }
+
+            function scrollToBottom() {
+                if (!collapsed) body.scrollTop = body.scrollHeight;
+            }
+
+            // ===== 数据加载 =====
+            async function loadHistory() {
+                try {
+                    const data = await api('/api/notes');
+                    const notes = Array.isArray(data.notes) ? data.notes : [];
+                    let changed = false;
+                    for (const n of notes) changed = upsertNote(n) || changed;
+                    if (changed) scrollToBottom();
+                } catch (e) { /* 网络抖动，等下一轮轮询 */ }
+            }
+
+            async function fetchMyEmail() {
+                try {
+                    const data = await api('/api/auth/verify');
+                    if (data && data.valid && data.email) {
+                        myEmail = String(data.email).toLowerCase();
+                    }
+                } catch (e) { /* 保持空串，所有便签按「他人」渲染 */ }
+                if (!myEmail) {
+                    composer.style.display = 'none';
+                    const hint = document.createElement('div');
+                    hint.className = 'login-hint';
+                    hint.textContent = '未登录或登录已过期，重新登录后即可留言';
+                    document.body.insertBefore(hint, composer);
+                }
+            }
+
+            // ===== 发送 =====
+            let sending = false;
+            async function send() {
+                const content = input.value.trim();
+                if (!content || sending) return;
+                sending = true;
+                sendBtn.disabled = true;
+                try {
+                    const data = await api('/api/notes', 'POST', { content });
+                    if (data && data.note) {
+                        upsertNote(data.note);   // socket 广播与轮询都会去重
+                        scrollToBottom();
+                    }
+                    input.value = '';
+                    input.focus();
+                } catch (e) {
+                    addSystemNote('error', '发送失败：' + (e.message || '网络错误'));
+                } finally {
+                    sending = false;
+                    sendBtn.disabled = false;
+                }
+            }
+            sendBtn.addEventListener('click', send);
+            input.addEventListener('keydown', function(e) {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    send();
+                }
+            });
+
+            // ===== 实时通道：socket.io 广播 =====
+            function connectSocket() {
+                if (typeof io !== 'function') return;   // 主题包缺少客户端脚本
+                try {
+                    const sock = io({ auth: { token: getToken() } });
+                    sock.on('note', (note) => {
+                        if (upsertNote(note)) scrollToBottom();
+                    });
+                } catch (e) { /* 连接失败走轮询兜底 */ }
+            }
+
+            // 兜底：低频轮询保持同步（socket.io 在线时消息由广播即时送达，
+            // 轮询主要覆盖 socket 断线 / 广播丢失的场景，upsert 按 id 去重）
+            setInterval(loadHistory, 5000);
+
+            // ===== 兼容：接收父页面 / 主内容页的系统通知（本地展示，不落库） =====
             window.addEventListener('message', function(event) {
                 if (event.origin !== window.location.origin) return;
                 const data = event.data;
-                if (data.type === 'notify') {
-                    addNotification(data.level || 'info', data.message);
+                if (data && data.type === 'notify') {
+                    addSystemNote(data.level || 'info', data.message);
                 }
             });
 
-            function addNotification(level, message) {
-                // 移除空状态
-                const empty = body.querySelector('.notify-empty');
-                if (empty) empty.remove();
-
-                const item = document.createElement('div');
-                item.className = 'notify-item ' + level;
-                const time = new Date().toLocaleTimeString();
-                item.innerHTML = `<span class="time">${time}</span> ${message}`;
-                body.prepend(item);
-
-                // 限制条目数，最多 50 条
-                while (body.children.length > 50) {
-                    body.removeChild(body.lastChild);
-                }
-            }
-
-            // 暴露给父窗口调用
-            window.parent.postMessage({ type: 'notify-ready' }, '*');
+            // ===== 启动 =====
+            fetchMyEmail().then(() => loadHistory());
+            connectSocket();
         })();
     </script>
 </body>

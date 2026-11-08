@@ -1,0 +1,141 @@
+{
+  "mod_id": "luckperms",
+  "display_name": "LuckPerms（权限管理）",
+  "platforms": ["paper", "spigot", "fabric", "forge"],
+  "author": "wow 官方",
+  "version": "1.0.0",
+  "homepage": "https://luckperms.net",
+  "config_files": [
+    {
+      "path": "plugins/LuckPerms/config.yml",
+      "format": "yml",
+      "fields": [
+        {
+          "key": "server",
+          "label": "服务器标识",
+          "description": "当前服务器的名字。多服环境下用来区分各服权限，单服保持默认 global 即可。",
+          "type": "string",
+          "default": "global"
+        },
+        {
+          "key": "include-global",
+          "label": "包含全局权限",
+          "description": "是否让本服也应用标记为 global 的权限与继承关系。多服网络中通常保持开启。",
+          "type": "boolean",
+          "default": true
+        },
+        {
+          "key": "sync.enabled",
+          "label": "启用跨服同步",
+          "description": "多个子服共享同一份权限数据（需要同一数据库）。单服无需开启。",
+          "type": "boolean",
+          "default": false,
+          "advanced": true
+        },
+        {
+          "key": "storage-method",
+          "label": "存储方式",
+          "description": "H2 是本地文件数据库，适合单服；MySQL / MariaDB 适合多服共享；postgresql 适合大型网络。改动后需迁移数据。",
+          "type": "select",
+          "options": [
+            { "value": "h2", "label": "H2（本地文件，单服推荐）" },
+            { "value": "sqlite", "label": "SQLite（本地文件）" },
+            { "value": "mysql", "label": "MySQL" },
+            { "value": "mariadb", "label": "MariaDB" },
+            { "value": "postgresql", "label": "PostgreSQL" }
+          ],
+          "default": "h2",
+          "danger": true
+        },
+        {
+          "key": "storage.h2.table_prefix",
+          "label": "数据表前缀",
+          "description": "多个插件共用同一数据库时，用前缀区分数据表，避免互相覆盖。",
+          "type": "string",
+          "default": "luckperms_",
+          "advanced": true
+        },
+        {
+          "key": "default-assignments.default-group",
+          "label": "新玩家默认组",
+          "description": "第一次进入服务器的玩家自动获得的权限组。可填写已有组名（如 default、member）。",
+          "type": "string",
+          "default": "default"
+        },
+        {
+          "key": "default-assignments.default-group-node",
+          "label": "默认组是否作为正式节点",
+          "description": "开启后，组名会以节点形式写入玩家数据；关闭则只做临时继承。一般保持开启。",
+          "type": "boolean",
+          "default": true,
+          "advanced": true
+        },
+        {
+          "key": "verbose",
+          "label": "详细日志模式",
+          "description": "在控制台输出权限检查全过程。排查问题时临时开启，平时关闭以免刷屏拖慢服务器。",
+          "type": "boolean",
+          "default": false
+        },
+        {
+          "key": "commands.allow-ops",
+          "label": "允许 OP 使用指令",
+          "description": "关闭后只有拥有 luckperms.* 权限的玩家才能执行 /lp 指令。防止普通 OP 随意改权限。",
+          "type": "boolean",
+          "default": true
+        },
+        {
+          "key": "commands.log-commands",
+          "label": "记录指令执行",
+          "description": "把每条 /lp 指令写入日志，方便审计是谁改了谁的权限。",
+          "type": "boolean",
+          "default": false
+        },
+        {
+          "key": "argument-based-command-permissions",
+          "label": "参数级指令权限",
+          "description": "开启后 /lp 的每个子参数都单独校验权限，可精细到「只能查看、不能修改」。",
+          "type": "boolean",
+          "default": false,
+          "advanced": true
+        },
+        {
+          "key": "meta-formatting.prefix-format",
+          "label": "前缀格式",
+          "description": "聊天前缀的显示模板。{prefix} 会被玩家实际前缀替换，可加颜色代码。",
+          "type": "string",
+          "default": "&7[{prefix}]",
+          "advanced": true
+        }
+      ]
+    },
+    {
+      "path": "config/luckperms/luckperms.json",
+      "format": "json",
+      "fields": [
+        {
+          "key": "storageMethod",
+          "label": "存储方式（模组版）",
+          "description": "Fabric / Forge 版 LuckPerms 的存储后端。h2 为本地文件，适合单服。",
+          "type": "select",
+          "options": [
+            { "value": "h2", "label": "H2（本地文件）" },
+            { "value": "json", "label": "JSON 文件" },
+            { "value": "mysql", "label": "MySQL" },
+            { "value": "mariadb", "label": "MariaDB" },
+            { "value": "postgresql", "label": "PostgreSQL" }
+          ],
+          "default": "h2",
+          "danger": true
+        },
+        {
+          "key": "verbose",
+          "label": "详细日志模式",
+          "description": "输出权限检查全过程，排查问题时临时开启。",
+          "type": "boolean",
+          "default": false
+        }
+      ]
+    }
+  ]
+}

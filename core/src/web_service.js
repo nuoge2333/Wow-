@@ -23,6 +23,10 @@ const WebTask = require('./web_task');
 const { logger } = require('./log');
 // V3.5.3：Web 端命令安全策略（拒绝清单）
 const { isWebCommandAllowed } = require('./command_policy');
+// 便签聊天室存储（右侧栏便签墙的读写与持久化）
+const WebNotes = require('./web_notes');
+// 实例配置（server.properties）读写
+const ServerProps = require('./server_props');
 
 // 用于存储 WebSocket 客户端连接
 let wsClients = [];
@@ -537,6 +541,611 @@ function startWeb(options = {}) {
     // ===== API 路由 =====
 
     /**
+     * 便签聊天室（右侧栏）
+     * - GET  /api/notes：拉取便签墙（旧在前、新在后）
+     * - POST /api/notes：发言（以 JWT 中的登录邮箱为发言人），并通过
+     *   socket.io 广播 'note' 事件让所有在线面板实时刷新
+     */
+    app.get('/api/notes', (req, res) => {
+        res.json({ success: true, notes: WebNotes.listNotes() });
+    });
+
+    app.post('/api/notes', (req, res) => {
+        const email = (req.user && req.user.email) || 'admin@local';
+        const note = WebNotes.addNote({
+            email,
+            content: req.body && req.body.content
+        });
+        if (!note) {
+            return res.status(400).json({ success: false, error: '便签内容不能为空' });
+        }
+        // 实时广播：所有已连接的 socket.io 客户端（右侧便签栏）立即收到
+        try {
+            if (ioServer) ioServer.emit('note', note);
+        } catch (e) { /* 广播失败不影响落库 */ }
+        logger.impt(`Web 便签: ${note.email} (${note.content.length} 字)`);
+        res.json({ success: true, note });
+    });
+
+    // ===== 资源管理 / 实例配置（V3.6.2 新增页面）=====
+
+    /**
+     * 列出「当前方案 + 共享池」的模组 / 插件 / 核心。
+     *
+     * GET /api/resources?scheme=<name>
+     *   scheme 省略 = 当前激活方案。
+     *
+     * 方案侧读 mods/ 与 mods-disabled/ 两个目录：clone-client 把客户端模组
+     * 禁用后放进 mods-disabled/，而 CLI 的 disable 用 DISABLED_ 前缀，
+     * 两种历史写法都要能在页面上看到并启用。
+     */
+    app.get('/api/resources', (req, res) => {
+        try {
+            const SchemeManager = require('./scheme_manager');
+            const sm = new SchemeManager();
+            const wanted = String(req.query.scheme || '').trim();
+            const name = wanted || sm.currentScheme || '';
+            if (!name) {
+                return res.status(400).json({
+                    success: false,
+                    error: '当前没有激活方案，请先在「方案管理」中切换方案'
+                });
+            }
+            if (!sm._schemeExists(name)) {
+                return res.status(404).json({ success: false, error: `方案「${name}」不存在` });
+            }
+            const schemePath = sm._getSchemePath(name);
+            const meta = sm._loadSchemeMeta(name);
+
+            const readFiles = (dir) => {
+                const out = [];
+                if (!fs.existsSync(dir)) return out;
+                let names = [];
+                try { names = fs.readdirSync(dir); } catch (e) { return out; }
+                for (const file of names.sort()) {
+                    const p = path.join(dir, file);
+                    let st;
+                    try { st = fs.statSync(p); } catch (e) { continue; }
+                    if (!st.isFile()) continue;
+                    if (!/\.(jar|zip)$/i.test(file)) continue;
+                    out.push({ name: file, size: st.size, mtime: st.mtimeMs });
+                }
+                return out;
+            };
+
+            const modsDir = path.join(schemePath, 'mods');
+            const disabledDir = path.join(schemePath, 'mods-disabled');
+            const pluginsDir = path.join(schemePath, 'plugins');
+
+            const mods = readFiles(modsDir).map(f => ({
+                ...f,
+                enabled: !/^DISABLED_/i.test(f.name),
+                location: 'mods'
+            }));
+            for (const f of readFiles(disabledDir)) {
+                mods.push({ ...f, enabled: false, location: 'mods-disabled' });
+            }
+            const plugins = readFiles(pluginsDir).map(f => ({
+                ...f,
+                enabled: !/^DISABLED_/i.test(f.name),
+                location: 'plugins'
+            }));
+
+            // 共享池
+            const poolDir = utils.getPoolPath();
+            const poolByLoader = (root) => {
+                const out = [];
+                if (!fs.existsSync(root)) return out;
+                let loaders = [];
+                try { loaders = fs.readdirSync(root); } catch (e) { return out; }
+                for (const loader of loaders) {
+                    const ldir = path.join(root, loader);
+                    let lst;
+                    try { lst = fs.statSync(ldir); } catch (e) { continue; }
+                    if (!lst.isDirectory()) continue;
+                    // 插件池的布局是 plugins/<loader>/*.jar（没有版本层）
+                    for (const f of readFiles(ldir)) {
+                        out.push({ ...f, loader, version: '' });
+                    }
+                    // 模组池的布局是 mods/<loader>/<version>/*.jar
+                    let versions = [];
+                    try { versions = fs.readdirSync(ldir); } catch (e) { continue; }
+                    for (const version of versions) {
+                        const vdir = path.join(ldir, version);
+                        let vst;
+                        try { vst = fs.statSync(vdir); } catch (e) { continue; }
+                        if (!vst.isDirectory()) continue;
+                        for (const f of readFiles(vdir)) {
+                            out.push({ ...f, loader, version });
+                        }
+                    }
+                }
+                return out;
+            };
+
+            const cores = [];
+            const coresDir = path.join(poolDir, 'cores');
+            const walkCores = (dir, type, version, depth) => {
+                if (depth > 3) return;
+                let names = [];
+                try { names = fs.readdirSync(dir); } catch (e) { return; }
+                for (const file of names) {
+                    const p = path.join(dir, file);
+                    let st;
+                    try { st = fs.statSync(p); } catch (e) { continue; }
+                    if (st.isDirectory()) { walkCores(p, type, version, depth + 1); continue; }
+                    if (!/\.jar$/i.test(file) || /installer/i.test(file)) continue;
+                    cores.push({
+                        name: file,
+                        size: st.size,
+                        type,
+                        version,
+                        rel: path.relative(poolDir, p).split(path.sep).join('/')
+                    });
+                }
+            };
+            if (fs.existsSync(coresDir)) {
+                for (const type of fs.readdirSync(coresDir)) {
+                    const tdir = path.join(coresDir, type);
+                    let tst;
+                    try { tst = fs.statSync(tdir); } catch (e) { continue; }
+                    if (!tst.isDirectory()) continue;
+                    for (const version of fs.readdirSync(tdir)) {
+                        const vdir = path.join(tdir, version);
+                        let vst;
+                        try { vst = fs.statSync(vdir); } catch (e) { continue; }
+                        if (!vst.isDirectory()) continue;
+                        walkCores(vdir, type, version, 0);
+                    }
+                }
+            }
+
+            res.json({
+                success: true,
+                scheme: {
+                    name,
+                    version: meta.version,
+                    loader: meta.loader,
+                    type: meta.type,
+                    state: meta.state,
+                    active: sm.currentScheme === name,
+                    path: schemePath
+                },
+                mods,
+                plugins,
+                pool: {
+                    mods: poolByLoader(path.join(poolDir, 'mods')),
+                    plugins: poolByLoader(path.join(poolDir, 'plugins')),
+                    cores
+                },
+                schemes: sm.list().map(s => ({ name: s.name, active: s.active, version: s.version }))
+            });
+        } catch (e) {
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+    /** 解析 scheme 参数 + 目标 kind 目录（mods / plugins），并防路径穿越 */
+    function resolveResourceTarget(req) {
+        const SchemeManager = require('./scheme_manager');
+        const sm = new SchemeManager();
+        const wanted = String((req.body && req.body.scheme) || '').trim();
+        const name = wanted || sm.currentScheme || '';
+        if (!name) return { error: '当前没有激活方案，请先在「方案管理」中切换方案', status: 400 };
+        if (!sm._schemeExists(name)) return { error: `方案「${name}」不存在`, status: 404 };
+
+        const kind = String((req.body && req.body.kind) || 'mods');
+        if (kind !== 'mods' && kind !== 'plugins') {
+            return { error: 'kind 只能是 mods 或 plugins', status: 400 };
+        }
+        const fileName = path.basename(String((req.body && req.body.name) || ''));
+        if (!fileName || !/\.(jar|zip)$/i.test(fileName)) {
+            return { error: '文件名不合法', status: 400 };
+        }
+        const schemePath = sm._getSchemePath(name);
+        return { sm, name, kind, fileName, schemePath, dir: path.join(schemePath, kind) };
+    }
+
+    /**
+     * 启用 / 禁用方案内的模组或插件。
+     * POST /api/resources/toggle { scheme?, kind, name }
+     *
+     * 规则：
+     *   - mods/ 下无前缀 → 加 DISABLED_ 前缀（禁用）
+     *   - mods/ 下带前缀 → 去掉前缀（启用）
+     *   - mods-disabled/ 下 → 移回 mods/（启用；这是 clone-client 的禁用方式）
+     */
+    app.post('/api/resources/toggle', (req, res) => {
+        try {
+            const t = resolveResourceTarget(req);
+            if (t.error) return res.status(t.status).json({ success: false, error: t.error });
+
+            const inMain = path.join(t.dir, t.fileName);
+            const disabledName = /^DISABLED_/i.test(t.fileName)
+                ? t.fileName.replace(/^DISABLED_/i, '')
+                : `DISABLED_${t.fileName}`;
+            const inMainDisabled = path.join(t.dir, disabledName);
+            const disabledDir = path.join(t.schemePath, 'mods-disabled');
+            const inDisabledDir = path.join(disabledDir, t.fileName);
+            const inDisabledDirStripped = path.join(disabledDir, disabledName);
+
+            if (fs.existsSync(inMain)) {
+                const isDisabled = /^DISABLED_/i.test(t.fileName);
+                // disabledName 已按当前状态取反：未禁用 → 加前缀；已禁用 → 去前缀
+                const target = inMainDisabled;
+                if (fs.existsSync(target)) {
+                    return res.status(409).json({ success: false, error: `目标文件已存在：${path.basename(target)}` });
+                }
+                fs.moveSync(inMain, target);
+                return res.json({ success: true, enabled: isDisabled, name: path.basename(target) });
+            }
+            // mods-disabled/ 是 clone-client 的禁用区：启用 = 移回 mods/ 并去掉禁用语义
+            // （不能保留 DISABLED_ 前缀，否则用户点了「启用」还是禁用状态）
+            if (t.kind === 'mods' && fs.existsSync(inDisabledDir)) {
+                fs.ensureDirSync(t.dir);
+                const target = path.join(t.dir, t.fileName.replace(/^DISABLED_/i, ''));
+                if (fs.existsSync(target)) {
+                    return res.status(409).json({ success: false, error: `mods/ 下已存在同名文件：${path.basename(target)}` });
+                }
+                fs.moveSync(inDisabledDir, target);
+                return res.json({ success: true, enabled: true, name: path.basename(target) });
+            }
+            if (t.kind === 'mods' && fs.existsSync(inDisabledDirStripped)) {
+                fs.ensureDirSync(t.dir);
+                const target = path.join(t.dir, t.fileName.replace(/^DISABLED_/i, ''));
+                if (fs.existsSync(target)) {
+                    return res.status(409).json({ success: false, error: `mods/ 下已存在同名文件：${path.basename(target)}` });
+                }
+                fs.moveSync(inDisabledDirStripped, target);
+                return res.json({ success: true, enabled: true, name: path.basename(target) });
+            }
+            return res.status(404).json({ success: false, error: `找不到文件：${t.fileName}` });
+        } catch (e) {
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+    /**
+     * 在 pool 与方案之间复制资源。
+     * POST /api/resources/copy { scheme?, kind, name, direction: 'pool2scheme'|'scheme2pool' }
+     */
+    app.post('/api/resources/copy', (req, res) => {
+        try {
+            const t = resolveResourceTarget(req);
+            if (t.error) return res.status(t.status).json({ success: false, error: t.error });
+            const direction = String((req.body && req.body.direction) || '');
+
+            if (direction === 'pool2scheme') {
+                // 在 pool 的对应分类下找同名文件（优先同 loader/version）
+                const poolRoot = path.join(utils.getPoolPath(), t.kind);
+                const meta = t.sm._loadSchemeMeta(t.name);
+                const preferDir = path.join(poolRoot, String(meta.loader || '').toLowerCase(), String(meta.version || ''));
+                let source = path.join(preferDir, t.fileName);
+                if (!fs.existsSync(source)) {
+                    // 全池搜索（loader/version 目录层级不统一）
+                    const hits = [];
+                    const walk = (dir, depth) => {
+                        if (depth > 3) return;
+                        let names = [];
+                        try { names = fs.readdirSync(dir); } catch (e) { return; }
+                        for (const n of names) {
+                            const p = path.join(dir, n);
+                            let st;
+                            try { st = fs.statSync(p); } catch (e) { continue; }
+                            if (st.isDirectory()) { walk(p, depth + 1); continue; }
+                            if (n === t.fileName) hits.push(p);
+                        }
+                    };
+                    walk(poolRoot, 0);
+                    if (!hits.length) {
+                        return res.status(404).json({ success: false, error: `共享池中没有 ${t.fileName}` });
+                    }
+                    source = hits[0];
+                }
+                fs.ensureDirSync(t.dir);
+                const target = path.join(t.dir, t.fileName);
+                if (fs.existsSync(target)) {
+                    return res.status(409).json({ success: false, error: '方案中已存在同名文件' });
+                }
+                fs.copyFileSync(source, target);
+                return res.json({ success: true, direction, name: t.fileName });
+            }
+
+            if (direction === 'scheme2pool') {
+                const source = path.join(t.dir, t.fileName);
+                if (!fs.existsSync(source)) {
+                    return res.status(404).json({ success: false, error: `方案中没有 ${t.fileName}` });
+                }
+                const meta = t.sm._loadSchemeMeta(t.name);
+                const loader = String(meta.loader || 'vanilla').toLowerCase();
+                const version = String(meta.version || 'unknown');
+                const poolDir = path.join(utils.getPoolPath(), t.kind, loader, version);
+                fs.ensureDirSync(poolDir);
+                const target = path.join(poolDir, t.fileName.replace(/^DISABLED_/i, ''));
+                if (fs.existsSync(target)) {
+                    return res.json({ success: true, direction, name: path.basename(target), already: true });
+                }
+                fs.copyFileSync(source, target);
+                return res.json({ success: true, direction, name: path.basename(target) });
+            }
+
+            return res.status(400).json({ success: false, error: 'direction 只能是 pool2scheme 或 scheme2pool' });
+        } catch (e) {
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+    /**
+     * 实例配置：读写 server.properties
+     * GET  /api/props?scheme=<name>
+     * POST /api/props { scheme?, updates: { key: value } }
+     */
+    app.get('/api/props', (req, res) => {
+        try {
+            const SchemeManager = require('./scheme_manager');
+            const sm = new SchemeManager();
+            const wanted = String(req.query.scheme || '').trim();
+            const name = wanted || sm.currentScheme || '';
+            if (!name) {
+                return res.status(400).json({
+                    success: false,
+                    error: '当前没有激活方案，请先在「方案管理」中切换方案'
+                });
+            }
+            if (!sm._schemeExists(name)) {
+                return res.status(404).json({ success: false, error: `方案「${name}」不存在` });
+            }
+            const schemePath = sm._getSchemePath(name);
+            const data = ServerProps.readProps(schemePath);
+            const meta = sm._loadSchemeMeta(name);
+            res.json({
+                success: true,
+                scheme: {
+                    name,
+                    version: meta.version,
+                    loader: meta.loader,
+                    active: sm.currentScheme === name
+                },
+                schemes: sm.list().map(s => ({ name: s.name, active: s.active, version: s.version })),
+                exists: data.exists,
+                file: data.file,
+                groups: data.groups,
+                others: data.others,
+                raw: data.raw
+            });
+        } catch (e) {
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+    app.post('/api/props', (req, res) => {
+        try {
+            const SchemeManager = require('./scheme_manager');
+            const sm = new SchemeManager();
+            const wanted = String((req.body && req.body.scheme) || '').trim();
+            const name = wanted || sm.currentScheme || '';
+            if (!name) {
+                return res.status(400).json({
+                    success: false,
+                    error: '当前没有激活方案，请先在「方案管理」中切换方案'
+                });
+            }
+            if (!sm._schemeExists(name)) {
+                return res.status(404).json({ success: false, error: `方案「${name}」不存在` });
+            }
+            const updates = req.body && req.body.updates;
+            if (!updates || typeof updates !== 'object' || Array.isArray(updates)) {
+                return res.status(400).json({ success: false, error: 'updates 必须是对象' });
+            }
+            const r = ServerProps.writeProps(sm._getSchemePath(name), updates);
+            if (!r.ok) {
+                return res.status(400).json({ success: false, error: r.reason });
+            }
+            logger.impt(`Web 修改实例配置: ${name}（${r.changed} 项更新，${r.created} 项新增）`);
+            res.json({ success: true, changed: r.changed, created: r.created, file: r.file });
+        } catch (e) {
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+    // ========================================================================
+    // 模组表单引擎（V3.6.2 · 608 进阶）
+    // 引擎与数据解耦：这里只做「读写 schema 库 + 调引擎」，不认识任何具体模组。
+    // ========================================================================
+
+    /**
+     * 列出表单包（用户扩展库优先于官方内置库）
+     */
+    app.get('/api/schema/list', (req, res) => {
+        try {
+            const Store = require('./schema_store');
+            const r = Store.loadAll();
+            res.json({
+                success: true,
+                schemas: r.schemas.map(s => ({
+                    mod_id: s.mod_id,
+                    display_name: s.display_name,
+                    platforms: s.platforms,
+                    origin: s._origin,
+                    origin_label: s._originLabel,
+                    file_count: s.config_files.length,
+                    field_count: s.config_files.reduce((a, f) => a + f.fields.length, 0),
+                    author: s.author || '',
+                    version: s.version || ''
+                })),
+                errors: r.errors,
+                custom_dir: Store.customDir()
+            });
+        } catch (e) {
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+    /**
+     * 单个表单包详情（含字段清单，供「查看」用）
+     */
+    app.get('/api/schema/:modId', (req, res) => {
+        try {
+            const Store = require('./schema_store');
+            const s = Store.get(req.params.modId);
+            if (!s) return res.status(404).json({ success: false, error: `没找到表单包「${req.params.modId}」` });
+            const { _source, _origin, _originLabel, ...rest } = s;
+            res.json({ success: true, schema: rest, origin: _origin, origin_label: _originLabel });
+        } catch (e) {
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+    /**
+     * 导入表单包：粘贴 JSON 文本，或给一个 GitHub / 直链 URL。
+     * 导入一律落到用户扩展库 custom-schemas/，不会改安装目录。
+     */
+    app.post('/api/schema/import', async (req, res) => {
+        try {
+            const Store = require('./schema_store');
+            const body = req.body || {};
+            let text = body.json;
+            const url = String(body.url || '').trim();
+
+            if (url) {
+                if (!/^https?:\/\//i.test(url)) {
+                    return res.status(400).json({ success: false, error: '只支持 http / https 链接' });
+                }
+                // 把常见的 GitHub 页面地址转成 raw 直链，省得用户自己找
+                let fetchUrl = url;
+                const gh = url.match(/^https?:\/\/github\.com\/([^/]+)\/([^/]+)\/blob\/(.+)$/i);
+                if (gh) fetchUrl = `https://raw.githubusercontent.com/${gh[1]}/${gh[2]}/${gh[3]}`;
+                try {
+                    const axios = require('axios');
+                    const resp = await axios.get(fetchUrl, {
+                        timeout: 20000,
+                        maxContentLength: Store.MAX_SCHEMA_BYTES,
+                        responseType: 'text',
+                        transformResponse: [d => d]
+                    });
+                    text = typeof resp.data === 'string' ? resp.data : JSON.stringify(resp.data);
+                } catch (e) {
+                    return res.status(400).json({ success: false, error: `下载失败：${e.message}` });
+                }
+            }
+
+            if (typeof text !== 'string' || !text.trim()) {
+                return res.status(400).json({ success: false, error: '请粘贴 JSON 内容，或填写下载链接' });
+            }
+            const parsed = Store.parseImport(text);
+            if (!parsed.ok) return res.status(400).json({ success: false, error: parsed.reason });
+            const saved = Store.saveCustom(parsed.schema);
+            logger.impt(`Web 导入表单包: ${parsed.schema.mod_id}`);
+            res.json({
+                success: true,
+                mod_id: parsed.schema.mod_id,
+                display_name: parsed.schema.display_name,
+                file: saved.file,
+                warnings: parsed.warnings || []
+            });
+        } catch (e) {
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+    /**
+     * 删除用户扩展库里的表单包（官方内置不可删）
+     */
+    app.delete('/api/schema/:modId', (req, res) => {
+        try {
+            const Store = require('./schema_store');
+            const r = Store.removeCustom(req.params.modId);
+            if (!r.ok) return res.status(400).json({ success: false, error: r.reason });
+            logger.impt(`Web 删除表单包: ${req.params.modId}`);
+            res.json({ success: true, file: r.file });
+        } catch (e) {
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+    /**
+     * 懒加载目录树：一次只列一层
+     */
+    app.get('/api/modcfg/tree', (req, res) => {
+        try {
+            const Engine = require('./schema_engine');
+            const r = Engine.listDir(req.query.dir);
+            if (!r.ok) return res.status(400).json({ success: false, error: r.reason });
+            res.json({ success: true, ...r });
+        } catch (e) {
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+    /**
+     * 读文件：有匹配表单包且不超 200 行 → 给表单数据；否则源码模式
+     */
+    app.get('/api/modcfg/file', (req, res) => {
+        try {
+            const Engine = require('./schema_engine');
+            const r = Engine.readFileForEdit(req.query.path);
+            if (!r.ok) return res.status(400).json({ success: false, error: r.reason });
+            res.json({ success: true, ...r });
+        } catch (e) {
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+    /**
+     * 表单模式保存：只接收变更集 { file, changes: {key: value} }。
+     * 返回改写后的全文，前端据此自动切到源码模式让用户复核。
+     */
+    app.post('/api/modcfg/save', (req, res) => {
+        try {
+            const Engine = require('./schema_engine');
+            const Store = require('./schema_store');
+            const { file, changes } = req.body || {};
+            if (!file || typeof file !== 'string') {
+                return res.status(400).json({ success: false, error: '缺少 file' });
+            }
+            if (!changes || typeof changes !== 'object' || Array.isArray(changes)) {
+                return res.status(400).json({ success: false, error: 'changes 必须是以键名为键的对象' });
+            }
+            const hit = Store.findByPath(file);
+            if (!hit) return res.status(400).json({ success: false, error: '这个文件没有匹配的表单包，请用源码模式' });
+
+            const r = Engine.writeChanges(file, hit.file, changes);
+            if (!r.ok) return res.status(400).json({ success: false, error: r.reason });
+
+            if (r.changed > 0) logger.impt(`Web 表单保存: ${file}（${r.changed} 项）`);
+            res.json({
+                success: true,
+                changed: r.changed,
+                applied: r.applied,
+                missing: r.missing,
+                text: r.text,
+                backup: r.backup
+            });
+        } catch (e) {
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+    /**
+     * 源码模式整体保存（备份 + 原子写）
+     */
+    app.post('/api/modcfg/save-raw', (req, res) => {
+        try {
+            const Engine = require('./schema_engine');
+            const { file, content } = req.body || {};
+            if (!file || typeof content !== 'string') {
+                return res.status(400).json({ success: false, error: '需要 file 与 content' });
+            }
+            const r = Engine.saveRaw(file, content);
+            if (!r.ok) return res.status(400).json({ success: false, error: r.reason });
+            logger.impt(`Web 源码保存: ${file}`);
+            res.json({ success: true, path: r.path });
+        } catch (e) {
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+    /**
      * 执行 CLI 命令（将 Web 操作转为命令执行）
      */
     app.post('/api/exec', async (req, res) => {
@@ -769,6 +1378,79 @@ function startWeb(options = {}) {
                 webCliEcho(`config set ${keys.join(' ')}`);
             }
             res.json({ success: true, applied, keys, skipped: check.skipped });
+        } catch (e) {
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+    /**
+     * 最终启动命令预览（V3.6.2 · 607 指令五）
+     * POST /api/config/preview-jvm
+     *   入参（均可省略，省略时读当前配置）：
+     *     template: 'g1' | 'zgc' | 'custom'
+     *     override_args: string[]   （Web 端必须传 JSON 数组，禁止前端拼长串）
+     *     memory: '4G'
+     * 出参：后端跑完「模板 → 合并 → GC 互斥 → 兜底 → agent 过滤 → 内存红线」
+     * 完整链路后，返回最终的 java 命令字符串；前端原样展示，不做任何拼接。
+     */
+    app.post('/api/config/preview-jvm', (req, res) => {
+        try {
+            const Jvm = require('./jvm_args');
+            const os = require('os');
+            const body = req.body || {};
+
+            const template = body.template !== undefined && body.template !== null && body.template !== ''
+                ? body.template
+                : config.getConfig('server.jvm.template', Jvm.DEFAULT_TEMPLATE);
+            const override = body.override_args !== undefined
+                ? body.override_args
+                : config.getConfig('server.jvm.override_args', []);
+            const memory = (body.memory && String(body.memory).trim())
+                || config.getConfig('server.memory')
+                || '2G';
+            const authEnable = config.getConfig('auth.enable', false) === true;
+
+            const built = Jvm.buildJvmArgs({
+                template,
+                override,
+                heap: memory,
+                filterJavaagent: authEnable
+            });
+            // 显式 memory（前端预览传入 / 配置的 server.memory）与 CLI --memory 同语义：覆盖堆参数
+            const memOverride = body.memory !== undefined && body.memory !== null && String(body.memory).trim() !== ''
+                ? Jvm.applyMemoryOverride(built.args, memory)
+                : { args: built.args };
+            const args = [...memOverride.args];
+            // 预览也要体现 wow 独家注入的外置登录 agent（jar 路径启动时才确定，用占位说明）
+            if (authEnable) {
+                const authServer = config.getConfig('auth.server') || 'https://authlib-injector.yushi.moe';
+                args.push(`-javaagent:<authlib-injector.jar>=${authServer}`);
+            }
+
+            const jarFile = (body.jar && String(body.jar).trim()) || 'server.jar';
+            const command = ['java', ...args, '-jar', jarFile, 'nogui'].join(' ');
+
+            const totalBytes = os.totalmem();
+            const memCheck = Jvm.checkMemLimit(memOverride.args, totalBytes);
+
+            res.json({
+                success: true,
+                command,
+                args,
+                removed: built.removed,
+                injected: built.injected,
+                warnings: built.warnings,
+                memory: {
+                    total_bytes: totalBytes,
+                    total_text: Jvm.formatBytes(totalBytes),
+                    limit_bytes: memCheck.limitBytes,
+                    limit_text: Jvm.formatBytes(memCheck.limitBytes),
+                    xmx_bytes: memCheck.xmxBytes,
+                    xmx_text: memCheck.xmxText,
+                    over_limit: !memCheck.ok,
+                    message: memCheck.message || null
+                }
+            });
         } catch (e) {
             res.status(500).json({ success: false, error: e.message });
         }
@@ -1496,7 +2178,10 @@ function startWeb(options = {}) {
         socket.on('disconnect', () => {
             console.log(`WebSocket 客户端已断开: ${socket.id}`);
             wsClients = wsClients.filter(c => c.id !== socket.id);
-            if (wsClients.length === 0) stopBroadcastTail();
+            // V3.6.2 修复：函数名笔误——这里原本写成 stopBroadcastTail()（不存在），
+            // 导致最后一个客户端断开时抛 ReferenceError，整个面板进程直接崩溃。
+            // 实际的停止函数是 stopLogTail()。
+            if (wsClients.length === 0) stopLogTail();
         });
 
         // 接收命令（前端直接发送命令）

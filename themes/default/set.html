@@ -521,6 +521,17 @@
                     <div id="config-form">
                         <div class="empty-state">加载中...</div>
                     </div>
+
+                    <!-- 最终启动预览（V3.6.2 · 607 指令五：所见即所得）。
+                         前端不做任何 JVM 参数拼接：改动防抖请求后端
+                         /api/config/preview-jvm，由后端跑完「模板 → 合并 →
+                         GC 互斥 → 兜底 → agent 过滤 → 内存红线」完整链路，
+                         返回的最终命令字符串在这里原样展示。 -->
+                    <div id="jvm-preview-panel" class="config-group" style="margin-top:16px;">
+                        <label>🖥️ 最终启动预览（由后端实时计算，所见即所得）</label>
+                        <pre id="jvm-preview-cmd" spellcheck="false" style="margin:6px 0;padding:10px 12px;border-radius:8px;background:#141b24;color:#9ecbff;font-family:monospace;font-size:12px;white-space:pre-wrap;word-break:break-all;min-height:20px;">加载中...</pre>
+                        <div id="jvm-preview-note" style="color:#d9853f;font-size:12px;display:none;"></div>
+                    </div>
                 </div>
 
                 <!-- 原始 JSON 模式 -->
@@ -557,6 +568,26 @@
                 </div>
             </div>
 
+            <!-- ===== 模组配置库（表单包 Schema） ===== -->
+            <div class="settings-section full">
+                <div class="title">
+                    🧩 模组配置库
+                    <span class="badge" id="schema-count">加载中...</span>
+                </div>
+                <div style="color:#667788;font-size:12px;margin-bottom:12px;line-height:1.7;">
+                    表单包决定「模组配置」页里哪些配置项能以中文表单形式编辑。官方内置若干高频模组，
+                    你也可以粘贴一段 JSON 或填一个 GitHub 链接导入自己的翻译包——放在
+                    <code style="color:#8fb8d8;">custom-schemas/</code> 下，同名会覆盖官方版本。
+                </div>
+                <div class="btn-row" style="margin-bottom:12px;">
+                    <button class="btn btn-primary" id="schema-import-btn">📥 导入表单包</button>
+                    <button class="btn btn-secondary" id="schema-refresh-btn">🔄 刷新列表</button>
+                </div>
+                <div id="schema-list">
+                    <div class="empty-state">加载中...</div>
+                </div>
+            </div>
+
             <!-- ===== 主题包管理 ===== -->
             <div class="settings-section">
                 <div class="title">
@@ -573,6 +604,30 @@
                 </div>
             </div>
 
+        </div>
+    </div>
+
+    <!-- ===== 模态框：导入表单包 ===== -->
+    <div class="modal-overlay" id="schema-import-modal">
+        <div class="modal">
+            <h3>📥 导入表单包</h3>
+            <div class="form-group">
+                <label>方式一：粘贴 JSON</label>
+                <textarea id="schema-import-json" spellcheck="false"
+                    placeholder='{ "mod_id": "create", "display_name": "机械动力 (Create)", "platforms": ["forge"], "config_files": [ ... ] }'
+                    style="min-height:180px;font-family:monospace;font-size:12px;"></textarea>
+            </div>
+            <div class="form-group">
+                <label>方式二：从链接下载（GitHub 页面地址或 raw 直链）</label>
+                <input type="text" id="schema-import-url" placeholder="https://github.com/用户/仓库/blob/main/xxx.json" />
+                <div style="color:#667788;font-size:12px;margin-top:4px;">
+                    两种方式都填时以链接为准。导入后写入 custom-schemas/，不会改动安装目录。
+                </div>
+            </div>
+            <div class="btn-row">
+                <button class="btn btn-modal-cancel" id="schema-import-cancel">取消</button>
+                <button class="btn btn-primary" id="schema-import-confirm">导入</button>
+            </div>
         </div>
     </div>
 
@@ -624,6 +679,17 @@
             const saveConfigBtn = document.getElementById('save-config-btn');
             const reloadConfigBtn = document.getElementById('reload-config-btn');
 
+            // 模组配置库（表单包）
+            const schemaList = document.getElementById('schema-list');
+            const schemaCount = document.getElementById('schema-count');
+            const schemaImportBtn = document.getElementById('schema-import-btn');
+            const schemaRefreshBtn = document.getElementById('schema-refresh-btn');
+            const schemaImportModal = document.getElementById('schema-import-modal');
+            const schemaImportJson = document.getElementById('schema-import-json');
+            const schemaImportUrl = document.getElementById('schema-import-url');
+            const schemaImportConfirm = document.getElementById('schema-import-confirm');
+            const schemaImportCancel = document.getElementById('schema-import-cancel');
+
             const pluginList = document.getElementById('plugin-list');
             const pluginFilter = document.getElementById('plugin-filter');
             const pluginInstallBtn = document.getElementById('plugin-install-btn');
@@ -643,7 +709,6 @@
             const themeInstallCancel = document.getElementById('theme-install-cancel');
 
             const toastEl = document.getElementById('toast');
-
             // ==================== Toast ====================
             let toastTimer = null;
             function showToast(message, type = 'info', duration = 4000) {
@@ -923,6 +988,53 @@
                 const row = cfgFormEl.querySelector(`[data-row="${CSS.escape(key)}"]`);
                 if (row) row.classList.add('is-dirty');
                 updateDirtyHint();
+                // V3.6.2（607 指令五）：JVM 模板 / 覆盖参数变动 → 防抖刷新最终启动预览
+                if (key === 'server.jvm.template' || key === 'server.jvm.override_args') {
+                    scheduleJvmPreview();
+                }
+            }
+
+            // ==================== 最终启动预览（607 指令五） ====================
+            // 前端零拼接逻辑：把（可能未保存的）表单值原样交给后端，
+            // 由后端走完整链路后返回最终命令字符串，这里只负责展示。
+            let jvmPreviewTimer = null;
+            let jvmPreviewSeq = 0;
+
+            function scheduleJvmPreview() {
+                clearTimeout(jvmPreviewTimer);
+                jvmPreviewTimer = setTimeout(refreshJvmPreview, 500);
+            }
+
+            async function refreshJvmPreview() {
+                const seq = ++jvmPreviewSeq;
+                const cmdEl = document.getElementById('jvm-preview-cmd');
+                const noteEl = document.getElementById('jvm-preview-note');
+                if (!cmdEl) return;
+                try {
+                    const template = currentValue('server.jvm.template') || 'g1';
+                    const override = currentValue('server.jvm.override_args');
+                    // Web 端传参规范：直接传 JSON 数组，不传拼接后的长字符串
+                    const r = await apiPost('/api/config/preview-jvm', {
+                        template,
+                        override_args: Array.isArray(override) ? override : []
+                    });
+                    if (seq !== jvmPreviewSeq) return;   // 过期响应（连打时只显示最后一次）
+                    if (!r.success) throw new Error(r.error || '预览失败');
+                    cmdEl.textContent = r.command;        // 原样展示，textContent 防注入
+                    if (noteEl) {
+                        const tips = [];
+                        if (r.memory && r.memory.over_limit) tips.push(r.memory.message);
+                        if (r.removed && r.removed.length) tips.push('已自动移除冲突/禁用参数: ' + r.removed.join(' '));
+                        if (r.injected && r.injected.length) tips.push('已自动注入兜底参数: ' + r.injected.join(' '));
+                        (r.warnings || []).forEach(w => tips.push(w));
+                        noteEl.textContent = tips.join('\n');
+                        noteEl.style.display = tips.length ? 'block' : 'none';
+                        noteEl.style.whiteSpace = 'pre-line';
+                    }
+                } catch (e) {
+                    if (seq !== jvmPreviewSeq) return;
+                    cmdEl.textContent = '预览暂不可用: ' + e.message;
+                }
             }
 
             function updateDirtyHint() {
@@ -957,6 +1069,8 @@
                 cfgDirty = {};
                 updateDirtyHint();
                 renderConfigForm();
+                // V3.6.2（607 指令五）：表单就绪后立即出一份「最终启动预览」
+                refreshJvmPreview();
             }
 
             function setMode(mode) {
@@ -1091,7 +1205,7 @@
                 try {
                     if (action === 'delete') {
                         if (!confirm(`确定要删除插件 "${name}" 吗？`)) return;
-                        await apiExec(`plugin remove ${name}`);
+                        await apiExec('plugin remove', [name]);
                         showToast(`插件 ${name} 已删除`, 'success');
                         loadPlugins(pluginFilter.value);
                     } else if (action === 'toggle') {
@@ -1111,7 +1225,7 @@
                 }
                 pluginInstallConfirm.disabled = true;
                 try {
-                    await apiExec(`plugin install ${source}`);
+                    await apiExec('plugin install', [source]);
                     showToast('插件安装成功', 'success');
                     pluginInstallModal.classList.remove('active');
                     pluginInstallSource.value = '';
@@ -1172,11 +1286,11 @@
                 try {
                     if (action === 'delete') {
                         if (!confirm(`确定要删除主题 "${name}" 吗？`)) return;
-                        await apiExec(`theme delete ${name}`);
+                        await apiExec('theme delete', [name]);
                         showToast(`主题 ${name} 已删除`, 'success');
                         loadThemes(themeFilter.value);
                     } else if (action === 'switch') {
-                        await apiExec(`theme switch ${name}`);
+                        await apiExec('theme switch', [name]);
                         showToast(`已切换到主题: ${name}，请刷新页面查看效果`, 'success');
                         loadThemes(themeFilter.value);
                     }
@@ -1193,7 +1307,7 @@
                 }
                 themeInstallConfirm.disabled = true;
                 try {
-                    await apiExec(`theme install ${source}`);
+                    await apiExec('theme install', [source]);
                     showToast('主题安装成功', 'success');
                     themeInstallModal.classList.remove('active');
                     themeInstallSource.value = '';
@@ -1276,11 +1390,115 @@
             themeRefreshBtn.addEventListener('click', () => loadThemes(themeFilter.value));
             themeFilter.addEventListener('input', () => loadThemes(themeFilter.value));
 
+            // ==================== 模组配置库（表单包） ====================
+            function escHtml(s) {
+                return String(s == null ? '' : s)
+                    .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+            }
+
+            async function loadSchemas() {
+                schemaList.innerHTML = '<div class="empty-state">加载中...</div>';
+                try {
+                    const r = await apiGet('/api/schema/list');
+                    const list = r.schemas || [];
+                    schemaCount.textContent = `共 ${list.length} 个（官方 ${list.filter(s => s.origin === 'builtin').length} / 用户 ${list.filter(s => s.origin === 'custom').length}）`;
+                    if (!list.length) {
+                        schemaList.innerHTML = '<div class="empty-state">还没有任何表单包</div>';
+                        return;
+                    }
+                    schemaList.innerHTML = '';
+                    const wrap = document.createElement('div');
+                    wrap.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px;';
+                    for (const s of list) {
+                        const card = document.createElement('div');
+                        card.style.cssText = 'background:#0f1a2f;border:1px solid #1f2b3a;border-radius:6px;padding:10px 12px;';
+                        card.innerHTML =
+                            '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">' +
+                                '<b style="color:#ccd;font-size:13px;">' + escHtml(s.display_name) + '</b>' +
+                                '<span style="font-size:10px;padding:1px 6px;border-radius:3px;' +
+                                    (s.origin === 'custom' ? 'background:#3a2c1a;color:#d8b06a;' : 'background:#1e2f1e;color:#8fce8f;') + '">' +
+                                    (s.origin === 'custom' ? '用户' : '官方') + '</span>' +
+                            '</div>' +
+                            '<div style="font-family:monospace;font-size:11px;color:#667788;margin-top:3px;">' + escHtml(s.mod_id) + '</div>' +
+                            '<div style="font-size:11px;color:#8899aa;margin-top:5px;">' +
+                                s.file_count + ' 个文件 · ' + s.field_count + ' 个字段</div>' +
+                            '<div style="font-size:11px;color:#556677;margin-top:2px;">' + escHtml((s.platforms || []).join(' / ')) + '</div>';
+                        if (s.origin === 'custom') {
+                            const del = document.createElement('button');
+                            del.className = 'btn btn-secondary';
+                            del.style.cssText = 'margin-top:8px;font-size:11px;padding:4px 10px;';
+                            del.textContent = '🗑 删除';
+                            del.addEventListener('click', async () => {
+                                if (!confirm(`删除用户表单包「${s.mod_id}」？官方版本（如果有）会重新生效。`)) return;
+                                try {
+                                    const resp = await fetch('/api/schema/' + encodeURIComponent(s.mod_id), {
+                                        method: 'DELETE',
+                                        headers: { 'Authorization': 'Bearer ' + token }
+                                    });
+                                    const j = await resp.json().catch(() => ({}));
+                                    if (!resp.ok || j.success === false) throw new Error(j.error || '删除失败');
+                                    showToast('已删除 ' + s.mod_id, 'success');
+                                    loadSchemas();
+                                } catch (e) {
+                                    showToast(e.message, 'error');
+                                }
+                            });
+                            card.appendChild(del);
+                        }
+                        wrap.appendChild(card);
+                    }
+                    schemaList.appendChild(wrap);
+                    if (r.errors && r.errors.length) {
+                        const err = document.createElement('div');
+                        err.style.cssText = 'margin-top:12px;font-size:12px;color:#e8a0a0;';
+                        err.textContent = '⚠️ 以下表单包加载失败：' + r.errors.join('；');
+                        schemaList.appendChild(err);
+                    }
+                } catch (e) {
+                    schemaList.innerHTML = '<div class="empty-state">' + escHtml(e.message) + '</div>';
+                }
+            }
+
+            function openSchemaImport() {
+                schemaImportJson.value = '';
+                schemaImportUrl.value = '';
+                schemaImportModal.classList.add("active");
+            }
+
+            async function doSchemaImport() {
+                schemaImportConfirm.disabled = true;
+                schemaImportConfirm.textContent = '导入中...';
+                try {
+                    const r = await apiPost('/api/schema/import', {
+                        json: schemaImportJson.value,
+                        url: schemaImportUrl.value.trim()
+                    });
+                    schemaImportModal.classList.remove("active");
+                    showToast(`已导入「${r.display_name}」`, 'success');
+                    if (r.warnings && r.warnings.length) {
+                        showToast(r.warnings.join('；'), 'info', 6000);
+                    }
+                    loadSchemas();
+                } catch (e) {
+                    showToast(e.message, 'error', 6000);
+                } finally {
+                    schemaImportConfirm.disabled = false;
+                    schemaImportConfirm.textContent = '导入';
+                }
+            }
+
+            schemaImportBtn.addEventListener('click', openSchemaImport);
+            schemaImportCancel.addEventListener('click', () => schemaImportModal.classList.remove('active'));
+            schemaImportConfirm.addEventListener('click', doSchemaImport);
+            schemaRefreshBtn.addEventListener('click', loadSchemas);
+
             // ==================== 初始化 ====================
             async function init() {
                 await loadConfig();
                 await loadPlugins();
                 await loadThemes();
+                await loadSchemas();
             }
 
             init();

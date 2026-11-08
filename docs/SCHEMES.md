@@ -282,7 +282,7 @@ world:
 wow scheme create server_a -v 1.20.1 -t forge
 wow scheme switch server_a
 
-# 2. 安装模组：进入数字菜单第 4 项「模组/插件搜索下载」，
+# 2. 安装模组：进入 M 模式界面后按 `E` 切到「内容与配置」页，选 `4`「模组 / 插件搜索下载」，
 #    或用 Web 面板上传（装进当前方案的 mods/ 并计入 pool）
 #    URL 下载 / 本地文件两种方式都支持
 

@@ -1,0 +1,115 @@
+{
+  "mod_id": "coreprotect",
+  "display_name": "CoreProtect（方块查询 / 反破坏）",
+  "platforms": ["paper", "spigot"],
+  "author": "wow 官方",
+  "version": "1.0.0",
+  "homepage": "https://coreprotect.net",
+  "config_files": [
+    {
+      "path": "plugins/CoreProtect/config.yml",
+      "format": "yml",
+      "fields": [
+        {
+          "key": "use-mysql",
+          "label": "使用 MySQL 数据库",
+          "description": "关闭时用本地 SQLite 文件，单服够用；开启后可多服共享同一份查询记录，需在下方填数据库信息。",
+          "type": "boolean",
+          "default": false,
+          "danger": true
+        },
+        {
+          "key": "mysql.host",
+          "label": "MySQL 地址",
+          "description": "数据库主机名或 IP，仅在上方开启 MySQL 时生效。",
+          "type": "string",
+          "default": "127.0.0.1",
+          "advanced": true
+        },
+        {
+          "key": "mysql.port",
+          "label": "MySQL 端口",
+          "description": "数据库端口，默认 3306。",
+          "type": "number",
+          "min": 1,
+          "max": 65535,
+          "default": 3306,
+          "advanced": true
+        },
+        {
+          "key": "mysql.database",
+          "label": "数据库名",
+          "description": "CoreProtect 使用的数据库名，需提前创建。",
+          "type": "string",
+          "default": "coreprotect",
+          "advanced": true
+        },
+        {
+          "key": "mysql.prefix",
+          "label": "数据表前缀",
+          "description": "多个服务器共用一个数据库时，用不同前缀区分各自的记录。",
+          "type": "string",
+          "default": "co_",
+          "advanced": true
+        },
+        {
+          "key": "mysql.player-control",
+          "label": "MySQL 玩家控制台",
+          "description": "多服共享数据库时，限制同一玩家不能同时登录两个服务器。",
+          "type": "boolean",
+          "default": false,
+          "advanced": true
+        },
+        {
+          "key": "rollback-command",
+          "label": "允许手动回滚",
+          "description": "允许管理员执行 /co rollback 一键撤销破坏。关掉后只能查询、不能批量撤销。",
+          "type": "boolean",
+          "default": true
+        },
+        {
+          "key": "max-blocks-per-rollback",
+          "label": "单次回滚最大方块数",
+          "description": "一次回滚最多处理多少方块。数值越大内存占用越高，大范围回滚建议分批执行。",
+          "type": "number",
+          "min": 1000,
+          "max": 1000000,
+          "default": 20000,
+          "danger": true
+        },
+        {
+          "key": "data-retention-days",
+          "label": "数据保留天数",
+          "description": "超过天数的方块操作记录会被自动清理。查熊孩子场景建议不少于 30 天；数据库大了再往下调。",
+          "type": "number",
+          "min": 1,
+          "max": 3650,
+          "default": 30
+        },
+        {
+          "key": "check-updates",
+          "label": "检查更新",
+          "description": "启动时向官方查询是否有新版本。离线环境可关闭以减少启动等待。",
+          "type": "boolean",
+          "default": true,
+          "advanced": true
+        },
+        {
+          "key": "api-enabled",
+          "label": "启用 API",
+          "description": "允许其他插件通过 API 读写 CoreProtect 数据（如网页地图联动）。不需要可关闭。",
+          "type": "boolean",
+          "default": true
+        },
+        {
+          "key": "verbose",
+          "label": "详细日志",
+          "description": "控制台输出每次查询与记录的细节，排障用。",
+          "type": "boolean",
+          "default": false,
+          "advanced": true
+        }
+      ]
+    }
+  ]
+}

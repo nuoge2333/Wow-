@@ -230,17 +230,7 @@
             </div>
         </div>
 
-        <!-- JVM 参数（V3.5.19：原「启动脚本」文本框写的是一个后端从来不读的配置键，
-             改绑真正生效的 server.jvm_args，保存后下次启动即生效） -->
-        <div class="panel">
-            <div class="panel-title">🧩 JVM 参数</div>
-            <textarea class="script-box" id="jvm-args" spellcheck="false"
-                placeholder="-Xmx2G&#10;-Xms2G&#10;-XX:+UseG1GC"></textarea>
-            <div style="margin-top:8px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
-                <button class="btn btn-script" id="save-script-btn">💾 保存参数</button>
-                <span style="color:#667788;font-size:12px;">每行一个参数；修改后需重启服务器生效。</span>
-            </div>
-        </div>
+        <!-- V3.6.2（607）：JVM 配置已全部移至「设置」页（JVM 模板下拉 + 覆盖参数 + 最终启动预览） -->
 
         <!-- 服务器控制 -->
         <div class="panel">
@@ -299,8 +289,6 @@
             const statusLabel = document.getElementById('server-status-label');
             const pidLabel = document.getElementById('server-pid');
             const relayLabel = document.getElementById('console-relay');
-            const jvmArgsBox = document.getElementById('jvm-args');
-            const saveScriptBtn = document.getElementById('save-script-btn');
 
             // 统计元素
             const statCpu = document.getElementById('stat-cpu');
@@ -313,7 +301,6 @@
             let statusPollTimer = null;
             let fallbackLogTimer = null;
             let currentScheme = '--';
-            let argsLoaded = false;
             let serverRunning = false;
 
             // ==================== API 调用封装 ====================
@@ -432,16 +419,6 @@
                         // 网络流量暂无采集源，保持占位而不是伪造数字
                         statNet.textContent = '—';
                     } catch (e) { /* 指标拿不到不影响状态展示 */ }
-
-                    // JVM 参数（只加载一次，避免覆盖用户正在编辑的内容）
-                    if (!argsLoaded) {
-                        try {
-                            const r = await apiGet('/api/config/server.jvm_args');
-                            const args = Array.isArray(r.value) ? r.value : [];
-                            jvmArgsBox.value = args.join('\n');
-                            argsLoaded = true;
-                        } catch (e) { /* 忽略 */ }
-                    }
                 } catch (e) {
                     console.warn('更新仪表盘失败:', e);
                 }
@@ -552,26 +529,11 @@
                 }
             }
 
-            // ==================== 保存 JVM 参数 ====================
-            async function saveArgs() {
-                const value = jvmArgsBox.value
-                    .split(/\r?\n/)
-                    .map(s => s.trim())
-                    .filter(Boolean);
-                try {
-                    await apiPost('/api/config', { key: 'server.jvm_args', value });
-                    appendConsole('[系统] JVM 参数已保存（重启服务器后生效）', 'system');
-                } catch (e) {
-                    appendConsole('保存失败: ' + e.message, 'system');
-                }
-            }
-
             // ==================== 事件绑定 ====================
             startBtn.addEventListener('click', () => serverAction('start'));
             stopBtn.addEventListener('click', () => serverAction('stop'));
             killBtn.addEventListener('click', () => serverAction('kill'));
             restartBtn.addEventListener('click', () => serverAction('restart'));
-            saveScriptBtn.addEventListener('click', saveArgs);
 
             sendBtn.addEventListener('click', () => {
                 sendConsoleCommand(consoleInput.value);

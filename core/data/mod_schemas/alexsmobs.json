@@ -1,0 +1,104 @@
+{
+  "mod_id": "alexsmobs",
+  "display_name": "Alex's Mobs（亚历克斯的生物）",
+  "platforms": ["forge", "neoforge"],
+  "author": "wow 官方",
+  "version": "1.0.0",
+  "homepage": "https://github.com/AlexModGuy/AlexsMobs",
+  "config_files": [
+    {
+      "path": "serverconfig/alexsmobs-server.toml",
+      "format": "toml",
+      "fields": [
+        {
+          "key": "general.spawnRateMultiplier",
+          "label": "生物生成倍率",
+          "description": "全局放大 / 缩小本模组生物的生成权重。1.0 为默认；生存服觉得太挤可下调到 0.5。",
+          "type": "number",
+          "min": 0,
+          "max": 5,
+          "default": 1.0,
+          "danger": true
+        },
+        {
+          "key": "general.disableAllMobSpawns",
+          "label": "完全禁用本模组生物生成",
+          "description": "只关闭自然生成，已有的生物不受影响。适合只想保留物品与建筑的服务器。",
+          "type": "boolean",
+          "default": false,
+          "danger": true
+        },
+        {
+          "key": "general.mobGriefing",
+          "label": "允许生物破坏方块",
+          "description": "关闭后大象、鳄鱼等生物不再踩坏作物与方块。防熊服建议关闭。",
+          "type": "boolean",
+          "default": true,
+          "danger": true
+        },
+        {
+          "key": "general.mobAttributes.grizzlyBearHealth",
+          "label": "灰熊生命值",
+          "description": "灰熊的最大生命值（点 = 半颗心）。原版默认 30。",
+          "type": "number",
+          "min": 1,
+          "max": 200,
+          "default": 30,
+          "advanced": true
+        },
+        {
+          "key": "general.mobAttributes.crocodileHealth",
+          "label": "鳄鱼生命值",
+          "description": "鳄鱼的最大生命值。",
+          "type": "number",
+          "min": 1,
+          "max": 200,
+          "default": 40,
+          "advanced": true
+        },
+        {
+          "key": "general.mobAttributes.gorillaHealth",
+          "label": "大猩猩生命值",
+          "description": "大猩猩的最大生命值。",
+          "type": "number",
+          "min": 1,
+          "max": 200,
+          "default": 50,
+          "advanced": true
+        },
+        {
+          "key": "general.limitMobSpawnsPerChunk",
+          "label": "限制单区块生物数量",
+          "description": "开启后同一个区块里本模组生物不会超过设定上限，避免刷怪农场把服务器压垮。",
+          "type": "boolean",
+          "default": true
+        },
+        {
+          "key": "general.maxMobsPerChunk",
+          "label": "单区块生物上限",
+          "description": "配合上一项生效。数值越小越省性能，但生物也越稀。",
+          "type": "number",
+          "min": 1,
+          "max": 64,
+          "default": 8
+        },
+        {
+          "key": "general.enableCreatureSpawnEggs",
+          "label": "启用作弊刷怪蛋",
+          "description": "允许通过刷怪蛋生成本模组生物。纯生存服可关闭以减少刷怪塔滥用。",
+          "type": "boolean",
+          "default": true,
+          "advanced": true
+        },
+        {
+          "key": "general.mobSpawning.allowCaveSpawns",
+          "label": "允许洞穴生成",
+          "description": "关闭后本模组生物不会在地下洞穴生成，减少洞窟探索时的怪物密度。",
+          "type": "boolean",
+          "default": true,
+          "advanced": true
+        }
+      ]
+    }
+  ]
+}

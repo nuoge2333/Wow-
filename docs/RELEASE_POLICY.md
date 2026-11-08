@@ -95,28 +95,31 @@ git push origin main
 
 ## 五、当前状态
 
-- 已发布的最新版本：`v3.6.1-26.42`（2026-11-07）
+- 已发布的最新版本：`v3.7.0-26.43`（2026-11-08）
 - **下一个版本号尚未确定**，等用户说「发行」时再定
-- 下一周期累积的改动：见 `git log v3.6.1-26.42..HEAD`
+- 下一周期累积的改动：见 `git log v3.7.0-26.43..HEAD`
 
-### 上一周期已发行（v3.6.1-26.42）
+### 上一周期已发行（v3.7.0-26.43）
 
 | 内容 | 文档 | 测试 |
 |------|------|------|
-| M / L 模式互跳（恢复 `wow m`） | `docs/COMMANDS.md` § 十一 | `core/test/interactive_menu.test.js`（59 项） |
-| `config set` / `get` / `unset` | `docs/COMMANDS.md` § 八 | `core/test/config_cli.test.js`（10 项） |
-| Web 面板内容页可滚动 | `docs/CHANGELOG.md` | `core/test/web_scroll.test.js`（14 项） |
-| 文件管理方案下拉文案 | `web/file.html` | `core/test/web_files_e2e.test.js`（37 项） |
-| 发行包剔除 `deploy/cfproxy-worker` / `scripts` | `.gitattributes` | — |
+| M 模式七页 TUI（QWERTY 切页 / 单 readline / `:wow` 进菜单） | `docs/TUI.md` | `core/test/tui_mode.test.js`（63 项） |
+| 608 模组表单引擎（六格式行级替换） | `docs/MOD_SCHEMAS.md` | `core/test/schema_engine.test.js`（32 项） |
+| 便签聊天室（右栏多用户便签墙 + socket 广播） | `docs/WEB_PANEL.md` | `core/test/web_notes.test.js`（34 项） |
+| pool 优先复用 & clone-client 三处硬伤 | `docs/CHANGELOG.md` | `core/test/pool_reuse.test.js`（8 项）、`client_clone.test.js`（61 项） |
+| JVM 模板 a/b/c/d + 80% 内存红线 | `docs/CONFIG.md` | `core/test/jvm_args.test.js`（33 项） |
+| 模组管理 / 实例配置两个新页面 | `docs/WEB_PANEL.md` | `core/test/web_pages.test.js`（20 项） |
+| 面板断连崩溃（`stopBroadcastTail` 拼写） | `docs/CHANGELOG.md` | `core/test/web_notes.test.js` |
 
-> 开发期间**不改版本号**。`wow -V` 会一直显示 `3.6.1-26.42`，
+> 开发期间**不改版本号**。下个周期里 `wow -V` 会一直显示 `3.7.0-26.43`，
 > 这是刻意的——避免「版本号已占用但远端没发布」的中间态。
 
 ### 序号纪律
 
-`26.42` 是新的干净起点。从它开始**严格十六进制递增**，具体约束：
+`26.40` 是新的干净起点，`40` → `41` → `42` → `43` 一路递增下来。
+继续保持**严格十六进制递增**，具体约束：
 
-- `3f` 之后是 `40`，`40` → `41` → `42` —— 正常十六进制递增，**不要跳过中间值**
+- 下一个是 `44`，之后 `45` … — 正常十六进制递增，**不要跳过中间值**
 - **绝不回绕复用**旧序号。历史上 `26.3a` ~ `26.3f` 因反复回绕被用了 2～3 次，
   导致无法用序号判断版本新旧，详见 `docs/CHANGELOG.md` 文首说明
 - 发版前先 `git tag --list | grep <候选序号>` 确认未被占用

@@ -16,7 +16,13 @@ const DEFAULT_CONFIG = {
         dir: '../scheme',          // 相对于 core/ 的路径（V3.5.2：删 server/，服务器运行于方案目录）
         jar: null,
         java: null,
-        jvm_args: ['-Xmx2G', '-Xms2G', '-XX:+UseG1GC']
+        // V3.6.2（607 指令一）：JVM 参数改为「模板 + 覆盖」新结构，
+        // 直接以新结构初始化，不编写旧 server.jvm_args 的迁移代码（无历史包袱）。
+        // 旧键不再被读取；参数构建统一走 src/jvm_args.js。
+        jvm: {
+            template: 'b',        // a=低配 b=平衡(Aikar's) c=ZGC低延迟 d=自定义
+            override_args: []     // 用户覆盖参数；Web 端必须传 JSON 数组
+        }
     },
     download: {
         mirror: 'https://bmclapi2.bangbang93.com',

@@ -266,10 +266,10 @@
             <button class="btn" id="refresh-btn">🔄 刷新</button>
             <span style="flex:1;"></span>
             <!-- 方案切换（V3.5.19）：文件管理器可跨方案浏览 -->
-            <label class="scheme-picker" title="切换要浏览的方案目录">
+            <label class="scheme-picker" title="方案都存放在方案库的子目录里（scheme/<方案名>）。「方案库根目录」指 scheme/ 本身，里面能看到各个方案文件夹。">
                 <span>🗂️ 方案</span>
                 <select id="scheme-select">
-                    <option value="">服务器根目录</option>
+                    <option value="">方案库根目录</option>
                 </select>
             </label>
         </div>
@@ -368,11 +368,11 @@
             const editorCancelBtn = document.getElementById('editor-cancel');
 
             // ==================== 状态 ====================
-            let currentPath = ''; // 相对于服务器根目录的路径，空字符串表示根
+            let currentPath = ''; // 相对于当前浏览根（方案库根或方案目录）的路径，空字符串表示根
             let selectedFiles = []; // 选中的文件名列表
             let clipboard = null; // { action: 'copy'|'cut', files: [] }
             let fileList = [];
-            let currentScheme = ''; // 当前浏览的方案（空串=服务器根目录）
+            let currentScheme = ''; // 当前浏览的方案（空串=方案库根目录 scheme/）
             let editorState = { open: false, path: '', original: '', dirty: false };
 
             // ==================== API 封装 ====================
@@ -995,7 +995,10 @@
                     const list = data.schemes || data.list || [];
                     const current = data.current || '';
 
-                    let html = '<option value="">服务器根目录</option>';
+                    // V3.6.2：不再叫「服务器根目录」——这里浏览的是方案库 scheme/，
+                    // 新建方案都在它的子目录（scheme/<方案名>）里，叫服务器根目录会误导。
+                    // 仅当配置了 server.scheme（有正在运行的方案）时，这个入口才等价于服务器根目录。
+                    let html = '<option value="">方案库根目录</option>';
                     for (const item of list) {
                         const name = typeof item === 'string' ? item : (item.name || '');
                         if (!name) continue;
@@ -1011,8 +1014,8 @@
                         schemeSelect.value = '';
                     }
                 } catch (e) {
-                    // 拉不到方案列表就保持「服务器根目录」
-                    schemeSelect.innerHTML = '<option value="">服务器根目录</option>';
+                    // 拉不到方案列表就保持「方案库根目录」
+                    schemeSelect.innerHTML = '<option value="">方案库根目录</option>';
                 }
             }
 

@@ -87,7 +87,7 @@ function logger() {
 program
     .name('wow')
     .description('Minecraft 服务器管理工具 - 默认优先，可以修改')
-    .version('3.6.1-26.42', '-V');
+    .version('3.7.0-26.43', '-V');
 
 // ==================== init ====================
 
@@ -621,6 +621,71 @@ schemeCmd
 
 // ==================== scheme clone-client ====================
 
+/**
+ * V3.6.2：REPL 会话句柄。
+ *
+ * 交互式命令（clone-client 等）需要向用户提问。如果在 REPL 里再
+ * `readline.createInterface({ input: process.stdin })`，两个 readline
+ * 会同时解析同一行输入：
+ *   - 终端回显重复（每个字符打印两三遍）；
+ *   - REPL 把方案名当成指令执行，报「❌ 未知指令: asdf」；
+ *   - 命令那边拿到残缺的名字，建出错名的方案。
+ * 正确做法是把 REPL 已有的 readline 借给它用（单消费者），并在提问期间
+ * 暂停 REPL 对 line 的处理（suspended），结束后恢复提示符。
+ */
+let replSession = null;
+
+/** 用 REPL 的 readline 构造一个交互句柄（不新建 readline） */
+function makeReplIO(session) {
+    const readline = require('readline');
+    const clearLine = () => {
+        try {
+            readline.clearLine(process.stdout, 0);
+            readline.cursorTo(process.stdout, 0);
+        } catch (e) { /* 忽略 */ }
+    };
+    return {
+        interactive: true,
+        ask(question, defaultValue = '') {
+            return new Promise(resolve => {
+                clearLine();
+                session.rl.question(question, ans => {
+                    const v = String(ans || '').trim();
+                    resolve(v === '' ? defaultValue : v);
+                });
+            });
+        },
+        choose(question, options, defaultIndex = 0) {
+            return new Promise(resolve => {
+                console.log(question);
+                options.forEach((o, i) => {
+                    console.log(`   ${i + 1}) ${o.label}${i === defaultIndex ? '（默认）' : ''}`);
+                });
+                clearLine();
+                session.rl.question(`请输入编号 (默认: ${defaultIndex + 1}): `, ans => {
+                    const n = parseInt(String(ans).trim(), 10);
+                    if (isNaN(n) || n < 1 || n > options.length) return resolve(options[defaultIndex].value);
+                    resolve(options[n - 1].value);
+                });
+            });
+        },
+        log(msg) { console.log(msg); },
+        warn(msg) { console.warn(msg); },
+        close() { /* 不关闭 REPL 的 readline */ }
+    };
+}
+
+/**
+ * V3.6.2：REPL 存在时把它的 readline 借给命令内的提问点。
+ * 凡是在 REPL 里可能执行的交互命令（sync login / config server-quick /
+ * pack install / pack generate），一律从这里拿 readline——
+ * 自建 readline 会造成 stdin 双消费者，字符被回显两遍
+ * （用户看到 aaaassssddddffff）、输入被 REPL 抢走。
+ */
+function borrowRl() {
+    return replSession ? replSession.rl : null;
+}
+
 schemeCmd
     .command('clone-client <path>')
     .description('把一个 Minecraft 客户端实例克隆成 wow 方案')
@@ -637,7 +702,14 @@ schemeCmd
         if (!clone) return;
 
         const isTTY = Boolean(process.stdin.isTTY);
-        const io = (options.yes || !isTTY) ? clone.makeSilentIO() : clone.makeTerminalIO();
+        // V3.6.2：在 REPL 里优先借用它的 readline，避免 stdin 双消费者
+        let io;
+        if (options.yes || !isTTY) io = clone.makeSilentIO();
+        else if (replSession) io = makeReplIO(replSession);
+        else io = clone.makeTerminalIO();
+        // REPL 可能已由 line handler 统一 suspend；避免重复挂起导致恢复时序错乱
+        const ownsSuspend = !!(replSession && !replSession.suspended);
+        if (ownsSuspend) replSession.suspend();
 
         // --save 未给 = undefined（交互询问）；给 '-' = 不迁移
         let saveName;
@@ -686,6 +758,9 @@ schemeCmd
             process.exitCode = 1;
         } finally {
             if (io.close) io.close();
+            // 只解除挂起，提示符由 REPL 的 line handler 统一打印一次
+            // （这里若调 resume() 会再打一个，终端就出现 `wow> wow>`）
+            if (replSession) replSession.unsuspend();
         }
     });
 
@@ -702,9 +777,14 @@ syncCmd
         if (!syncClient) return;
         let password = options.password;
         if (!password) {
-            const readline = require('readline');
-            const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-            password = await new Promise(r => rl.question('执行端面板密码: ', a => { rl.close(); r(a); }));
+            // V3.6.2：REPL 里借用它的 readline（单消费者）；独立运行才自建
+            if (replSession) {
+                password = await new Promise(r => replSession.rl.question('执行端面板密码: ', a => r(a)));
+            } else {
+                const readline = require('readline');
+                const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+                password = await new Promise(r => rl.question('执行端面板密码: ', a => { rl.close(); r(a); }));
+            }
         }
         try {
             const r = await syncClient.login(url, password);
@@ -1249,7 +1329,8 @@ packCmd
         if (!PackGenerator) return;
         const pack = new PackGenerator();
         try {
-            await pack.install(source);
+            // V3.6.2：REPL 里借用它的 readline，避免安装中提问时 stdin 双消费者
+            await pack.install(source, borrowRl());
         } catch (e) {
             console.error(`❌ 安装失败: ${e.message}`);
         }
@@ -1266,7 +1347,8 @@ packCmd
         if (!PackGenerator) return;
         const pack = new PackGenerator();
         try {
-            await pack.generate(name, { ...options, version: options.mcVersion });
+            // V3.6.2：REPL 里借用它的 readline，避免生成中提问时 stdin 双消费者
+            await pack.generate(name, { ...options, version: options.mcVersion, existingRl: borrowRl() });
         } catch (e) {
             console.error(`❌ 生成失败: ${e.message}`);
         }
@@ -1385,6 +1467,147 @@ function runConfigWow(key, value, opts = {}) {
         console.log(`${key} = ${val !== undefined ? val : 'null'}`);
     }
 }
+
+// ==================== V3.6.2（608 进阶）：模组表单包 ====================
+
+/**
+ * `wow config schema ...`
+ * 表单包（Schema）只描述「哪个文件的哪个键叫什么、是什么类型」，
+ * 渲染与写回由 schema_engine 统一处理，CLI 与 Web 共用同一条链路。
+ */
+const schemaCmd = configCmd.command('schema').description('模组配置表单包（可视化配置的翻译包）管理');
+
+schemaCmd
+    .command('list')
+    .description('列出已加载的表单包（用户库优先于官方库）')
+    .action(() => {
+        const Store = load('./schema_store');
+        if (!Store) return;
+        const r = Store.loadAll();
+        if (!r.schemas.length) {
+            console.log('还没有任何表单包。官方库：core/data/mod_schemas/，自定义库：custom-schemas/');
+            return;
+        }
+        console.log(`共 ${r.schemas.length} 个表单包：\n`);
+        for (const s of r.schemas) {
+            const n = s.config_files.reduce((a, f) => a + f.fields.length, 0);
+            const tag = s._origin === 'custom' ? '👤 用户' : '📦 官方';
+            console.log(`${tag}  ${s.mod_id.padEnd(16)} ${s.display_name}`);
+            console.log(`      ${s.config_files.length} 个文件 / ${n} 个字段  [${s.platforms.join(', ')}]`);
+        }
+        if (r.errors.length) {
+            console.log('\n⚠️ 以下文件加载失败：');
+            r.errors.forEach(e => console.log(`   - ${e}`));
+        }
+    });
+
+schemaCmd
+    .command('show <modId>')
+    .description('查看某个表单包定义了哪些配置项')
+    .action((modId) => {
+        const Store = load('./schema_store');
+        if (!Store) return;
+        const s = Store.get(modId);
+        if (!s) { console.error(`❌ 没找到表单包「${modId}」，用 config schema list 看看有哪些`); process.exitCode = 1; return; }
+        console.log(`${s.display_name}（${s.mod_id}）  ${s._originLabel}`);
+        console.log(`适用平台：${s.platforms.join(', ')}`);
+        for (const f of s.config_files) {
+            console.log(`\n📄 ${f.path}  [${f.format}]`);
+            for (const fd of f.fields) {
+                const range = fd.type === 'number' && (fd.min !== undefined || fd.max !== undefined)
+                    ? `  (${fd.min !== undefined ? fd.min : '-∞'} ~ ${fd.max !== undefined ? fd.max : '+∞'})` : '';
+                const dflt = fd.default !== undefined ? `  默认 ${JSON.stringify(fd.default)}` : '';
+                const danger = fd.danger ? '  ⚠️' : '';
+                console.log(`   ${fd.key}`);
+                console.log(`      ${fd.label}  [${fd.type}]${range}${dflt}${danger}`);
+                if (fd.description) console.log(`      ${fd.description}`);
+            }
+        }
+    });
+
+schemaCmd
+    .command('get <modId> <key>')
+    .description('按表单包读取当前方案里的实际值')
+    .action((modId, key) => {
+        const Store = load('./schema_store');
+        const Engine = load('./schema_engine');
+        if (!Store || !Engine) return;
+        const s = Store.get(modId);
+        if (!s) { console.error(`❌ 没找到表单包「${modId}」`); process.exitCode = 1; return; }
+        const hit = s.config_files.find(f => f.fields.some(x => x.key === key));
+        if (!hit) { console.error(`❌ 表单包「${s.mod_id}」里没有定义「${key}」`); process.exitCode = 1; return; }
+        const r = Engine.readKey(hit.path, key, hit.format);
+        if (!r.ok) { console.error(`❌ ${r.reason}`); process.exitCode = 1; return; }
+        console.log(`${r.rel}:${r.lineNo}`);
+        console.log(`${r.key} = ${JSON.stringify(r.value)}（${r.type}）${r.comment ? '   ' + r.comment : ''}`);
+    });
+
+schemaCmd
+    .command('set <modId> <key> <value>')
+    .description('按表单包改值（行级替换，保留注释与缩进；写前 .bak 备份）')
+    .action((modId, key, value) => {
+        const Store = load('./schema_store');
+        const Engine = load('./schema_engine');
+        if (!Store || !Engine) return;
+        const s = Store.get(modId);
+        if (!s) { console.error(`❌ 没找到表单包「${modId}」`); process.exitCode = 1; return; }
+        const hit = s.config_files.find(f => f.fields.some(x => x.key === key));
+        if (!hit) { console.error(`❌ 表单包「${s.mod_id}」里没有定义「${key}」`); process.exitCode = 1; return; }
+        const r = Engine.writeChanges(hit.path, hit, [{ key, value }]);
+        if (!r.ok) { console.error(`❌ ${r.reason}`); process.exitCode = 1; return; }
+        if (!r.changed) {
+            console.log(`ℹ️ ${hit.path}  ${key} 已是 ${value}，未改动文件`);
+        } else {
+            console.log(`✅ ${hit.path}  ${key} = ${value}${r.backup ? `\n   原文件已备份: ${r.backup}` : ''}`);
+        }
+        if (r.missing && r.missing.length) {
+            console.log(`⚠️ ${r.missing.length} 项在当前文件里找不到（可能模组版本不匹配）：${r.missing.join(', ')}`);
+        }
+    });
+
+schemaCmd
+    .command('import <source>')
+    .description('导入表单包：本地 JSON 文件路径，或 GitHub / 直链 URL')
+    .action(async (source) => {
+        const Store = load('./schema_store');
+        if (!Store) return;
+        let text;
+        if (/^https?:\/\//i.test(source)) {
+            try {
+                console.log(`⬇️  正在下载 ${source} ...`);
+                const axios = load('axios');
+                if (!axios) return;
+                const res = await axios.get(source, { timeout: 20000, maxContentLength: Store.MAX_SCHEMA_BYTES });
+                text = typeof res.data === 'string' ? res.data : JSON.stringify(res.data);
+            } catch (e) {
+                console.error(`❌ 下载失败：${e.message}`);
+                process.exitCode = 1;
+                return;
+            }
+        } else {
+            const abs = path.resolve(process.cwd(), source);
+            if (!fs.existsSync(abs)) { console.error(`❌ 文件不存在：${abs}`); process.exitCode = 1; return; }
+            text = fs.readFileSync(abs, 'utf8');
+        }
+        const parsed = Store.parseImport(text);
+        if (!parsed.ok) { console.error(`❌ ${parsed.reason}`); process.exitCode = 1; return; }
+        const saved = Store.saveCustom(parsed.schema);
+        console.log(`✅ 已导入「${parsed.schema.display_name}」(${parsed.schema.mod_id}) → ${saved.file}`);
+        if (parsed.warnings && parsed.warnings.length) {
+            parsed.warnings.forEach(w => console.log(`   ⚠️ ${w}`));
+        }
+    });
+
+schemaCmd
+    .command('remove <modId>')
+    .description('删除用户扩展库里的表单包（官方内置的删不掉，可用同名用户包覆盖）')
+    .action((modId) => {
+        const Store = load('./schema_store');
+        if (!Store) return;
+        const r = Store.removeCustom(modId);
+        if (!r.ok) { console.error(`❌ ${r.reason}`); process.exitCode = 1; return; }
+        console.log(`✅ 已删除 ${r.file}`);
+    });
 
 configCmd
     .command('set <key> <value>')
@@ -1585,7 +1808,11 @@ function buildMenuOptions() {
         utils,
         // V3.6.1：M 菜单的 15 号项回跳 L 模式。用回调注入而不是让 interactive
         // require 回来，避免循环依赖。
-        startRepl: () => startRepl()
+        // V3.6.3：签名改成「由调用方决定去哪儿」——从独立入口进来是 startRepl，
+        // 从开服控制台进来则必须是回 :wow 控制台（见 server.js 的 onEnterLongCommand，
+        // 那边会覆盖本默认值）。参数 `target` 由 interactive 传入，本默认实现忽略它。
+        startRepl: () => startRepl(),
+        onEnterLongCommand: () => startRepl()
     };
 }
 
@@ -1794,7 +2021,8 @@ configCmd
     .action(async () => {
         const ServerProperties = config.ServerProperties;
         const props = new ServerProperties(utils.getServerDir());
-        await props.quickSet();
+        // V3.6.2：REPL 里传入它的 readline，避免 quickSet 自建造成 stdin 双消费者
+        await props.quickSet(null, borrowRl());
     });
 
 configCmd
@@ -1841,6 +2069,23 @@ async function startRepl(options = {}) {
     // 用一个标志挡住它们，否则关闭后的残留输入会被当成 REPL 指令执行。
     let closed = false;
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout, prompt: 'wow> ' });
+    // V3.6.2：交互式命令执行期间置 true —— REPL 丢弃这期间收到的 line，
+    // 避免把用户在命令提问处输入的内容当成 wow 指令执行。
+    let suspended = false;
+    replSession = {
+        rl,
+        suspended: false,
+        suspend() { suspended = true; this.suspended = true; },
+        // 只清标记，不打提示符（供命令自己收尾用，提示符由 line handler 负责）
+        unsuspend() {
+            suspended = false;
+            this.suspended = false;
+        },
+        resume() {
+            this.unsuspend();
+            try { rl.prompt(); } catch (e) { /* 已关闭 */ }
+        }
+    };
     if (options.webMode) {
         console.log('Wow~ 长命令模式已就绪（面板仍在后台运行，输入指令无需 wow 前缀；exit / quit 退出）');
     } else {
@@ -1957,6 +2202,8 @@ async function startRepl(options = {}) {
     rl.prompt();
     rl.on('line', async (line) => {
         if (closed) return;
+        // 交互式命令正在用同一个 readline 提问：这一行属于命令，不是 wow 指令
+        if (suspended) return;
         const input = line.trim();
         if (!input) { rl.prompt(); return; }
         if (input === 'exit' || input === 'quit') { closed = true; rl.close(); return; }
@@ -1993,6 +2240,13 @@ async function startRepl(options = {}) {
         _wowCmdLine = '';
         // 同步 process.argv，保证 preAction/postAction 钩子记录到真实指令
         process.argv = ['node', 'cli.js', ...args];
+        // V3.6.2：交互式指令（clone-client / scheme create / sync login）会向用户提问。
+        // 关键是它们必须复用 REPL 的 readline（见 makeReplIO），而不是另建一个——
+        // 两个 readline 同时挂在 stdin 上时，终端回显会重复、方案名会被 REPL
+        // 当成指令执行（「❌ 未知指令: asdf」）。这里只负责暂停 REPL 对 line 的处理，
+        // 命令结束后恢复提示符。
+        const interactiveCmd = /^(?:scheme\s+(?:clone-client|create)\b|sync\s+login\b)/.test(input);
+        if (interactiveCmd) suspended = true;
         try {
             program.exitOverride();
             await program.parseAsync(['node', 'cli.js', ...args]);
@@ -2002,11 +2256,18 @@ async function startRepl(options = {}) {
             } else if (err && err.message) {
                 console.error(err.message);
             }
+        } finally {
+            if (interactiveCmd && !closed) {
+                suspended = false;
+                if (replSession) replSession.suspended = false;
+            }
         }
-        rl.prompt();
+        if (!closed) rl.prompt();
     });
     rl.on('SIGINT', () => { closed = true; rl.close(); });
     rl.on('close', async () => {
+        // REPL 已关闭：交互式命令不能再借用这个 readline
+        if (replSession && replSession.rl === rl) replSession = null;
         // V3.6.2：退出 REPL 前收掉日志跟踪的定时器，别让它们吊住进程
         if (followTimer) { clearInterval(followTimer); followTimer = null; }
         if (detectTimer) { clearInterval(detectTimer); detectTimer = null; }

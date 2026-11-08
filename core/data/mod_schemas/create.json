@@ -1,0 +1,147 @@
+{
+  "mod_id": "create",
+  "display_name": "机械动力 (Create)",
+  "platforms": ["forge", "neoforge", "fabric"],
+  "author": "wow 官方",
+  "version": "1.0.0",
+  "homepage": "https://github.com/Creators-of-Create/Create",
+  "config_files": [
+    {
+      "path": "serverconfig/create-server.toml",
+      "format": "toml",
+      "fields": [
+        {
+          "key": "kinetics.maxEntityCramming",
+          "label": "动力装置最大实体堆积数",
+          "description": "单个动力装置（轴承、活塞等）能推动的实体上限。超过后装置会停转，慎调高。",
+          "type": "number",
+          "min": 1,
+          "max": 256,
+          "default": 24,
+          "danger": true
+        },
+        {
+          "key": "kinetics.maxBeltLength",
+          "label": "传送带最大长度",
+          "description": "单条传送带允许连接的最大长度（格）。调大会明显增加区块加载压力。",
+          "type": "number",
+          "min": 2,
+          "max": 256,
+          "default": 20
+        },
+        {
+          "key": "contraptions.maxBlocksMoved",
+          "label": "动态结构最大方块数",
+          "description": "用机械装置移动的动态结构（矿车装置、飞行器）最多包含多少方块。数值越大，服务器计算负载越重，建议不超过 2048。",
+          "type": "number",
+          "min": 1,
+          "max": 4096,
+          "default": 2048,
+          "danger": true
+        },
+        {
+          "key": "contraptions.maxBlocksMovedByPiston",
+          "label": "活塞推动最大方块数",
+          "description": "单个机械活塞能推动的方块上限。",
+          "type": "number",
+          "min": 1,
+          "max": 4096,
+          "default": 1024,
+          "danger": true
+        },
+        {
+          "key": "contraptions.maxChassisBlocks",
+          "label": "底盘最大方块数",
+          "description": "超级胶粘底盘一次能粘附的方块上限。",
+          "type": "number",
+          "min": 1,
+          "max": 4096,
+          "default": 512
+        },
+        {
+          "key": "trains.maxTrainLength",
+          "label": "列车最大长度",
+          "description": "一列火车最多挂载的车厢数。超过后无法再连接。",
+          "type": "number",
+          "min": 1,
+          "max": 256,
+          "default": 32
+        },
+        {
+          "key": "trains.maxBogeyCount",
+          "label": "列车最大转向架数",
+          "description": "单列火车允许的转向架（车轮组）数量，影响列车可以有多长、多复杂。",
+          "type": "number",
+          "min": 1,
+          "max": 128,
+          "default": 12
+        },
+        {
+          "key": "trains.stationSoundSpeed",
+          "label": "车站提示音传播速度",
+          "description": "车站报站音效在铁轨上的传递速度，纯音效表现，不影响玩法。",
+          "type": "number",
+          "min": 0,
+          "max": 64,
+          "default": 12,
+          "advanced": true
+        },
+        {
+          "key": "trains.railSpeedLimit",
+          "label": "铁轨速度上限",
+          "description": "列车在普通铁轨上的最高速度（格/秒）。调高会加快区块加载，注意性能。",
+          "type": "number",
+          "min": 1,
+          "max": 320,
+          "default": 30
+        },
+        {
+          "key": "recipes.allowBiggerFishBaits",
+          "label": "允许更大鱼饵配方",
+          "description": "开启后允许用更夸张的材料钓更大体型的鱼。关闭可限制资源加工。",
+          "type": "boolean",
+          "default": false
+        },
+        {
+          "key": "fluids.pumpRange",
+          "label": "流体泵抽取范围",
+          "description": "机械泵从水源方块抽取流体的最大范围（格）。",
+          "type": "number",
+          "min": 1,
+          "max": 100,
+          "default": 16
+        },
+        {
+          "key": "worldgen.disable",
+          "label": "禁用创造机械的矿物生成",
+          "description": "关闭后世界中不再生成锌矿石等 Create 专属矿物，适合已有成熟工业链的服务器。",
+          "type": "boolean",
+          "default": false,
+          "danger": true
+        }
+      ]
+    },
+    {
+      "path": "config/create-common.toml",
+      "format": "toml",
+      "fields": [
+        {
+          "key": "general.enableTooltips",
+          "label": "启用物品提示",
+          "description": "在物品栏里显示 Create 的额外说明文字（仅客户端表现，服务端无影响）。",
+          "type": "boolean",
+          "default": true,
+          "advanced": true
+        },
+        {
+          "key": "client.ponderSceneFade",
+          "label": "思索动画淡入淡出",
+          "description": "Create 思索动画的过渡效果，纯客户端外观。",
+          "type": "boolean",
+          "default": true,
+          "advanced": true
+        }
+      ]
+    }
+  ]
+}

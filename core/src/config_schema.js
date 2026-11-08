@@ -56,9 +56,20 @@ const SCHEMA = [
         placeholder: '留空自动识别', advanced: true
     },
     {
-        key: 'server.jvm_args', type: 'list', group: '服务器', label: 'JVM 参数',
-        desc: '每行一个参数。内存上限不要超过物理内存的一半，超出会被系统杀掉（表现为服务器突然消失）。',
-        placeholder: '-Xmx2G\n-Xms2G\n-XX:+UseG1GC'
+        // V3.6.2（607 指令）：JVM 参数改为「模板 + 覆盖」新结构
+        key: 'server.jvm.template', type: 'select', group: '服务器', label: 'JVM 模板',
+        desc: 'a = 低配 / 极致省内存；b = 平衡 / 主力首选 / Aikar\'s 标准；c = 性能 / ZGC 低延迟；d = 自定义（完全由下方覆盖参数决定，缺 -Xmx 时自动补 -Xmx2G）。G1 与 ZGC 参数互斥，wow 会自动清理冲突项。',
+        options: [
+            { value: 'a', label: 'a · 低配 / 极致省内存' },
+            { value: 'b', label: "b · 平衡 / 主力首选 / Aikar's 标准" },
+            { value: 'c', label: 'c · 性能 / ZGC / 低延迟' },
+            { value: 'd', label: 'd · 自定义' }
+        ]
+    },
+    {
+        key: 'server.jvm.override_args', type: 'list', group: '服务器', label: 'JVM 覆盖参数',
+        desc: '每行一个参数，会附加在模板之后（同名参数以这里的为准）。路径含空格时用引号包裹整个参数，例如 -Djava.library.path="C:\\Program Files\\xxx"。若启用外置登录，这里手填的 -javaagent 会被忽略，由 wow 独家托管。',
+        placeholder: '-XX:MaxGCPauseMillis=200\n-XX:G1HeapRegionSize=16M'
     },
 
     // ==================== 下载 ====================

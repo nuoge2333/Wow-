@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>实例配置 - wow</title>
+    <link rel="stylesheet" href="/css/main.css">
+    <style>
+        body { padding: 20px 24px; }
+        .page-header {
+            display: flex; justify-content: space-between; align-items: center;
+            margin-bottom: 18px; flex-wrap: wrap; gap: 12px;
+            position: sticky; top: 0; background: #0f0f1a; padding-bottom: 10px; z-index: 10;
+        }
+        .page-header h2 { margin: 0; color: #ccd; font-weight: 400; }
+        .header-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+        .header-tools select {
+            padding: 7px 10px; border: 1px solid #2a3a5e; border-radius: 6px;
+            background: #0f1a2f; color: #ddd; font-size: 13px; min-width: 180px;
+        }
+        .btn-line {
+            padding: 7px 14px; border-radius: 6px; border: none; cursor: pointer;
+            font-size: 13px; background: #2a3a5e; color: #ccd; transition: background 0.2s;
+        }
+        .btn-line:hover { background: #3a4a6e; }
+        .btn-line.primary { background: #4CAF50; color: #fff; }
+        .btn-line.primary:hover { background: #43a047; }
+        .btn-line:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        .notice {
+            background: rgba(255, 152, 0, 0.08); border-left: 3px solid #ff9800;
+            color: #d8b06a; font-size: 12px; padding: 8px 12px; border-radius: 4px;
+            margin-bottom: 16px; line-height: 1.7;
+        }
+        .notice.info { background: rgba(33, 150, 243, 0.08); border-left-color: #2196F3; color: #8fb8d8; }
+
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
+        @media (max-width: 1000px) { .grid { grid-template-columns: 1fr; } }
+
+        .card {
+            background: #141e2b; border: 1px solid #1a2332; border-radius: 8px;
+            padding: 14px 16px 6px; margin-bottom: 16px;
+        }
+        .card .title {
+            font-size: 14px; color: #ccd; font-weight: 600; margin-bottom: 12px;
+            display: flex; justify-content: space-between; align-items: center;
+        }
+        .card .title .badge { font-size: 11px; color: #667788; font-weight: 400; }
+        .field {
+            display: grid; grid-template-columns: 190px 1fr; gap: 10px;
+            align-items: center; margin-bottom: 10px;
+        }
+        .field label {
+            font-size: 12px; color: #8899aa; font-family: Consolas, monospace;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
+        .field input, .field select {
+            width: 100%; padding: 6px 9px; border: 1px solid #2a3a5e; border-radius: 5px;
+            background: #0f1a2f; color: #eee; font-size: 13px; outline: none;
+        }
+        .field input:focus, .field select:focus { border-color: #4CAF50; }
+        .field input.changed, .field select.changed { border-color: #ff9800; background: #1a2418; }
+
+        .raw-toggle {
+            font-size: 12px; color: #667788; cursor: pointer; user-select: none;
+            background: none; border: none; padding: 4px 0;
+        }
+        .raw-toggle:hover { color: #99aabb; }
+        .raw-box { display: none; margin-top: 8px; }
+        .raw-box.show { display: block; }
+        .raw-box textarea {
+            width: 100%; min-height: 220px; background: #0b1220; color: #9fb3c8;
+            border: 1px solid #2a3a5e; border-radius: 6px; padding: 10px;
+            font-family: Consolas, monospace; font-size: 12px; line-height: 1.6; resize: vertical;
+        }
+        .empty {
+            padding: 30px; text-align: center; color: #667788; font-size: 13px;
+            background: #141e2b; border: 1px dashed #2a3a5e; border-radius: 8px;
+        }
+        .toast {
+            position: fixed; bottom: 26px; right: 26px; background: #16213e;
+            border-left: 4px solid #4CAF50; padding: 10px 18px; border-radius: 6px;
+            color: #ccd; font-size: 13px; box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+            z-index: 2000; opacity: 0; transform: translateY(16px);
+            transition: all 0.25s ease; pointer-events: none;
+        }
+        .toast.show { opacity: 1; transform: translateY(0); }
+        .toast.error { border-left-color: #f44336; }
+    </style>
+</head>
+<body>
+    <div class="page-header">
+        <h2>📝 实例配置</h2>
+        <div class="header-tools">
+            <select id="scheme-select" title="选择要编辑的方案"></select>
+            <button class="btn-line" id="refresh-btn">↻ 重新加载</button>
+            <button class="btn-line primary" id="save-btn">💾 保存</button>
+        </div>
+    </div>
+
+    <div id="notice-box"></div>
+    <div id="content"></div>
+    <div class="toast" id="toast"></div>
+
+    <script>
+        (function() {
+            const token = sessionStorage.getItem('wow_token') || '';
+            const $ = (id) => document.getElementById(id);
+
+            let currentScheme = '';
+            let original = {};       // 加载时的原始值，用于只提交改动项
+
+            // 键的输入类型
+            const BOOL_KEYS = new Set([
+                'online-mode', 'pvp', 'hardcore', 'allow-flight', 'allow-nether',
+                'enable-command-block', 'white-list', 'enforce-whitelist',
+                'spawn-animals', 'spawn-monsters', 'spawn-npcs', 'enable-rcon',
+                'enable-query', 'force-gamemode', 'generate-structures',
+                'use-native-transport', 'prevent-proxy-connections', 'snooper-enabled',
+                'enforce-secure-profile', 'broadcast-console-to-ops',
+                'broadcast-rcon-to-ops', 'require-resource-pack'
+            ]);
+            const NUMBER_KEYS = new Set([
+                'max-players', 'server-port', 'view-distance', 'simulation-distance',
+                'spawn-protection', 'max-world-size', 'max-tick-time', 'player-idle-timeout',
+                'op-permission-level', 'rcon.port', 'query.port',
+                'network-compression-threshold', 'entity-broadcast-range-percentage',
+                'max-entity-cramming'
+            ]);
+            const ENUM_KEYS = {
+                'difficulty': ['peaceful', 'easy', 'normal', 'hard'],
+                'gamemode': ['survival', 'creative', 'adventure', 'spectator'],
+                'level-type': ['minecraft:normal', 'minecraft:flat', 'minecraft:large_biomes', 'minecraft:amplified', 'minecraft:single_biome_surface']
+            };
+
+            // server.properties 不存在时的初始默认项（首次保存即创建）
+            const DEFAULTS = [
+                { key: 'motd', value: 'A Minecraft Server' },
+                { key: 'server-port', value: '25565' },
+                { key: 'max-players', value: '20' },
+                { key: 'online-mode', value: 'true' },
+                { key: 'gamemode', value: 'survival' },
+                { key: 'difficulty', value: 'easy' },
+                { key: 'pvp', value: 'true' },
+                { key: 'level-name', value: 'world' },
+                { key: 'view-distance', value: '10' },
+                { key: 'simulation-distance', value: '10' },
+                { key: 'spawn-protection', value: '16' },
+                { key: 'white-list', value: 'false' },
+                { key: 'enable-command-block', value: 'false' },
+                { key: 'allow-flight', value: 'false' },
+                { key: 'allow-nether', value: 'true' }
+            ];
+
+            let toastTimer = null;
+            function toast(msg, isError) {
+                const el = $('toast');
+                el.textContent = msg;
+                el.className = 'toast show' + (isError ? ' error' : '');
+                clearTimeout(toastTimer);
+                toastTimer = setTimeout(() => { el.className = 'toast'; }, 2800);
+            }
+
+            async function api(path, method, body) {
+                const resp = await fetch(path, {
+                    method: method || 'GET',
+                    headers: Object.assign(
+                        { 'Content-Type': 'application/json' },
+                        token ? { 'Authorization': 'Bearer ' + token } : {}
+                    ),
+                    body: body ? JSON.stringify(body) : undefined
+                });
+                const json = await resp.json().catch(() => ({}));
+                if (!resp.ok || json.success === false) {
+                    throw new Error(json.error || ('HTTP ' + resp.status));
+                }
+                return json;
+            }
+
+            function esc(s) {
+                return String(s == null ? '' : s)
+                    .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+            }
+
+            function fieldHtml(key, value) {
+                const id = 'f_' + key.replace(/[^a-zA-Z0-9]/g, '_');
+                let input;
+                if (BOOL_KEYS.has(key)) {
+                    input = '<select id="' + id + '" data-key="' + esc(key) + '">' +
+                        '<option value="true"' + (String(value) === 'true' ? ' selected' : '') + '>true</option>' +
+                        '<option value="false"' + (String(value) === 'false' ? ' selected' : '') + '>false</option>' +
+                        '</select>';
+                } else if (ENUM_KEYS[key]) {
+                    const opts = ENUM_KEYS[key].slice();
+                    if (value && !opts.includes(value)) opts.unshift(value);
+                    input = '<select id="' + id + '" data-key="' + esc(key) + '">' +
+                        opts.map(o => '<option value="' + esc(o) + '"' + (String(value) === o ? ' selected' : '') + '>' + esc(o) + '</option>').join('') +
+                        '</select>';
+                } else if (NUMBER_KEYS.has(key)) {
+                    input = '<input type="number" id="' + id + '" data-key="' + esc(key) + '" value="' + esc(value) + '" />';
+                } else {
+                    input = '<input type="text" id="' + id + '" data-key="' + esc(key) + '" value="' + esc(value) + '" />';
+                }
+                return '<div class="field"><label for="' + id + '" title="' + esc(key) + '">' + esc(key) + '</label>' + input + '</div>';
+            }
+
+            function render(d) {
+                const box = $('content');
+                const scheme = d.scheme || {};
+                const notice = $('notice-box');
+
+                if (!d.exists) {
+                    notice.innerHTML = '<div class="notice info">方案「' + esc(scheme.name) + '」还没有 server.properties。' +
+                        '下面是常用默认项，点击「保存」会创建该文件（首次启动服务器时也会自动生成）。</div>';
+                    box.innerHTML = '<div class="card"><div class="title">📄 新建基础配置 <span class="badge">' +
+                        esc(d.file || 'server.properties') + '</span></div>' +
+                        DEFAULTS.map(f => fieldHtml(f.key, f.value)).join('') + '</div>';
+                    original = {};
+                    DEFAULTS.forEach(f => { original[f.key] = f.value; });
+                    return;
+                }
+
+                notice.innerHTML = '<div class="notice">修改会直接写入 <code>' + esc(d.file) + '</code>，' +
+                    '<b>重启服务器后生效</b>；键名与注释保持不变，只改你动过的值。</div>';
+
+                let html = '<div class="grid">';
+                const groups = d.groups || [];
+                groups.forEach((g, i) => {
+                    if (i === 0) html += '<div>';
+                    if (i === 1) html += '<div>';
+                    html += '<div class="card"><div class="title">' + esc(g.title) +
+                        ' <span class="badge">' + g.items.length + ' 项</span></div>' +
+                        g.items.map(it => fieldHtml(it.key, it.value)).join('') + '</div>';
+                });
+                // 其他项
+                if ((d.others || []).length) {
+                    html += '<div class="card"><div class="title">📦 其他配置 <span class="badge">' + d.others.length + ' 项</span></div>' +
+                        d.others.map(it => fieldHtml(it.key, it.value)).join('') + '</div>';
+                }
+                html += '</div></div>';
+
+                html += '<div class="card"><button class="raw-toggle" id="raw-toggle">▶ 查看原始文件内容</button>' +
+                    '<div class="raw-box" id="raw-box"><textarea readonly>' + esc(d.raw || '') + '</textarea></div></div>';
+
+                box.innerHTML = html;
+                original = {};
+                (d.groups || []).forEach(g => g.items.forEach(it => { original[it.key] = it.value; }));
+                (d.others || []).forEach(it => { original[it.key] = it.value; });
+
+                const toggle = $('raw-toggle');
+                if (toggle) {
+                    toggle.addEventListener('click', function() {
+                        const boxEl = $('raw-box');
+                        boxEl.classList.toggle('show');
+                        this.textContent = (boxEl.classList.contains('show') ? '▼' : '▶') + ' 查看原始文件内容';
+                    });
+                }
+            }
+
+            function renderSchemeOptions(d) {
+                const sel = $('scheme-select');
+                const list = d.schemes || [];
+                sel.innerHTML = list.map(s =>
+                    '<option value="' + esc(s.name) + '"' + (s.name === d.scheme.name ? ' selected' : '') + '>' +
+                    esc(s.name) + (s.active ? '（当前）' : '') + ' · ' + esc(s.version || '') + '</option>'
+                ).join('');
+            }
+
+            async function load(scheme) {
+                const q = scheme ? ('?scheme=' + encodeURIComponent(scheme)) : '';
+                try {
+                    const d = await api('/api/props' + q);
+                    currentScheme = d.scheme.name;
+                    renderSchemeOptions(d);
+                    render(d);
+                } catch (e) {
+                    $('content').innerHTML = '<div class="empty">' + esc(e.message || '加载失败') + '</div>';
+                    $('notice-box').innerHTML = '';
+                    toast(e.message || '加载失败', true);
+                }
+            }
+
+            async function save() {
+                const inputs = document.querySelectorAll('[data-key]');
+                const updates = {};
+                let changedCount = 0;
+                inputs.forEach(el => {
+                    const key = el.getAttribute('data-key');
+                    const value = el.value;
+                    if (original[key] !== value) {
+                        updates[key] = value;
+                        changedCount++;
+                    }
+                });
+                if (!changedCount) {
+                    toast('没有改动');
+                    return;
+                }
+                $('save-btn').disabled = true;
+                try {
+                    const r = await api('/api/props', 'POST', { scheme: currentScheme, updates });
+                    toast('已保存：' + (r.changed || 0) + ' 项更新，' + (r.created || 0) + ' 项新增');
+                    await load(currentScheme);
+                } catch (e) {
+                    toast(e.message || '保存失败', true);
+                } finally {
+                    $('save-btn').disabled = false;
+                }
+            }
+
+            // 改动高亮
+            document.addEventListener('input', function(e) {
+                const el = e.target.closest('[data-key]');
+                if (!el) return;
+                const key = el.getAttribute('data-key');
+                if (original[key] === el.value) el.classList.remove('changed');
+                else el.classList.add('changed');
+            });
+            document.addEventListener('change', function(e) {
+                const el = e.target.closest('[data-key]');
+                if (!el) return;
+                const key = el.getAttribute('data-key');
+                if (original[key] === el.value) el.classList.remove('changed');
+                else el.classList.add('changed');
+            });
+
+            $('scheme-select').addEventListener('change', function() { load(this.value); });
+            $('refresh-btn').addEventListener('click', function() { load(currentScheme); });
+            $('save-btn').addEventListener('click', save);
+
+            load();
+        })();
+    </script>
+</body>
+</html>

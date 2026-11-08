@@ -1,0 +1,97 @@
+{
+  "mod_id": "waystones",
+  "display_name": "传送石碑 (Waystones)",
+  "platforms": ["forge", "neoforge", "fabric"],
+  "author": "wow 官方",
+  "version": "1.0.0",
+  "homepage": "https://github.com/TwelveIterationMods/Waystones",
+  "config_files": [
+    {
+      "path": "serverconfig/waystones-server.toml",
+      "format": "toml",
+      "fields": [
+        {
+          "key": "general.allowGlobalWaystones",
+          "label": "允许全局传送石碑",
+          "description": "开启后，玩家之间可以共享已激活的石碑。关闭则每人只能用自己的那一座。",
+          "type": "boolean",
+          "default": true
+        },
+        {
+          "key": "general.maxWaystonesPerPlayer",
+          "label": "每人石碑上限",
+          "description": "单个玩家最多能拥有几座石碑。设为 0 表示不限制。",
+          "type": "number",
+          "min": 0,
+          "max": 500,
+          "default": 0
+        },
+        {
+          "key": "general.waystoneCooldown",
+          "label": "传送冷却（秒）",
+          "description": "两次传送之间的最短间隔。0 表示无冷却。",
+          "type": "number",
+          "min": 0,
+          "max": 3600,
+          "default": 0
+        },
+        {
+          "key": "general.warpItemCost",
+          "label": "传送消耗经验等级",
+          "description": "每次传送扣除的经验等级。0 表示免费。",
+          "type": "number",
+          "min": 0,
+          "max": 100,
+          "default": 1
+        },
+        {
+          "key": "general.enableInventoryButton",
+          "label": "启用物品栏传送按钮",
+          "description": "玩家背包界面出现一键返回最近石碑的按钮。关闭会让传送稍麻烦些。",
+          "type": "boolean",
+          "default": true
+        },
+        {
+          "key": "general.discoverAllWaystonesOnDeath",
+          "label": "死亡时解锁全部石碑",
+          "description": "玩家死亡后自动解锁所有已存在的石碑，减少跑图时间。生存服视风格取舍。",
+          "type": "boolean",
+          "default": false
+        },
+        {
+          "key": "general.teleportIncomingBlocks",
+          "label": "传送后失明时间（刻）",
+          "description": "刚到目的地时的短暂失明，用来掩盖过场。0 表示关闭。",
+          "type": "number",
+          "min": 0,
+          "max": 200,
+          "default": 0,
+          "advanced": true
+        },
+        {
+          "key": "general.teleportCrossDimension",
+          "label": "允许跨维度传送",
+          "description": "关闭后石碑只能在同维度内传送（主世界↔下界需要另设通道）。",
+          "type": "boolean",
+          "default": true
+        },
+        {
+          "key": "general.restrictWaystoneWorlds",
+          "label": "限制石碑可存在的世界",
+          "description": "开启后只允许在 whiteListedWorlds 里列出的世界放置石碑，防止玩家把石碑塞进资源世界。",
+          "type": "boolean",
+          "default": false,
+          "advanced": true
+        },
+        {
+          "key": "compat.tradeableWaystones",
+          "label": "允许村民交易石碑",
+          "description": "流浪商人可能出售传送石碑，方便新手起步。",
+          "type": "boolean",
+          "default": true,
+          "advanced": true
+        }
+      ]
+    }
+  ]
+}

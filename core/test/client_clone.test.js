@@ -937,8 +937,11 @@ async function main() {
 
             // 核心
             assert.ok(fs.existsSync(path.join(sp, 'forge-1.20.1-47.2.0-server.jar')));
-            // 客户端核心已改名
-            assert.ok(fs.existsSync(path.join(sp, '1.20.1-forge-47.2.0.jar.client-jar.bak')));
+            // V3.6.2：客户端版本 jar 不再复制（服务端用不到，且常因权限 EACCES 刷警告）
+            assert.ok(!fs.existsSync(path.join(sp, '1.20.1-forge-47.2.0.jar')),
+                '客户端版本 jar 不应被复制进方案');
+            assert.ok(!fs.existsSync(path.join(sp, '1.20.1-forge-47.2.0.jar.client-jar.bak')),
+                '不再产生 .client-jar.bak（客户端 jar 根本不复制）');
 
             // 存档
             assert.ok(fs.existsSync(path.join(sp, 'world', 'level.dat')));
@@ -976,6 +979,77 @@ async function main() {
         } finally {
             InstallerOrig.prototype.install = origInstall;
             smMod.exports = OrigExportsRef2;
+        }
+    });
+
+    // ---------- V3.6.2：版本隔离布局（mods/config/saves 在游戏根目录） ----------
+    await t('版本隔离：mods / config / saves 从游戏根目录复制，且不碰版本 jar', async () => {
+        const root = makeTmp('e2e-isolated');
+        const instName = '1.20.1-Forge';
+        const inst = path.join(root, 'versions', instName);
+        fs.ensureDirSync(inst);
+        // 版本目录里只有 json + 客户端 jar
+        fs.writeFileSync(path.join(inst, `${instName}.json`), JSON.stringify({
+            id: instName,
+            inheritsFrom: '1.20.1',
+            mainClass: 'cpw.mods.bootstraplauncher.BootstrapLauncher',
+            arguments: { game: ['--fml.forgeVersion', '47.4.28'] }
+        }), 'utf8');
+        fs.writeFileSync(path.join(inst, `${instName}.jar`), 'CLIENT JAR', 'utf8');
+        // 真正的游戏数据在根目录
+        fs.ensureDirSync(path.join(root, 'mods'));
+        forgeMod(path.join(root, 'mods', 'jei.jar'), 'jei');
+        forgeMod(path.join(root, 'mods', 'create.jar'), 'create');
+        fs.ensureDirSync(path.join(root, 'config'));
+        fs.writeFileSync(path.join(root, 'config', 'somemod.toml'), '# cfg', 'utf8');
+        const saveDir = path.join(root, 'saves', '生存世界');
+        fs.ensureDirSync(saveDir);
+        fs.writeFileSync(path.join(saveDir, 'level.dat'), 'LEVEL', 'utf8');
+        // 启动器垃圾
+        fs.writeFileSync(path.join(root, 'launcher_profiles.json'), '{}', 'utf8');
+
+        const schemeRoot = path.join(root, 'scheme');
+        const SchemeManagerOrig = require('../src/scheme_manager');
+        const sm = new SchemeManagerOrig();
+        sm.schemesDir = schemeRoot;
+        sm.poolDir = path.join(root, 'pool');
+        sm.poolIndexPath = path.join(root, 'pool', 'index.yaml');
+        sm.poolIndex = { resources: {}, ref_count: {} };
+        fs.ensureDirSync(schemeRoot);
+
+        const InstallerOrig = require('../src/installer');
+        const origInstall = InstallerOrig.prototype.install;
+        InstallerOrig.prototype.install = async (type, ver, build, dir) => {
+            const p = path.join(dir, `forge-${ver}-server.jar`);
+            fs.writeFileSync(p, 'STUB', 'utf8');
+            return p;
+        };
+        try {
+            // 用户传的是游戏根目录（含 versions/）
+            const r = await clone.cloneClient({
+                clientPath: root,
+                name: 'isolated',
+                saveName: '生存世界',
+                io: clone.makeSilentIO(),
+                schemeManager: sm
+            });
+            assert.strictEqual(r.ok, true, r.reason || '');
+            const sp = path.join(schemeRoot, 'isolated');
+
+            // 模组必须真的进方案（旧实现这里是 0 个）
+            assert.ok(fs.existsSync(path.join(sp, 'mods', 'jei.jar')), '根目录 mods 应被复制');
+            assert.ok(fs.existsSync(path.join(sp, 'mods', 'create.jar')));
+            assert.ok(fs.existsSync(path.join(sp, 'config', 'somemod.toml')), '根目录 config 应被复制');
+            assert.ok(fs.existsSync(path.join(sp, 'world', 'level.dat')), '根目录 saves 应被复制');
+            // 客户端 jar 不复制
+            assert.ok(!fs.existsSync(path.join(sp, `${instName}.jar`)));
+            // 启动器垃圾不复制
+            assert.ok(!fs.existsSync(path.join(sp, 'launcher_profiles.json')));
+            // 入池登记应看到模组
+            const m = yaml.load(fs.readFileSync(path.join(sp, 'scheme.yaml'), 'utf8'));
+            assert.ok(m.resources.mods.length >= 2, '入池模组数应 >= 2');
+        } finally {
+            InstallerOrig.prototype.install = origInstall;
         }
     });
 

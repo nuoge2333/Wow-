@@ -224,8 +224,9 @@ my_theme/
 1. **登录页**（`login.html`）位于 `web/` 根目录，在未登录时直接访问。
    如果你希望自定义登录页，需要在主题包中包含 `login.html`，并确保登录逻辑调用 `/api/auth/request-code` 和 `/api/auth/login`。
 
-2. **主框架**（`index.html`）默认包含菜单栏 (`left.html`) 和通知栏 (`right.html`) 的 iframe。
+2. **主框架**（`index.html`）默认包含菜单栏 (`left.html`) 和便签栏 (`right.html`，聊天室风格，以登录邮箱为发言人) 的 iframe。
    你可以完全替换 `index.html` 的设计，但建议保留与后端 API 的通信方式（使用 `token`）。
+   便签栏依赖 `GET/POST /api/notes` 与 socket.io 的 `note` 广播事件，自定义时请保持相同协议。
 
 3. 如果你修改了菜单栏的页面跳转逻辑，请确保跳转目标是你的主题包中存在的 HTML 文件。
 

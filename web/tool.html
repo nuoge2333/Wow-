@@ -582,7 +582,7 @@
                     // 执行解压命令
                     compressStatus.textContent = '解压中...';
                     compressProgressFill.style.width = '50%';
-                    const result = await apiExec(`install ${filePath} -o ./`);
+                    const result = await apiExec('install', [filePath, '-o', './']);
                     compressProgressFill.style.width = '100%';
                     compressStatus.textContent = '✅ 解压完成';
                     showToast('解压完成', 'success');
@@ -616,7 +616,7 @@
                         return;
                     }
                     compressProgressFill.style.width = '30%';
-                    const result = await apiExec(`pack generate ${name}`);
+                    const result = await apiExec('pack generate', [name]);
                     compressProgressFill.style.width = '100%';
                     compressStatus.textContent = '✅ 打包完成';
                     showToast(`打包完成: ${name}.zip`, 'success');

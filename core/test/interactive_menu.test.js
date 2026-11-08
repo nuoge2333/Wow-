@@ -56,7 +56,10 @@ check('case 2 标题为「新建方案」', () => {
     assert.ok(/printHeader\('新建方案'\)/.test(c2));
 });
 check('case 2 询问方案名', () => {
-    assert.ok(/ask\(rl, '方案名称: '\)/.test(c2));
+    // V3.6.3：TUI 模式下提问走 ioAsk（挂起键盘后的安全通道），
+    // 兼容模式与外部裸调仍走 ask(rl, ...)，两种都应存在
+    assert.ok(/ioAsk\(io, rl, '方案名称: '\)/.test(c2) || /ask\(rl, '方案名称: '\)/.test(c2),
+        'case 2 未询问方案名');
 });
 check('case 2 校验方案名合法性', () => {
     assert.ok(/validateNameSegment/.test(c2));
@@ -105,7 +108,7 @@ check('case 2 子菜单提示范围改为 (0-5)', () => {
     assert.ok(/请选择 \(0-5\)/.test(c2full));
 });
 check('case 2 仍保留新建方案逻辑（方案名/校验/create 对象签名）', () => {
-    assert.ok(/ask\(rl, '方案名称: '\)/.test(c2full));
+    assert.ok(/ioAsk\(io, rl, '方案名称: '\)|ask\(rl, '方案名称: '\)/.test(c2full));
     assert.ok(/validateNameSegment/.test(c2full));
     assert.ok(/schemeManager\.create\(\s*sName\s*,\s*\{/.test(c2full));
 });
@@ -124,14 +127,15 @@ check('case 2 已移除原「备份/恢复」标题', () => {
 
 // 主菜单文字
 console.log('\n— 主菜单文字 —');
-check('主菜单第 2 项显示「方案管理」', () => {
-    assert.ok(/\['2', '方案管理/.test(src));
+check('主菜单（W 页）第 2 项显示「方案管理」', () => {
+    // V3.6.3：主菜单的硬编码数组改成 PAGES 声明式表格
+    assert.ok(/id: '2', label: '方案管理/.test(src), 'W 页第 2 项不是方案管理');
 });
 check('主菜单第 2 项不再显示「下载/安装实例」', () => {
     assert.ok(!/\['2', '下载\/安装实例'\]/.test(src));
 });
-check('主菜单第 13 项现为「Web 主题更改」', () => {
-    assert.ok(/\['13', 'Web 主题更改'\]/.test(src));
+check('主菜单（Y 页）第 13 项现为「Web 主题更改」', () => {
+    assert.ok(/id: '13', label: 'Web 主题更改'/.test(src), 'Y 页第 13 项不是 Web 主题');
 });
 check('主菜单不再存在「方案管理 (切换/列表/删除)」旧第 13 项', () => {
     assert.ok(!/\['13', '方案管理 \(切换\/列表\/删除\)'\]/.test(src));
@@ -195,11 +199,15 @@ console.log('\n— V3.5.8 启动方式（cli.js）—');
     check('REPL 关闭后忽略残留 line 事件（closed 标志）', () => {
         assert.ok(/if \(closed\) return;/.test(cli), 'line 回调未做 closed 检查');
     });
-    check('菜单含 15 号「进入 L 模式」且分发到 startRepl 回调', () => {
+    check('菜单有 L 入口且分发到注入的回调（V3.6.3 起不是 15 号）', () => {
         const itv = fs.readFileSync(path.join(__dirname, '..', 'src', 'interactive.js'), 'utf8');
-        assert.ok(/\['15',/.test(itv), '菜单缺少 15 号项');
-        assert.ok(/num === 15/.test(itv), '菜单未处理 15 号');
-        assert.ok(/options\.startRepl/.test(itv), '15 号未走注入的 startRepl 回调');
+        // V3.6.3：底部导航的 [L] 取代了原主菜单的 15 号项
+        assert.ok(/\[\[\s*'L',\s*'长命令'\s*\]|\['L', '长命令'\]/.test(
+            fs.readFileSync(path.join(__dirname, '..', 'src', 'tui.js'), 'utf8')),
+            '导航栏缺少 L');
+        assert.ok(/k === 'L'/.test(itv), '菜单未处理 L 键');
+        assert.ok(/options\.onEnterLongCommand \|\| options\.startRepl/.test(itv),
+            'L 未走注入的回调');
         // 只看真实代码行：注释里提到 require('./cli') 是解释「为什么不这么做」
         const codeLines = itv.split('\n').filter(l => !/^\s*\//.test(l));
         assert.ok(!codeLines.some(l => /require\(['"]\.\/cli['"]\)/.test(l)),

@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>模组管理 - wow</title>
+    <link rel="stylesheet" href="/css/main.css">
+    <style>
+        body { padding: 20px 24px; }
+        .page-header {
+            display: flex; justify-content: space-between; align-items: center;
+            margin-bottom: 18px; flex-wrap: wrap; gap: 12px;
+        }
+        .page-header h2 { margin: 0; color: #ccd; font-weight: 400; }
+        .header-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+        .header-tools select {
+            padding: 7px 10px; border: 1px solid #2a3a5e; border-radius: 6px;
+            background: #0f1a2f; color: #ddd; font-size: 13px; min-width: 180px;
+        }
+        .btn-line {
+            padding: 7px 14px; border-radius: 6px; border: none; cursor: pointer;
+            font-size: 13px; background: #2a3a5e; color: #ccd; transition: background 0.2s;
+        }
+        .btn-line:hover { background: #3a4a6e; }
+        .btn-line.primary { background: #4CAF50; color: #fff; }
+        .btn-line.primary:hover { background: #43a047; }
+
+        .summary {
+            display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 16px;
+            font-size: 13px; color: #8899aa;
+        }
+        .summary .chip {
+            background: #141e2b; border: 1px solid #1a2332; border-radius: 14px;
+            padding: 4px 12px;
+        }
+        .summary .chip b { color: #ccd; font-weight: 600; }
+
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
+        @media (max-width: 1100px) { .grid { grid-template-columns: 1fr; } }
+
+        .panel {
+            background: #141e2b; border: 1px solid #1a2332; border-radius: 8px;
+            overflow: hidden; margin-bottom: 16px;
+        }
+        .panel-title {
+            padding: 12px 16px; background: #0f1a2f; color: #8899aa; font-size: 13px;
+            font-weight: 500; display: flex; justify-content: space-between; align-items: center;
+            border-bottom: 1px solid #1a2332;
+        }
+        .panel-title .count { color: #667788; font-weight: 400; }
+        table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        th {
+            text-align: left; padding: 9px 12px; color: #667788; font-weight: 500;
+            background: #101a28; border-bottom: 1px solid #1a2332; font-size: 12px;
+        }
+        td { padding: 8px 12px; border-bottom: 1px solid #16202e; color: #ccd; vertical-align: middle; }
+        tr:last-child td { border-bottom: none; }
+        tr:hover td { background: #182231; }
+        .fname {
+            max-width: 320px; overflow: hidden; text-overflow: ellipsis;
+            white-space: nowrap; display: inline-block; vertical-align: bottom;
+        }
+        .size { color: #667788; white-space: nowrap; font-size: 12px; }
+        .tag {
+            display: inline-block; padding: 1px 8px; border-radius: 10px;
+            font-size: 11px; white-space: nowrap;
+        }
+        .tag.on { background: #1b5e20; color: #81c784; }
+        .tag.off { background: #37474f; color: #90a4ae; }
+        .tag.loader { background: #0d47a1; color: #90caf9; }
+        .row-actions { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
+        .btn-sm {
+            padding: 3px 10px; border: none; border-radius: 4px; font-size: 12px;
+            cursor: pointer; color: #fff; background: #607d8b; white-space: nowrap;
+        }
+        .btn-sm:hover { opacity: 0.88; }
+        .btn-sm.green { background: #4CAF50; }
+        .btn-sm.red { background: #ef5350; }
+        .btn-sm.blue { background: #2196F3; }
+        .btn-sm.gray { background: #37474f; }
+        .empty { padding: 26px; text-align: center; color: #556677; font-size: 13px; }
+        .hint {
+            font-size: 12px; color: #667788; margin-top: 4px; line-height: 1.7;
+        }
+        .notice {
+            background: rgba(255, 152, 0, 0.08); border-left: 3px solid #ff9800;
+            color: #d8b06a; font-size: 12px; padding: 8px 12px; border-radius: 4px;
+            margin-bottom: 16px; line-height: 1.7;
+        }
+        .toast {
+            position: fixed; bottom: 26px; right: 26px; background: #16213e;
+            border-left: 4px solid #4CAF50; padding: 10px 18px; border-radius: 6px;
+            color: #ccd; font-size: 13px; box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+            z-index: 2000; opacity: 0; transform: translateY(16px);
+            transition: all 0.25s ease; pointer-events: none;
+        }
+        .toast.show { opacity: 1; transform: translateY(0); }
+        .toast.error { border-left-color: #f44336; }
+    </style>
+</head>
+<body>
+    <div class="page-header">
+        <h2>🧩 模组管理</h2>
+        <div class="header-tools">
+            <select id="scheme-select" title="选择要查看的方案"></select>
+            <button class="btn-line" id="refresh-btn">↻ 刷新</button>
+        </div>
+    </div>
+
+    <div class="summary" id="summary"></div>
+
+    <div class="notice">
+        当前展示的是 <b>方案目录里的实际文件</b> 与 <b>共享池（pool）</b>。
+        启用 / 禁用、从池添加都会立即改磁盘文件，<b>重启服务器后生效</b>。
+    </div>
+
+    <div class="grid">
+        <div>
+            <div class="panel">
+                <div class="panel-title">📦 当前方案 · 模组 <span class="count" id="mods-count"></span></div>
+                <table>
+                    <thead><tr><th>文件</th><th>大小</th><th>状态</th><th style="text-align:right;">操作</th></tr></thead>
+                    <tbody id="scheme-mods"><tr><td colspan="4" class="empty">加载中...</td></tr></tbody>
+                </table>
+                <div class="hint" style="padding:10px 14px;">禁用 = 加 <code>DISABLED_</code> 前缀或移入 <code>mods-disabled/</code>，文件不会删除。客户端专用模组（如光影前置）建议禁用。</div>
+            </div>
+
+            <div class="panel">
+                <div class="panel-title">🔌 当前方案 · 插件 <span class="count" id="plugins-count"></span></div>
+                <table>
+                    <thead><tr><th>文件</th><th>大小</th><th>状态</th><th style="text-align:right;">操作</th></tr></thead>
+                    <tbody id="scheme-plugins"><tr><td colspan="4" class="empty">加载中...</td></tr></tbody>
+                </table>
+            </div>
+        </div>
+
+        <div>
+            <div class="panel">
+                <div class="panel-title">🗄️ 共享池 · 模组 <span class="count" id="pool-mods-count"></span></div>
+                <table>
+                    <thead><tr><th>文件</th><th>加载器 / 版本</th><th>大小</th><th style="text-align:right;">操作</th></tr></thead>
+                    <tbody id="pool-mods"><tr><td colspan="4" class="empty">加载中...</td></tr></tbody>
+                </table>
+                <div class="hint" style="padding:10px 14px;">池里的模组可被多个方案共用。创建方案 / 补齐资源时会优先从这里取，不再重复下载。</div>
+            </div>
+
+            <div class="panel">
+                <div class="panel-title">🔌 共享池 · 插件 <span class="count" id="pool-plugins-count"></span></div>
+                <table>
+                    <thead><tr><th>文件</th><th>加载器 / 版本</th><th>大小</th><th style="text-align:right;">操作</th></tr></thead>
+                    <tbody id="pool-plugins"><tr><td colspan="4" class="empty">暂无共享插件</td></tr></tbody>
+                </table>
+            </div>
+
+            <div class="panel">
+                <div class="panel-title">🧱 共享池 · 服务端核心 <span class="count" id="pool-cores-count"></span></div>
+                <table>
+                    <thead><tr><th>文件</th><th>类型 / 版本</th><th>大小</th></tr></thead>
+                    <tbody id="pool-cores"><tr><td colspan="3" class="empty">暂无共享核心</td></tr></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <div class="toast" id="toast"></div>
+
+    <script>
+        (function() {
+            const token = sessionStorage.getItem('wow_token') || '';
+            let currentScheme = '';
+            let data = null;
+
+            const $ = (id) => document.getElementById(id);
+
+            function fmtSize(n) {
+                if (!n && n !== 0) return '--';
+                if (n < 1024) return n + ' B';
+                if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+                return (n / 1024 / 1024).toFixed(1) + ' MB';
+            }
+
+            let toastTimer = null;
+            function toast(msg, isError) {
+                const el = $('toast');
+                el.textContent = msg;
+                el.className = 'toast show' + (isError ? ' error' : '');
+                clearTimeout(toastTimer);
+                toastTimer = setTimeout(() => { el.className = 'toast'; }, 2600);
+            }
+
+            async function api(path, method, body) {
+                const resp = await fetch(path, {
+                    method: method || 'GET',
+                    headers: Object.assign(
+                        { 'Content-Type': 'application/json' },
+                        token ? { 'Authorization': 'Bearer ' + token } : {}
+                    ),
+                    body: body ? JSON.stringify(body) : undefined
+                });
+                const json = await resp.json().catch(() => ({}));
+                if (!resp.ok || json.success === false) {
+                    throw new Error(json.error || ('HTTP ' + resp.status));
+                }
+                return json;
+            }
+
+            function esc(s) {
+                return String(s == null ? '' : s)
+                    .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+            }
+
+            function emptyRow(cols, text) {
+                return '<tr><td colspan="' + cols + '" class="empty">' + esc(text) + '</td></tr>';
+            }
+
+            function renderSchemeMods(list) {
+                const body = $('scheme-mods');
+                $('mods-count').textContent = list.length ? ('共 ' + list.length + ' 个') : '';
+                if (!list.length) {
+                    body.innerHTML = emptyRow(4, '当前方案没有模组');
+                    return;
+                }
+                body.innerHTML = list.map((f, i) => {
+                    const disabled = !f.enabled;
+                    const inDisabledDir = f.location === 'mods-disabled';
+                    return '<tr>' +
+                        '<td><span class="fname" title="' + esc(f.name) + '">' + esc(f.name) + '</span></td>' +
+                        '<td class="size">' + fmtSize(f.size) + '</td>' +
+                        '<td><span class="tag ' + (disabled ? 'off' : 'on') + '">' +
+                            (disabled ? (inDisabledDir ? '已禁用（mods-disabled）' : '已禁用') : '启用中') + '</span></td>' +
+                        '<td><div class="row-actions">' +
+                            '<button class="btn-sm ' + (disabled ? 'green' : 'gray') + '" data-act="toggle" data-kind="mods" data-name="' + esc(f.name) + '">' +
+                                (disabled ? '启用' : '禁用') + '</button>' +
+                            (inDisabledDir ? '' :
+                                '<button class="btn-sm blue" data-act="topool" data-kind="mods" data-name="' + esc(f.name) + '">放入池</button>') +
+                        '</div></td>' +
+                    '</tr>';
+                }).join('');
+            }
+
+            function renderSchemePlugins(list) {
+                const body = $('scheme-plugins');
+                $('plugins-count').textContent = list.length ? ('共 ' + list.length + ' 个') : '';
+                if (!list.length) {
+                    body.innerHTML = emptyRow(4, '当前方案没有插件');
+                    return;
+                }
+                body.innerHTML = list.map(f => {
+                    const disabled = !f.enabled;
+                    return '<tr>' +
+                        '<td><span class="fname" title="' + esc(f.name) + '">' + esc(f.name) + '</span></td>' +
+                        '<td class="size">' + fmtSize(f.size) + '</td>' +
+                        '<td><span class="tag ' + (disabled ? 'off' : 'on') + '">' + (disabled ? '已禁用' : '启用中') + '</span></td>' +
+                        '<td><div class="row-actions">' +
+                            '<button class="btn-sm ' + (disabled ? 'green' : 'gray') + '" data-act="toggle" data-kind="plugins" data-name="' + esc(f.name) + '">' +
+                                (disabled ? '启用' : '禁用') + '</button>' +
+                            '<button class="btn-sm blue" data-act="topool" data-kind="plugins" data-name="' + esc(f.name) + '">放入池</button>' +
+                        '</div></td>' +
+                    '</tr>';
+                }).join('');
+            }
+
+            function renderPool(list, bodyId, countId, kind) {
+                const body = $(bodyId);
+                const countEl = $(countId);
+                countEl.textContent = list.length ? ('共 ' + list.length + ' 个') : '';
+                if (!list.length) {
+                    body.innerHTML = emptyRow(4, '池里暂无' + (kind === 'mods' ? '模组' : '插件'));
+                    return;
+                }
+                body.innerHTML = list.map(f => {
+                    return '<tr>' +
+                        '<td><span class="fname" title="' + esc(f.name) + '">' + esc(f.name) + '</span></td>' +
+                        '<td><span class="tag loader">' + esc(f.loader || '?') + '</span> <span class="size">' + esc(f.version || '') + '</span></td>' +
+                        '<td class="size">' + fmtSize(f.size) + '</td>' +
+                        '<td><div class="row-actions">' +
+                            '<button class="btn-sm green" data-act="frompool" data-kind="' + kind + '" data-name="' + esc(f.name) + '">添加到方案</button>' +
+                        '</div></td>' +
+                    '</tr>';
+                }).join('');
+            }
+
+            function renderCores(list) {
+                const body = $('pool-cores');
+                $('pool-cores-count').textContent = list.length ? ('共 ' + list.length + ' 个') : '';
+                if (!list.length) {
+                    body.innerHTML = emptyRow(3, '池里暂无核心');
+                    return;
+                }
+                body.innerHTML = list.map(c => {
+                    return '<tr>' +
+                        '<td><span class="fname" title="' + esc(c.name) + '">' + esc(c.name) + '</span></td>' +
+                        '<td><span class="tag loader">' + esc(c.type) + '</span> <span class="size">' + esc(c.version) + '</span></td>' +
+                        '<td class="size">' + fmtSize(c.size) + '</td>' +
+                    '</tr>';
+                }).join('');
+            }
+
+            function renderSummary(d) {
+                const modsOn = (d.mods || []).filter(m => m.enabled).length;
+                const modsOff = (d.mods || []).length - modsOn;
+                $('summary').innerHTML =
+                    '<span class="chip">方案 <b>' + esc(d.scheme.name) + '</b>' + (d.scheme.active ? '（当前）' : '') + '</span>' +
+                    '<span class="chip">版本 <b>' + esc(d.scheme.version || '--') + '</b> / ' + esc(d.scheme.loader || '--') + '</span>' +
+                    '<span class="chip">模组 <b>' + modsOn + '</b> 启用' + (modsOff ? '，<b>' + modsOff + '</b> 禁用' : '') + '</span>' +
+                    '<span class="chip">插件 <b>' + (d.plugins || []).length + '</b></span>' +
+                    '<span class="chip">池：模组 <b>' + (d.pool.mods || []).length + '</b> / 插件 <b>' + (d.pool.plugins || []).length + '</b> / 核心 <b>' + (d.pool.cores || []).length + '</b></span>';
+            }
+
+            function renderSchemeOptions(d) {
+                const sel = $('scheme-select');
+                const list = d.schemes || [];
+                sel.innerHTML = list.map(s =>
+                    '<option value="' + esc(s.name) + '"' + (s.name === d.scheme.name ? ' selected' : '') + '>' +
+                    esc(s.name) + (s.active ? '（当前）' : '') + ' · ' + esc(s.version || '') + '</option>'
+                ).join('');
+            }
+
+            async function load(scheme) {
+                const q = scheme ? ('?scheme=' + encodeURIComponent(scheme)) : '';
+                try {
+                    const d = await api('/api/resources' + q);
+                    data = d;
+                    currentScheme = d.scheme.name;
+                    renderSummary(d);
+                    renderSchemeOptions(d);
+                    renderSchemeMods(d.mods || []);
+                    renderSchemePlugins(d.plugins || []);
+                    renderPool(d.pool.mods || [], 'pool-mods', 'pool-mods-count', 'mods');
+                    renderPool(d.pool.plugins || [], 'pool-plugins', 'pool-plugins-count', 'plugins');
+                    renderCores(d.pool.cores || []);
+                } catch (e) {
+                    const msg = e.message || '加载失败';
+                    $('scheme-mods').innerHTML = emptyRow(4, msg);
+                    $('scheme-plugins').innerHTML = emptyRow(4, msg);
+                    $('pool-mods').innerHTML = emptyRow(4, msg);
+                    $('pool-plugins').innerHTML = emptyRow(4, msg);
+                    $('pool-cores').innerHTML = emptyRow(3, msg);
+                    $('summary').innerHTML = '<span class="chip" style="color:#f44336">' + esc(msg) + '</span>';
+                    toast(msg, true);
+                }
+            }
+
+            async function act(btn) {
+                const action = btn.getAttribute('data-act');
+                const kind = btn.getAttribute('data-kind');
+                const name = btn.getAttribute('data-name');
+                btn.disabled = true;
+                try {
+                    if (action === 'toggle') {
+                        await api('/api/resources/toggle', 'POST', { scheme: currentScheme, kind, name });
+                        toast('已切换状态，重启服务器后生效');
+                    } else if (action === 'topool') {
+                        await api('/api/resources/copy', 'POST', { scheme: currentScheme, kind, name, direction: 'scheme2pool' });
+                        toast('已复制到共享池');
+                    } else if (action === 'frompool') {
+                        await api('/api/resources/copy', 'POST', { scheme: currentScheme, kind, name, direction: 'pool2scheme' });
+                        toast('已添加到方案，重启服务器后生效');
+                    }
+                    await load(currentScheme);
+                } catch (e) {
+                    toast(e.message || '操作失败', true);
+                    btn.disabled = false;
+                }
+            }
+
+            document.addEventListener('click', function(e) {
+                const btn = e.target.closest('button[data-act]');
+                if (btn) act(btn);
+            });
+
+            $('scheme-select').addEventListener('change', function() {
+                load(this.value);
+            });
+            $('refresh-btn').addEventListener('click', function() {
+                load(currentScheme);
+            });
+
+            load();
+        })();
+    </script>
+</body>
+</html>

@@ -42,8 +42,8 @@
 
 | 版本 | 状态 | 发布时间 |
 |------|------|------|
-| **未发布** | 开发中（面板启动 → L 模式日志跟踪） | — |
-| **3.6.1-26.42** | 当前版本 |2026-11-07|
+| **3.7.0-26.43** | 当前版本 |2026-11-08|
+| **3.6.1-26.42** | 上一版本 |2026-11-07|
 | **3.6.0-26.41** | 上一版本 |2026-11-06|
 | **3.5.24-26.40** | 上一版本 |2026-11-03|
 | **3.5.23-26.3e** | 上一版本 |2026-11-01|
@@ -116,9 +116,306 @@
 
 ---
 
-## [未发布] — 面板启动服务器时 L 模式同步进入日志跟踪
+## [3.7.0-26.43] — 2026-11-08
 
-> 状态：**已开发完成，尚未发行**。
+> 本周期主题：**M 模式从「问答菜单」变成真正的 TUI**、**模组配置有了可扩展表单引擎**、
+> **共享池从「事后登记」变成「优先复用」**，外加便签聊天室与一批面板修复。
+> 累计 7 个开发批次合并为一条发行记录。
+
+### 📊 本版一览
+
+| 板块 | 一句话 |
+|------|--------|
+| **609 M 模式七页 TUI** | `wow m` 变成常驻界面：QWERTY 切六页、数字执行、按键即触发，单 readline 接管 |
+| **608 模组表单引擎** | 可扩展 Schema：官方库 + 用户库，六种配置文件格式行级替换，GUI/Raw 双轨 |
+| **便签聊天室** | 面板右栏从单向通知栏变成多用户便签墙，实时同步 + socket 断线轮询兜底 |
+| **pool 优先复用** | 建方案先查池，命中就跳过下载；安装器型加载器也省掉原版核心下载 |
+| **JVM 模板 a/b/c/d** | 四档模板 + 覆盖参数，GC 互斥铁律，80% 物理内存红线 |
+| **模组管理 / 实例配置页** | 面板新增两个页面：池 ↔ 方案双向复制、server.properties 分组卡片 |
+| **一批硬伤修复** | REPL 双回显 `aaaassss`、clone-client 三处、面板断连崩溃、方案名未编码 |
+
+### 🔧 升级提示
+
+- **无破坏性变更**，老配置可直接升级：
+  - 旧 JVM 档位名自动映射（`g1→b`、`zgc→c`、`custom→d`）；
+  - 旧 `server.jvm_args` 数组不再读取，迁移到 `server.jvm.{template,override_args}`；
+  - `wow m` / `M` 恢复可用（V3.5.8 曾被移除），与双击批处理是同一界面。
+- 开服控制台里 **`:wow` 改为进 M 模式菜单**，看 wow 日志请用 `:wowlog`。
+- 首次进入 M 模式会自动走 TUI；非 TTY 环境（管道 / cron / Docker）自动降级为
+  「输入 + 回车」，功能完全一致。
+
+---
+
+### 一、609 M 模式七页 TUI（全键盘驱动 + 单 readline 接管）
+
+### 一、M 模式从「一问一答」变成「一张界面」
+
+此前 `wow m` 是逐行问答：打印一屏菜单、敲编号、回车、再打印一屏。现在
+是**常驻界面 + 按键即触发**（`readline.emitKeypressEvents`，不用回车）：
+
+```
+════════════════════════════════════════════════════════════
+  wow 3.7.0-26.43    服务器: ● 运行中 (PID 12345)
+  当前方案: [1] 生存服    已装 Java: 17.0.9 / 当前: 17.0.9
+────────────────────────────────────────────────────────────
+  「Q」服务器启停
+  ──────────────────────────────────────────────────────────
+   1   启动 / 停止服务器            ● 运行中，可停止
+   12  状态监控
+   5   server.properties
+   11  错误日志
+   4   实时日志 (Ctrl+C 退出)
+   14  陶瓦联机
+────────────────────────────────────────────────────────────
+  [Q]服务器  [W]方案  [E]内容  [R]网络  [T]工具  [Y]高级  [L]长命令  [0]退出
+  按数字执行 · 按字母切页
+════════════════════════════════════════════════════════════
+```
+
+- **状态栏四行**（版本 / 服务器运行态与 PID / 当前方案 / 已装与当前 Java）：
+  取数走 300ms 缓存，七个字段各自独立 `try/catch`，任何一个管理器抛错
+  只让那一个格子降级成 `—`，绝不带崩整屏；
+- **七页排布**（`PAGES` 声明式表，`{ key, label, title, items:[{id,label,hint}] }`）：
+
+| 页 | 标题 | 项数 | 内容 |
+|----|------|------|------|
+| `Q` | 服务器启停 | 6 | 启停、状态监控、properties、错误日志、实时日志、陶瓦 |
+| `W` | 方案管理 | 9 | 管理、快速切换、列出、信息、新建、删除、装包、生成包、瘦身 |
+| `E` | 内容与配置 | 7 | 模组管理、搜索下载、列出、启/禁用、编辑、备份、properties |
+| `R` | 网络与联机 | 8 | 陶瓦、开房、房间号、关房、镜像、端口、网络信息、Web 面板 |
+| `T` | 工具与日志 | 7 | 错误日志、AI 分析、报告、实时跟踪、清理、生成包、装包 |
+| `Y` | 高级与杂项 | 7 | 系统设置、Java、JVM、系统信息、重置、认证、主题 |
+
+- **`hint` 可以是函数**：画页时现算（比如「● 运行中，可停止」），计算
+  过程被包在 `try/catch` 里，失败就留空；
+- **CJK 宽度对齐**：`dispWidth()` 按 codepoint 判 2 列，`padRight()` 补齐，
+  中英混排的 `hint` 右置时不歪；
+- **每次按键都清屏重绘**，不滚屏、不残留、不留历史垃圾。
+
+### 二、按键路由：一竖一横，互不打架
+
+- **字母切页**：`Q/W/E/R/T/Y` → 改 `currentPage` 后重绘；`L` → 长命令；
+  `0` → 退出确认；`q` 等同于 `Q`（统一 `.toUpperCase()`）；
+- **数字执行**：读当前页 `items` 里的编号执行对应功能；
+- **编号拼接**：单键触发意味着 `22`（列出方案）这种两位编号没法一次敲完，
+  于是加了 `NUM_KEY_DELAY` 的等待窗口——按下数字时若「本页还存在
+  以它开头的更长编号」就等一小段收下一键，否则立刻执行；`0` 不参与拼接。
+  窗口最初定 90ms，实测人手连按同一键要 120~250ms，`22` 会被拆成两次 `2`，
+  现取 **250ms**。
+  这套判定收在 `couldExtend(buf)` 里，与新编号表完全解耦，加编号不用改逻辑。
+
+### 三、硬约束落地：全局只有「一个键盘消费者」
+
+三条约束逐条对应实现：
+
+**① 唯一 readline** —— 不再搞「同一个 rl 反复复用」，改成「同一时刻只有
+一个消费者」。`tui.js` 里 `createInterface` 只出现在两处：TUI 态的 `mkRl()`
+和临时提问的 `askLine()`。`interactive.js` 侧一处都没有。
+
+**② 进二级菜单必须交权** —— `kb.suspend()` 做四件事，顺序是踩出来的：
+
+```
+rl.close()  →  removeListener('keypress')  →  排空 stdin 残留  →  setRawMode(false)
+```
+
+- **必须先 `close()` 再卸监听**：反过来会把触发键（比如 `2`）的最后一次
+  keypress 留在 readline 内部缓冲里，进二级菜单后被重复插入，屏幕上出现
+  `11` / `33`；
+- **必须排空 stdin**：`while (stdin.readableLength > 0) stdin.read()`。
+  用户连按 `22` 时第二键若留在缓冲区，会被二级菜单的 `question` 吃掉；
+- `resume()` 同样先排空再 `activate()`，把 rl 重建回来。
+
+**③ 三视图与 L 模式的归属** —— 把 `wow server start` 的三视图（`:mc` /
+`:wow` / `:lan`）看作「L 模式里 Minecraft 正在运行时的形态」：
+
+| 指令 | 旧行为 | 新行为 |
+|------|--------|--------|
+| `:wow` | 切到 wow 日志视图 | **进 M 模式菜单** |
+| `:wowlog` | — | 接管控件，看 wow 日志 |
+| 菜单里按 `L` | 另起 REPL | `onEnterLongCommand` 回调 → 回 `:wow` |
+| 菜单里按 `0` / 走完 | — | `_backToConsole('wow')` 落回 `:wow` |
+
+`server.js` 顺带拆出了 `_handleConsoleLine` / `_bindConsoleLine` /
+`_backToConsole` / `_menuOptions` / `_createConsoleRl` / `_printConsoleIntro`，
+`start()` 与 `_backToConsole()` 复用同一份路由判定，不再两套分支各写一遍。
+`_menuOptions()` 懒加载六个管理器且各自 `try/catch`（失败给 `null`），
+**不 require cli**——保持 server 对 cli 的零依赖。
+
+### 四、双回显的两个坑（踩坑记录）
+
+| 现象 | 原因 | 修法 |
+|------|------|------|
+| 连按 `22` 后二级菜单出现 `11` | `suspend` 里只卸监听没 `close`，触发键残留在 rl 内部缓冲 | 先 `close()` 再 `removeListener` |
+| 二级菜单出现 `33` | `askLine` 用 `terminal:true`，终端行模式回显 + readline 自身回显叠加 | 改 `terminal:false`，读行交给终端，回显只有一次 |
+| 「按回车键返回」卡住 | `askLine` 挂了 `rl.on('close', () => fin(''))`，提前 resolve 空串 | 删掉该监听，只靠 `question` 回调；`fin()` 里补一个 `\n` |
+
+### 五、兼容退化
+
+非 TTY、或 `WOW_NO_TUI=1` 时自动走 `runCompatMode`（数字 + 回车逐行读），
+页面表、编号表、业务分支全部共用，功能一个不少。管道里跑、
+`cron` 里跑、老式 telnet 里跑都不炸。
+
+### 六、自查补丁（同一批次内的 bug 修复）
+
+TUI 落地后逐条走了十遍真实按键，修掉九个问题，都是「不修也能用、用了就想砸键盘」那类：
+
+| # | 现象 | 根因 | 修法 |
+|---|------|------|------|
+| 1 | 按一下 Ctrl+C，确认框刚冒出来程序就没了 | `keypress` 的 ctrl-c 与 readline 的 `SIGINT` 各调一次 `onInterrupt`，第二次看到「已在确认中」直接 `process.exit` | `fireInterrupt()` 加 80ms 去重（两条路径先后顺序不确定，用时间窗比标志位稳） |
+| 2 | Q 页按 `1` 后立刻按 `W`，新页面底部冒出「本页没有编号 1 的功能」 | 编号等待窗口的定时器没随切页取消，按旧页编号在新页执行 | `cancelNumber()`，切页 / 进 L / 退出 / 刷新 / EOF 全调 |
+| 3 | 按 `2` 后立刻按 `L`，REPL 里弹出「方案名称:」 | 同上，且 TUI 已交还 stdin，泄漏的定时器与 REPL 抢输入 | 同上 |
+| 4 | 开服控制台 `:wow` 进菜单，按 `0` 退出 → 整个进程没了，服务器跟着陪葬 | 菜单的退出硬编码 `process.exit(0)` | 新增 `returnOnExit`：只离开 TUI，由 server 把画面还给 `:wow` |
+| 5 | 启动服务器失败（jar 缺失 / 端口占用）后界面变「死图」，按什么都没反应 | 失败前已 `kb.close()`，不可逆 | 改用可逆的 `kb.suspend()`，失败 `kb.resume()`；失败原因写进 notice（重绘会清屏，`console.error` 根本看不见） |
+| 6 | 兼容模式（`echo ... | wow m`）疯狂重绘同一页，CPU 空转 | 管道输入结束后 `ask` 返回空串 → `continue` → 再问 → 仍空串 | 判 `rl.closed` 后退出 |
+| 7 | 兼容模式启动服务器时，「内存分配」「是否停止」两个提问被静默跳过 | `ioAsk(io, null, ...)`，`ask(null)` 立即 resolve `''` | 把调用方的 `rl` 一路传下去 |
+| 8 | TUI 里「清理旧日志」永远停在「已取消」；「本机网络信息」不停留 | 同上，`ask(null)` | 统一走 `ioAsk(io, rl, ...)`；去掉重复的「按回车返回」 |
+| 9 | 实时日志（`4`）一按就把画面顶乱，`tail -f` 在后台继续吐；从 `:wow` 进来时 Ctrl+C 会杀掉服务端 | 旧 `logHandler.tail()` spawn 完就返回，且 SIGINT 里 `process.exit(0)` | 重写：自己管子进程，等 Ctrl+C → kill → 返回；Windows 用 `fs.watch` 增量读兜底 |
+
+| 10 | `22` / `142` 这类两位数编号，正常手速根本敲不出来 | 等待窗口 90ms，短于人连按同键的 120~250ms | `NUM_KEY_DELAY` 调到 250ms（单键最多等 0.25 秒，无感） |
+
+附带三处对齐问题：
+
+- **框线比导航短 10 列**：界面宽度 60，底部七个 `[键]标签` 实测 70 列。
+  `WIDTH` 改 70（80 列终端不换行），标题行的 gap 也扣掉行首两空格；
+- **三位编号把标签列顶歪**：R 页 `141/142/143` 让整列右移一格。编号列宽改为
+  「本页最宽编号」；
+- **`redrawTop()` 少移一行**：状态栏实际 6 个物理行，`lastRenderHeight` 记的 5，
+  上移后残留一条旧框线。
+
+### 测试
+
+`core/test/tui_mode.test.js` 63 项（页面表：六页键序与项数、页内编号不重复、
+原 1~14 全覆盖；导航：七项 label 与 `PAGES` 一致、`PAGE_KEYS` 不含 `L`、
+CJK 宽度、WIDTH 与导航齐边；编号拼接：延迟区间、`couldExtend` 分支、`0`
+特殊处理；单 readline：`createInterface` 恰好 2 处、`suspend` 先 close 再
+卸监听、两边都排空、`askLine` 用 `terminal:false`、`interactive` 零自建；
+约束③：`:wow` 进菜单、`:wowlog` 保留、`onEnterLongCommand` 指向、返回
+`_backToConsole('wow')`、不 require cli；兼容模式与 StatusBar 降级；
+**自查修复回归 13 项**：编号列对齐、状态栏 6 行、Ctrl+C 去重、编号取消点、
+`returnOnExit`、`askLine` EOF、兼容模式 `rl` 传递、启动失败 notice、
+`tailLogs` 不自杀、EOF 不死循环、控制台横幅不重复）。
+`interactive_menu.test.js` 5 项断言同步到新结构。全量回归 39 个文件通过。
+
+pty 端到端实测：Q 页初始渲染 → `W` 切页 → 连按 `22` 进方案列表 →
+回车返回 → `Q` 回首页 → `142` 三位编号进陶瓦房间号 → `0` 触发退出确认。
+修复后补测：单次 Ctrl+C 停在确认框（进程存活）、`1` → `W` 不再泄漏编号、
+`2` → `L` 不再污染 REPL、模拟启动失败后 `W` 仍能切页、`113` 在 TUI 里
+真的会问「保留最近几天」、`returnOnExit` 下 `0`+`Y` 只退菜单不杀进程、
+`printf 'w\n' | wow m` 正常退出而不空转。
+
+---
+
+### 二、608 模组表单引擎（可扩展 Schema 架构）
+
+### 一、架构：引擎与数据彻底解耦
+
+- **引擎层**（`core/src/schema_engine.js` + `schema_store.js`）：只负责
+  「读 Schema → 渲染表单数据 → 行级写回」，不认识任何具体模组；
+- **数据层**（`core/data/mod_schemas/*.json` 官方库 + `<根>/custom-schemas/`
+  用户库）：纯 JSON，字段路径、类型、中文翻译、默认值。
+  **用户库同名覆盖官方库**——翻译有误或模组更新，丢一个 JSON 即可覆盖，
+  不动安装目录。
+
+### 二、引擎实现（行级替换 + 原子写 + 边界隔离）
+
+- **六格式定位器**：TOML（节表 + 点路径，双候选兼容）、YAML（缩进栈下钻）、
+  JSON（字符串感知扫描 + 就地替换区间，不 parse/stringify）、HOCON（花括号
+  深度）、properties、txt（`key=value` 与 `key value` 双认）。SNBT 只读。
+- **行级替换**：缩进、行尾注释（引号内 `#` 不误判）、空行、节表顺序逐字节
+  保留；**未映射键绝不触碰**（Schema 没写的键连拒绝写入的资格都没有）；
+- **类型强转**：`"30"` 按原值类型写成 `30` 不加引号、引号风格沿用、布尔键
+  传错值直接拒绝；重复提交同一键时类型基准取最初原值；
+- **原子写**：`.bak` 备份 → 临时文件 → rename；同值不落盘；
+- **边界七连拒**：`..`、绝对路径、盘符、越界目录、`.jar`/世界数据扩展名、
+  NUL 二进制嗅探、符号链接逃逸。只开放 `config/`、`serverconfig/`、`plugins/`。
+
+### 三、CLI：`config schema` 六条子命令
+
+`list` / `show <modId>` / `get <modId> <key>` / `set <modId> <key> <value>` /
+`import <file|url>`（GitHub 页面地址自动转 raw 直链）/ `remove <modId>`。
+
+### 四、Web 端：GUI/Raw 双轨 + 配置库面板
+
+- **🪛 模组配置页**（`web/modcfg.html`）：文件树懒加载（点开才请求）；
+  命中表单包时显示「🧩 可视化配置 / { } 源码编辑」Tab；**保存后自动切回
+  源码模式**让极客确认没误伤注释；>200 行强制源码模式；表单最多 100 项分
+  「常用 / 高级」两组；版本不匹配的字段标红「未找到此项」不可编辑；
+  右上角 ? 弹免责声明（翻译由社区提供，可能有偏差，可疑请切源码模式）；
+- **设置页「🧩 模组配置库」面板**：官方/用户卡片区分、粘贴 JSON 导入、
+  GitHub 链接导入（页面地址自动转 raw）、删除用户包。
+
+### 五、首批内置 Schema（5 个打样，社区第二批接手）
+
+| 包 | 格式 | 字段数 |
+|----|------|--------|
+| LuckPerms（权限） | yml + json 双文件 | 14 |
+| CoreProtect（查熊） | yml | 12 |
+| Create（机械动力） | toml 双文件 | 14 |
+| Waystones（传送石碑） | toml | 10 |
+| Alex's Mobs（生物生成） | toml | 10 |
+
+《Schema 编写规范》已落在 `docs/MOD_SCHEMAS.md`（格式、行为语义、各格式
+键书写要点、PR Review 标准）。
+
+### 测试
+
+新增 `core/test/schema_engine.test.js` 32 项（加载优先级、六格式行级替换
+逐字节比对、类型强转、重复提交基准、missing 上报、同值不落盘、原子写、
+边界七连拒、符号链接、大文件降级、页面与路由断言）。端到端：真实面板
+跑通表单读取 → 保存 → 自动切源码 → 源码含新值全链路，playwright 截图
+验证表单渲染（中文标签、⚠️ 危险标记、标红未找到项）。全量回归 38 个
+测试文件通过。
+
+---
+
+### 三、便签聊天室 & 面板断连崩溃修复
+
+### 右侧栏：通知栏 → 便签聊天室
+
+Web 面板右侧从单向的「通知栏」升级为多用户「便签墙」：
+所有登录用户共用一块聊天式便签墙，以**登录邮箱为发言人标识**，
+谁都可以留言，所有人可见。
+
+- **发言人即邮箱**：JWT 登录邮箱自动作为署名；头像按邮箱哈希着色、
+  取邮箱首字母，同一个人永远是同一个颜色；
+- **聊天室布局**：自己的便签靠右（绿色气泡）、他人的靠左，
+  气泡上方标注「邮箱 · 时间」；
+- **实时同步**：发言经 `POST /api/notes` 落库后由 socket.io 广播
+  `note` 事件，所有在线面板即时收到；socket 断线时退回 5s 轮询兜底，
+  前端按 id 去重合并，双通道不重复渲染；
+- **持久化**：存 `.web.notes.json`（与 `.web.pid` 同级），重启不丢；
+  单条上限 500 字、整墙最多 200 条（旧的自动裁掉）；
+- **安全**：正文清洗控制字符（保留换行），渲染一律 `textContent`，
+  从根上杜绝 XSS；发言接口走 JWT 认证，未登录返回 401；
+- **兼容**：原通知栏的折叠交互（含 localStorage 记忆）保留；
+  父页面 `postMessage` 的系统通知继续支持，以居中系统条形式
+  本地展示（不落库）。
+
+新增模块 `core/src/web_notes.js`（存储与清洗），路由
+`GET/POST /api/notes`，页面 `web/right.html`（default 主题已同步）。
+
+### 修复：最后一个 WebSocket 客户端断开 → 面板进程崩溃（既有 bug）
+
+`web_service.js` 的 socket `disconnect` 处理器里写的是
+`stopBroadcastTail()`——**这个函数从来不存在**，实际叫 `stopLogTail()`。
+后果是最后一个面板页面关闭 / 断线时抛 `ReferenceError`，
+整个 Web 服务进程直接退出。本次端到端测试踩中后改为正确函数名，
+并在 `web_notes.test.js` 里加了防退化断言。
+
+### 测试
+
+新增 `core/test/web_notes.test.js` 34 项：内容清洗（\r 归一、控制字符、
+500 字截断）、空正文拒绝、邮箱小写化、200 条裁剪、坏文件容错、
+路由接线（GET/POST /api/notes、JWT 发言人、socket.io 广播、400/401）、
+前端静态断言（拉历史、实时通道、轮询兜底、聊天室布局、textContent
+防注入、折叠兼容、未登录提示）、主题副本一致性。
+端到端验证：真实面板起服后发言 / 空正文 400 / 未登录 401 / 列表 /
+持久化文件落盘 / 双用户跨邮箱实时广播 / 客户端断开后服务存活，全部符合预期。
+全量回归 34 个测试文件通过。
+
+---
+
+### 四、面板启动服务器时 L 模式同步进入日志跟踪
 
 ### 背景
 
@@ -154,6 +451,189 @@ REPL 里轮询 `ServerManager` 的控制台中继心跳（`isConsoleRelayAlive`�
 printLine 复用、ownServerOp 边界、退出清理、已运行场景）。
 另用伪造心跳 + 日志文件做了两轮端到端模拟：面板后启动、进入前已运行，
 日志实时回显、半行拼接、自动退出跟踪全部符合预期。
+
+---
+
+### 五、JVM 模板 a/b/c/d
+
+### 一、JVM 模板改为 a / b / c / d 四档
+
+| 档位 | 定位 | 说明 |
+|------|------|------|
+| a | 低配 / 极致省内存 | SoftMaxHeapSize + G1 调优全家桶，-Xmx2500M 封顶 |
+| b | 平衡 / 主力首选 | **Aikar's 标准旗标**（含 `-Daikars.new.flags` 标记），默认档 |
+| c | 性能 / ZGC 低延迟 | 分代 ZGC（`-XX:+ZGenerational`），固定 8G |
+| d | 自定义 | 完全由 override_args 决定，缺 -Xmx 自动补 -Xmx2G |
+
+旧档位名平滑映射（`g1→b`、`zgc→c`、`custom→d`），老配置不炸。
+GC 互斥铁律在四档下依然成立（b + override ZGC → Aikar 的 G1 系全剥）。
+显式 `--memory` 覆盖堆参数的逻辑抽成 `applyMemoryOverride` 共用
+（CLI 启动与 Web 预览同语义），非法格式与空值不碰参数。
+
+### 二、JVM 配置整体移到设置页
+
+仪表盘的「🧩 JVM 参数」文本框**删除**（连同其加载 / 保存 JS），
+JVM 相关配置现在只有设置页一个入口：模板下拉（a/b/c/d）+
+覆盖参数 + 「最终启动预览」。
+
+### 测试
+
+`jvm_args.test.js` 更新为四档断言并扩到 33 项（applyMemoryOverride、
+别名映射、c+override G1 互斥）。端到端：真实面板 preview-jvm
+（b 默认 Aikar 旗标、c+999G 显式覆盖 → over_limit:true）。
+全量回归 37 个测试文件通过。
+
+---
+
+### 六、607 JVM 模板系统 & REPL 回显重复修复
+
+### REPL 回显重复（aaaassssddddffff）——stdin 双消费者残留点清理
+
+上一轮修复了 `clone-client`，但 REPL 里还有几条命令在提问时**自建 readline**：
+两个 readline 同时挂在 TTY 上时每个字符都被回显两遍（用户看到
+`aaaassssddddffff`）、输入也可能被 REPL 抢走。触发点不在 clone-client
+而在这里，所以「不知道什么时候触发，但频率很高」。
+
+| 命令 | 修复 |
+|------|------|
+| `sync login` | REPL 内借用 REPL 的 readline；独立运行才自建 |
+| `config server-quick` | `quickSet()` 补传已有 readline（本来就支持，调用处漏传） |
+| `pack install` / `pack generate` | 借用 REPL 的 readline |
+
+新增 `borrowRl()` 统一出口：凡 REPL 内可能提问的命令一律从这里拿
+readline。pty 实测密码提问单次回显、`server-quick` 无未知指令。
+
+### 607 JVM 模板系统
+
+JVM 参数从「一坨 `server.jvm_args` 数组」升级为**模板 + 覆盖**新结构：
+
+```yaml
+server:
+  jvm:
+    template: g1        # g1 | zgc | custom
+    override_args: []   # 用户覆盖参数
+```
+
+- **一、废弃迁移**：按指令直接以新结构初始化 DEFAULTS，
+  **不编写旧 `server.jvm_args` 的迁移代码**，旧键不再被任何路径读取；
+- **二、parseArgs（严禁 split）**：新增 `core/src/jvm_args.js`，
+  引号感知解析器——`-Djava.library.path="C:\Program Files\xxx"`
+  解析为**单个元素**（双/单引号皆可，未闭合容错）；
+  Web 端传参必须给 JSON 数组，由后端安全合并；
+- **三、GC 互斥（绝对铁律）**：override 声明 `UseZGC` → 模板的
+  `UseG1GC` 与所有 `-XX:G1*` 全剥；声明 `UseG1GC` → 反之全剥；
+  手滑两种都写 → 互斥复查兜底只留一种。G1 与 ZGC 绝不同现于一条命令；
+- **四、80% 物理内存红线**：`os.totalmem()` 比对最终命令中的 -Xmx
+  （override 优先，模板兜底），超红线在 **spawn 之前**中断启动并红字报错：
+  `❌ 内存分配过高：当前系统物理内存 X G，您分配的 -Xmx 为 Y G。……`
+  为此修正了 `start(memory='2G')` 的默认参数语义——**默认值不再视为
+  显式指定**，否则 override 的 -Xmx 会被静默替换、红线形同虚设；
+- **五、custom 兜底**：custom 模板且无 -Xmx → 强制注入 `-Xmx2G`；
+- **六、-javaagent 独占**：`auth.enable`（外置登录）开启时，
+  用户在 override_args 手填的所有 `-javaagent` 一律剥离，
+  authlib-injector 由 wow 独家托管注入（未开启外置登录则不干涉）；
+- **七、Web 预览一致性**：设置页新增「🖥️ 最终启动预览」——前端**零拼接
+  逻辑**，模板下拉 / 覆盖参数文本域变动时防抖 500ms 请求
+  `POST /api/config/preview-jvm`，后端跑完完整链路返回最终
+  `java … -jar server.jar nogui` 字符串，前端用 `textContent` 原样展示，
+  并提示自动移除 / 注入了哪些参数、内存是否超红线。
+
+配套改动：`config_schema` 登记两个新字段（旧键移除，Web 保存自动忽略）；
+设置页 / 仪表盘的 JVM 文本框改绑 `server.jvm.override_args`；
+菜单「修改 JVM 参数」改用 parseArgs（原先用 `split(/\s+/)`，同样违规）。
+
+### 测试
+
+新增 `core/test/jvm_args.test.js` 32 项：parseArgs 引号语义、GC 互斥
+四场景、custom 兜底、堆参数去重（override 的 -Xmx 压掉模板同类项，
+JVM 只认第一个同名参数）、agent 独占、红线边界（6G/8G 恰好放行、
+6.5G/8G 拦截）、配置结构与全部接入点静态断言。端到端：mock 核心走
+`_buildCommand` 验证五种 memory / override 组合的最终参数；
+真实面板验证 preview-jvm 接口（含 999G 超红线的完整报文）。
+全量回归 37 个测试文件通过。
+
+---
+
+### 七、全面优先复用 pool & 克隆客户端三处硬伤
+
+### 一、所有「创建方案」路径优先复用共享池
+
+在此之前，池只是个「事后登记处」：建方案照样从头下载核心、复制模组，
+完事再往池里塞一份。现在反转过来——**先看池里有没有，有就直接用**。
+
+- `SchemeManager.findPoolCore(type, version)`：在 `pool/cores/<type>/<version>/`
+  下按前缀匹配候选，评分选优（文件名含 `server` +1000、`.jar` +100、
+  含 `installer` −500，同分取体积大的），返回 `{ path, hash }`；
+- `SchemeManager.materializePoolCore(type, version, schemePath)`：
+  **单文件核心**（vanilla / paper 等）直接复制进方案并 `ref_count` +1，
+  完全跳过 `installer.install` 的下载流程；
+- **安装器型加载器**（forge / neoforge / fabric / quilt）不能这样省——
+  它们依赖 `libraries/` 与启动脚本，单靠一个核心文件起不来。于是改为
+  「安装器照跑，但把原版核心的下载省掉」：`installer` 新增
+  `_findPooledVanilla(mc)`，预下载前先查 `pool/cores/vanilla/<mc>/`，
+  命中就打印 `♻️ 复用 pool 中的原版核心` 并跳过下载。
+
+### 二、`scheme clone-client` 三处硬伤
+
+用户实测 `wow scheme clone-client ~/test-minecraft` 撞上的三个问题：
+
+| 现象 | 根因 | 修法 |
+|------|------|------|
+| 报 `❌ 未知指令: asdf`，方案名变成 `asdf` | REPL 与交互提问**各挂了一个 readline**，同一个 stdin 被消费两次，字符被两个消费者抢走 | 见下方「stdin 单消费者」 |
+| 第 2 步 EACCES，只「已复制 1 个文件」 | 复制源取的是 `versions/<实例>/`，而那里只有版本 json 与客户端 jar，没有 mods | 见下方「版本隔离」 |
+| 模组根本没复制过去 | 同上——mods/config/saves 在**游戏根目录**，不在版本目录 | 同上 |
+| Forge 预下载卡 7%、ETA 2669.8s | 无低速熔断，慢源会一直被拖着 | 见下方「下载熔断」 |
+
+**版本隔离**（`client_clone`）：新增 `gameDir` 判定——若 `resolved.rootDir`
+下存在 `mods/`、`config/`、`saves/`、`defaultconfigs/`、`kubejs/` 之一，
+说明游戏数据在根目录，复制源就用根目录；否则才用 `instanceDir`。
+`saves/` 迁移也同步改用 `gameDir`。另外 `copyWhitelisted` 新增
+`excludeNames`（跳过 `<实例名>.jar`、`launcher_profiles.json` 等启动器垃圾）
+与 `destRoot`（目标在源内时跳过，防止 `ENAMETOOLONG` 无限递归），
+复制到 0 个文件时给出告警而不是装作成功。
+
+**下载熔断**（`installer`）：`_downloadFile` 重写为带速度窗口的版本——
+`minSpeedBps` / `probeMs` / `stallMs`，每 5s 采样一次，停滞或过慢就
+`destroy` 流并删掉半截文件，交给下一个源。`_downloadFirst` /
+`_downloadWithFallbacks` 在**有备用源**时启用阈值（80KB/s、15s 探测、
+20s 停滞），最后一个源降级为只查停滞（30s）。本地 mock 验证：1KB/s 的
+慢源在 17s 内被熔断并切到快源，内容校验通过。
+
+**stdin 单消费者**（`cli`）：`rl.pause()` 这条路走不通——另一处 readline
+`resume()` 后 pause 就失效了。最终方案是 **借用 REPL 自己的 readline**：
+新增 `makeReplIO(session)` 实现 `ask` / `choose` / `log` / `warn`，
+交互期间 `suspended = true` 让 REPL 丢弃收到的 line，结束后恢复。
+pty 实测：修复前回显 `aaaassssddddffff` 并报未知指令，修复后方案名
+`aassddff` 完整、无未知指令、`wow>` 只出现一次。
+
+### 三、面板新增两个页面
+
+- **🧩 模组管理**（`web/mods.html`）：左栏当前方案的 mods / plugins，
+  右栏共享池的 cores / mods / plugins；支持**启用-禁用切换**
+  （`mods/` 加去 `DISABLED_` 前缀、`mods-disabled/` 移回并去前缀）与
+  **池 ↔ 方案双向复制**（`pool2scheme` / `scheme2pool`），顶部可切方案。
+  后端 `GET /api/resources`、`POST /api/resources/toggle`、
+  `POST /api/resources/copy`。
+- **📝 实例配置**（`web/props.html`）：把 `server.properties` 按 7 个分组
+  渲染成卡片，布尔/数字/枚举分别用开关/输入框/下拉；改动项高亮，
+  **只提交变化的键**，可查看原始文件，文件不存在时给一份默认值。
+  后端 `GET /api/props`、`POST /api/props`（`core/src/server_props.js`：
+  保留注释与顺序、就地替换、新键追加末尾、非法键名整批拒绝）。
+
+### 四、修复：Web 面板报「方案不存在」
+
+`web/scheme.html` 里有三处把方案名直接拼进 URL 或命令串：详情请求
+`/api/scheme/<name>/status` 未编码（含空格、`#`、中文的方案名必挂）、
+`scheme switch` / `scheme delete` / `scheme info` 用字符串拼接传参。
+现统一改为 `encodeURIComponent` + `{cmd, args:[name]}` 数组形式；
+`web/set.html`、`web/tool.html` 的 `plugin remove` 等同样修正。
+
+### 测试
+
+新增 `core/test/pool_reuse.test.js`（8 项，含 `wow.yaml` 备份恢复）、
+`core/test/web_pages.test.js`（20 项）；`client_clone.test.js` 扩到 61 项
+（新增「版本隔离」用例，并改为断言**不复制**客户端 jar，原先的
+`<实例名>.jar.client-jar.bak` 不再产生）。全量回归 36 个文件通过。
 
 ---
 

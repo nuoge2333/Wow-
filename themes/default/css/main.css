@@ -5,13 +5,52 @@
     padding: 0;
 }
 
-html, body {
+html {
     height: 100%;
     width: 100%;
     background: #0f0f1a;
     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
     color: #eee;
+    /* html 不滚动：真正滚动的是 body，避免出现双滚动条 */
     overflow: hidden;
+}
+
+body {
+    height: 100%;
+    width: 100%;
+    background: #0f0f1a;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    color: #eee;
+    /* V3.6.2：原来这里是 overflow: hidden，但 main.css 被所有内嵌页面共用。
+       结果是 dashboard / set / tool 这类内容超过一屏的页面被直接裁掉，
+       而且滚轮完全无效（body 不可滚，内容又不在任何可滚容器里）。
+       现在由 body 自己承担滚动，内容页不需要额外包一层容器。 */
+    overflow-y: auto;
+    overflow-x: hidden;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+}
+
+/* 主框架外壳 / 侧边栏：自己维护内部滚动容器，body 不要滚 */
+body.no-scroll,
+body.shell {
+    overflow: hidden;
+}
+
+/* body 滚动条（iframe 内的 ::-webkit-scrollbar 只作用于 iframe 元素本身，管不到这里） */
+body::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+body::-webkit-scrollbar-track {
+    background: #0f0f1a;
+}
+body::-webkit-scrollbar-thumb {
+    background: #2a3a5e;
+    border-radius: 4px;
+}
+body::-webkit-scrollbar-thumb:hover {
+    background: #3a4a6e;
 }
 
 /* ========== 主框架布局 ========== */

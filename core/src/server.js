@@ -14,6 +14,8 @@ const utils = require('./utils');
 const config = require('./config');
 const JreManager = require('./jre_manager');
 const axios = require('axios');
+// V3.6.2（607 指令）：JVM 参数统一构建（parseArgs / GC 互斥 / 内存红线）
+const Jvm = require('./jvm_args');
 // V3.5.0：事件日志
 const { logger } = require('./log');
 
@@ -279,19 +281,256 @@ class ServerManager {
         } catch (e) { /* 忽略 */ }
     }
 
+    /**
+     * 处理一行「非元指令」的控制台输入（MC 指令转发 / wow 子命令 / 陶瓦指令）。
+     *
+     * 从 start() 的 rl.on('line') 里抽出来，`_bindConsoleLine` 也调它，
+     * 保证「首次进入控制台」与「从 M 模式返回后」两条路径的行为完全一致。
+     *
+     * @param {string} line 已 trim 的输入
+     * @param {import('readline').Interface} rl 当前控制台的 readline
+     */
+    async _handleConsoleLine(line, rl) {
+        // ── 陶瓦控制台：允许省略 lan 前缀（host / status / stop）──
+        let effective = line;
+        if (this._mode === 'lan' && /^(host|status|stop)(\s|$)/i.test(line)) {
+            effective = 'lan ' + line;
+        }
+
+        const d = classifyConsoleInput(effective);
+
+        if (d.action === 'deny') {
+            console.log(`⛔ ${d.reason}`);
+            if (this._mode === 'wow') this._appendWowLog(`⛔ ${d.reason}`);
+            return;
+        }
+
+        if (d.action === 'mc') {
+            // Minecraft 指令：只能在 Minecraft 控制台执行
+            if (this._mode !== 'mc') {
+                this._printUnsupported(line, 'mc');
+                return;
+            }
+            if (this.process && this.process.stdin && this.process.stdin.writable) {
+                this.process.stdin.write(line + '\n');
+            }
+            return;
+        }
+
+        // d.action === 'run'：wow 指令
+        const isLanCmd = d.args[0] === 'lan';
+        if (this._mode === 'mc') {
+            this._printUnsupported(line, isLanCmd ? 'lan' : 'wow');
+            return;
+        }
+        if (this._mode === 'lan' && !isLanCmd) {
+            this._printUnsupported(line, 'wow');
+            return;
+        }
+
+        try { rl.pause(); } catch (e) { /* 已关闭 */ }
+        try {
+            // wow 控制台的输出记入 wow 日志；陶瓦指令的 API 返回已由 terracotta 落盘
+            const logTarget = this._mode === 'wow' ? this.wowLogFile : null;
+            if (logTarget) this._appendWowLog(`$ wow ${d.args.join(' ')}`);
+            await runWowSubcommand(d.args, logTarget);
+        } catch (e) {
+            const msg = `[wow] 指令执行失败: ${e.message}`;
+            console.error(msg);
+            if (this._mode === 'wow') this._appendWowLog(msg);
+        }
+        try { if (!rl.closed) rl.resume(); } catch (e) { /* 忽略 */ }
+    }
+
+    /**
+     * 构造 M 模式需要的管理器集合。
+     *
+     * 与 cli.js 的 buildMenuOptions() 是同一份清单，但这里不能 require cli
+     * （循环依赖：cli → server → cli）。所以就地建一遍，且**每个都包 try/catch**
+     * ——某个模块坏了只让对应菜单项降级，不能让「控制台里打 :wow」整个崩掉。
+     *
+     * 注意 ServerManager 直接复用 `this`：这样才能看到「正在运行的服务器」状态，
+     * 新建一个实例会去读 pid 文件，虽然结果一样但多一次 IO，而且启动/停止的
+     * 事件流也对不上。
+     */
+    _menuOptions() {
+        const opt = {
+            serverManager: this,
+            config,
+            utils
+        };
+        const lazy = [
+            ['installer', './installer'],
+            ['modManager', './mod_manager'],
+            ['schemeManager', './scheme_manager'],
+            ['themeManager', './theme_manager'],
+            ['packGenerator', './pack_generator'],
+            ['logHandler', './log_handler']
+        ];
+        for (const [field, mod] of lazy) {
+            try {
+                const Ctor = require(mod);
+                opt[field] = new Ctor();
+            } catch (e) {
+                opt[field] = null;
+            }
+        }
+        return opt;
+    }
+
     /** 打印当前控制台的标题栏与操作提示 */
     _printConsoleBanner(mode) {
         const m = CONSOLE_MODES[mode];
+        // V3.6.3：:wow 已改为「进 M 模式」，它的「日志视图」单独给了 :wowlog
         const others = Object.keys(CONSOLE_MODES)
             .filter(k => k !== mode)
-            .map(k => `${CONSOLE_MODES[k].switchCmd} → ${CONSOLE_MODES[k].name}`)
+            .map(k => (k === 'wow'
+                ? `${CONSOLE_MODES[k].switchCmd} → 进入 M 模式菜单`
+                : `${CONSOLE_MODES[k].switchCmd} → ${CONSOLE_MODES[k].name}`))
             .join('　');
         console.log('═'.repeat(64));
         console.log(`  ${m.icon} ${m.name}`);
         console.log('─'.repeat(64));
         console.log(`  切换: ${others}`);
-        console.log(`  其他: :log 重新显示日志　:help 查看帮助`);
+        console.log(`  其他: :wowlog 查看 wow 指令日志　:log 重新显示日志　:help 查看帮助`);
         console.log('═'.repeat(64));
+    }
+
+    /**
+     * 创建开服控制台的 readline。
+     *
+     * V3.6.3：抽成方法是因为 M 模式退出后要**重新建一个**——M 模式的 TUI
+     * 会把自己的 readline 关掉再交还 stdin（否则两边抢键盘），回来时这个
+     * rl 已经 close，必须重建。集中在这里创建可以保证两处参数完全一致。
+     */
+    _createConsoleRl() {
+        const rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: true });
+        this._rl = rl;
+        rl.on('SIGINT', () => {
+            if (this.isRunning()) {
+                console.log('\n⏹ 收到中断信号，正在停止服务器...');
+                this.stop();
+            }
+        });
+        return rl;
+    }
+
+    /** 启动时的控制台引导提示（与 _printConsoleBanner 分开：这里只讲一次） */
+    _printConsoleIntro() {
+        console.log('💡 开服控制台（V3.6.3 起 :wow 进入 M 模式菜单，Ctrl+C 退出菜单回到本控制台）：');
+        console.log(`   ${CONSOLE_MODES.mc.switchCmd} ${CONSOLE_MODES.mc.icon} ${CONSOLE_MODES.mc.name}（当前）　` +
+            `${CONSOLE_MODES.wow.switchCmd} ${CONSOLE_MODES.wow.icon} M 模式菜单　` +
+            `${CONSOLE_MODES.lan.switchCmd} ${CONSOLE_MODES.lan.icon} ${CONSOLE_MODES.lan.name}`);
+        console.log('   输入 :help 查看帮助。⛔ 会修改运行中方案文件的危险指令仍不可用。');
+    }
+
+    /**
+     * V3.6.3（609 指令约束③）：从开服控制台进入 M 模式。
+     *
+     * 时序要点：
+     *   1. 先 `rl.close()` —— TUI 需要独占 stdin，两个 readline 同时挂着会把
+     *      每个按键读两遍；
+     *   2. 让出一轮事件循环再进 TUI —— rl.close() 释放 stdin 是异步的，
+     *      在 close 回调里同步新建 readline 会让两个接口短暂并存；
+     *   3. TUI 返回后重建控制台 readline，并把视图切回 `:wow`
+     *      （约束③：进 L 模式回来必须落在 `:wow`，退出 TUI 同理）。
+     *
+     * 期间服务端 stdout 仍在写 logStream，只是不回显——`_mode` 保持 'wow'
+     * 的话 MC 输出会被 `if (this._mode === 'mc')` 挡掉，正好不刷屏。
+     */
+    async _enterMenuFromConsole() {
+        // 进菜单期间把视图钉在 wow：MC 输出不回显，避免把 TUI 画面顶乱
+        this._mode = 'wow';
+        this._stopLanWatch();
+
+        const oldRl = this._rl;
+        this._rl = null;
+        if (oldRl) {
+            try { oldRl.close(); } catch (e) { /* 已关闭 */ }
+        }
+        await new Promise(r => setImmediate(r));
+
+        // 选 L 时 onEnterLongCommand 已经把控制台接回来了（并且打了一次横幅），
+        // 标记一下，避免下面的 _backToConsole 再打一遍同样的画面。
+        let restored = false;
+        try {
+            const interactive = require('./interactive');
+            await interactive.showMainMenu({
+                ...this._menuOptions(),
+                // 关键：M 模式里选「进入 L 模式」时，必须回到本控制台的 :wow 视图，
+                // 而不是退到另一个 REPL（那会与这里的 stdin 抢占）。
+                onEnterLongCommand: async () => {
+                    await this._backToConsole('wow');
+                    restored = true;
+                },
+                // 关键：菜单里的「0 退出 / Ctrl+C 确认」只能退出菜单，
+                // 不能 process.exit——否则正在跑的 Minecraft 服务端会跟着一起没。
+                returnOnExit: true
+            });
+        } catch (e) {
+            console.error(`❌ 菜单启动失败: ${e.message}`);
+            logger.erro(`开服控制台内启动菜单失败: ${e.message}`);
+        }
+
+        // 从 M 模式返回：重建 readline + 回到 :wow 视图
+        if (!restored) await this._backToConsole('wow');
+    }
+
+    /**
+     * 回到控制台：重建 readline 并切到指定视图。
+     *
+     * 与 `_switchConsole` 的区别：这里会**先重建 rl**，因为从 M 模式 / L 模式
+     * 回来时旧 rl 已经关掉了。`_switchConsole` 只管画面不管 rl。
+     *
+     * @param {'mc'|'wow'|'lan'} [mode='wow'] 要落回的视图
+     */
+    async _backToConsole(mode = 'wow') {
+        if (!this.process) return;   // 服务端已退出，不需要控制台了
+        if (!this._rl || this._rl.closed) {
+            const rl = this._createConsoleRl();
+            // 重新绑定 line 处理器。这里复用 start() 里的同一段路由逻辑，
+            // 通过 _bindConsoleLine() 提取，避免两处各写一遍逐渐分叉。
+            this._bindConsoleLine(rl);
+        }
+        await this._switchConsole(mode);
+    }
+
+    /**
+     * 把「一行输入 → 控制台路由」的处理器绑到 rl 上。
+     *
+     * 抽出来的原因：start() 与 _backToConsole() 都要绑，两边逻辑必须完全一致
+     * （尤其是 :wow / :wowlog / 三视图切换 的顺序判定）。
+     */
+    _bindConsoleLine(rl) {
+        rl.on('line', async (raw) => {
+            if (this._rl !== rl) return;   // 陈旧 rl 的残留事件
+            const line = (raw || '').trim();
+            if (!line) return;
+            const lower = line.toLowerCase();
+
+            if (MODE_ALIASES[lower] === 'wow') {
+                // 已经在控制台里，直接进菜单
+                await this._enterMenuFromConsole();
+                return;
+            }
+            if (MODE_ALIASES[lower]) {
+                await this._switchConsole(MODE_ALIASES[lower]);
+                return;
+            }
+            if (lower === ':wowlog' || lower === ':wowlogs') {
+                await this._printConsoleTail('wow');
+                return;
+            }
+            if (lower === ':log' || lower === ':logs') {
+                await this._printConsoleTail(this._mode);
+                return;
+            }
+            if (lower === ':help' || lower === ':h' || lower === ':?') {
+                this._printConsoleHelp();
+                return;
+            }
+            await this._handleConsoleLine(line, rl);
+        });
     }
 
     /**
@@ -424,17 +663,24 @@ class ServerManager {
     /** 打印控制台帮助 */
     _printConsoleHelp() {
         console.log('');
-        console.log('📖 开服控制台帮助（V3.4.0 起支持三个控制台视图）');
+        console.log('📖 开服控制台帮助（V3.6.3 起 :wow 进入 M 模式菜单）');
         console.log('   切换控制台（切换后会清屏并显示该控制台最后 10 条日志）：');
         for (const k of Object.keys(CONSOLE_MODES)) {
             const m = CONSOLE_MODES[k];
             const mark = k === this._mode ? '← 当前' : '';
+            if (k === 'wow') {
+                console.log(`     ${m.switchCmd.padEnd(6)} 🧩 进入 M 模式菜单（七页 TUI，Ctrl+C 退出菜单）`);
+                continue;
+            }
             console.log(`     ${m.switchCmd.padEnd(6)} ${m.icon} ${m.name} ${mark}`);
         }
+        console.log('   :wowlog     查看 wow 指令控制台最后 10 条日志');
         console.log('   :log        重新显示当前控制台最后 10 条日志');
         console.log('   :help       显示本帮助');
         console.log('   说明：每个控制台只接受自己的指令，输入其他控制台的指令会提示切换。');
         console.log('        陶瓦控制台显示的是陶瓦本地 HTTP API 的返回内容。');
+        console.log('        M 模式里可切页面 Q/W/E/R/T/Y、数字执行功能、L 进长命令模式；');
+        console.log('        从 M 模式返回时总是落在 :wow（约束：进 L 模式回来也必须是 :wow）。');
         console.log('');
     }
 
@@ -730,31 +976,40 @@ class ServerManager {
         const javaPath = await this._getJavaExecutable();
         const jarFile = this._getServerJar();
 
-        // 默认 JVM 参数
-        let jvmArgs = this.config.getConfig('server.jvm_args', ['-Xmx2G', '-Xms2G', '-XX:+UseG1GC']);
-        if (Array.isArray(jvmArgs)) {
-            jvmArgs = [...jvmArgs];
-        } else {
-            jvmArgs = ['-Xmx2G', '-Xms2G', '-XX:+UseG1GC'];
-        }
-
-        // 覆盖内存参数
-        if (memory) {
-            const memoryArg = memory.match(/^\d+[gG]$/) ? `-Xmx${memory}` : `-Xmx${memory}`;
-            jvmArgs = jvmArgs.map(arg => {
-                if (arg.startsWith('-Xmx')) return memoryArg;
-                if (arg.startsWith('-Xms')) return `-Xms${memory}`;
-                return arg;
-            });
-            if (!jvmArgs.some(a => a.startsWith('-Xmx'))) {
-                jvmArgs.push(memoryArg);
-                jvmArgs.push(`-Xms${memory}`);
-            }
-        }
-
-        // 外置登录 (authlib-injector)
+        // V3.6.2（607 指令）：JVM 参数统一走 jvm_args 模块。
+        // 新结构 server.jvm.{template, override_args}；旧 server.jvm_args 不再读取。
+        const template = this.config.getConfig('server.jvm.template', Jvm.DEFAULT_TEMPLATE);
+        const override = this.config.getConfig('server.jvm.override_args', []);
+        const heap = (memory && String(memory).trim())
+            || this.config.getConfig('server.memory')
+            || '2G';
         const authConfig = this.config.getConfig('auth', {});
-        if (authConfig.enable) {
+        const authEnable = !!(authConfig && authConfig.enable === true);
+
+        const built = Jvm.buildJvmArgs({
+            template,
+            override,
+            heap,
+            // 607 P4-1：外置登录开启时，用户手填的 -javaagent 一律剥离，wow 独家托管
+            filterJavaagent: authEnable
+        });
+        let jvmArgs = built.args;
+        if (built.removed.length) {
+            console.log(`🧹 已移除冲突/禁用参数: ${built.removed.join(' ')}`);
+        }
+        if (built.injected.length) {
+            console.log(`🛟 custom 模板缺少 -Xmx，已自动注入: ${built.injected.join(' ')}`);
+        }
+        built.warnings.forEach(w => console.warn(`⚠️ ${w}`));
+
+        // 显式 memory 参数（CLI --memory / 面板）优先级最高：替换/补齐 -Xmx / -Xms
+        if (memory) {
+            const mo = Jvm.applyMemoryOverride(jvmArgs, heap);
+            jvmArgs = mo.args;
+        }
+
+        // 外置登录 (authlib-injector)：由 wow 独家注入（用户手填的 agent 已在上面剥离）
+        if (authEnable) {
             if (!this.authlibJar) {
                 await this._ensureAuthlibJar();
             }
@@ -768,9 +1023,9 @@ class ServerManager {
             }
         }
 
-        // 额外参数
+        // CLI 附加参数（607 P0-1：同样禁止 split(" ")，走引号感知解析）
         if (extraJvmArgs) {
-            jvmArgs.push(extraJvmArgs);
+            jvmArgs.push(...Jvm.parseArgs(extraJvmArgs));
         }
 
         // 现代 Forge / NeoForge：核心生成在 libraries/ 子目录，且必须用 @unix_args.txt 提供完整
@@ -868,7 +1123,7 @@ class ServerManager {
     /**
      * 启动服务器
      */
-    async start(memory = '2G', extraJvmArgs = '') {
+    async start(memory = null, extraJvmArgs = '') {
         if (this.isRunning()) {
             console.log('服务器已在运行中');
             logger.info('启动服务器：服务器已在运行中');
@@ -933,6 +1188,18 @@ class ServerManager {
         }
 
         const cmd = await this._buildCommand(memory, extraJvmArgs);
+
+        // V3.6.2（607 指令 P1-1）：80% 物理内存红线。
+        // 在 spawn 之前拦截，防止服务器起来后被系统 OOM 杀掉（表现为「服务器突然消失」）。
+        const memCheck = Jvm.checkMemLimit(cmd.jvmArgs, require('os').totalmem());
+        if (!memCheck.ok) {
+            console.error('');
+            console.error(`\x1b[31m${memCheck.message}\x1b[39m`);
+            console.error('');
+            logger.erro(`启动服务器被拦截：-Xmx ${memCheck.xmxText} 超过物理内存（${memCheck.totalText}）的 80% 红线`);
+            return;
+        }
+
         console.log(`启动命令: ${cmd.fullCommand.join(' ')}`);
 
         const isInteractive = Boolean(process.stdin.isTTY);
@@ -962,90 +1229,14 @@ class ServerManager {
             });
 
             // 接管 stdin：readline 读取用户输入，按当前控制台视图路由
-            const rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: true });
-            this._rl = rl;
+            const rl = this._createConsoleRl();
             this._mode = 'mc';
-            console.log('💡 开服控制台（V3.4.0 支持三个控制台视图，切换后清屏并显示最后 10 条日志）：');
-            console.log(`   ${CONSOLE_MODES.mc.switchCmd} ${CONSOLE_MODES.mc.icon} ${CONSOLE_MODES.mc.name}（当前）　` +
-                `${CONSOLE_MODES.wow.switchCmd} ${CONSOLE_MODES.wow.icon} ${CONSOLE_MODES.wow.name}　` +
-                `${CONSOLE_MODES.lan.switchCmd} ${CONSOLE_MODES.lan.icon} ${CONSOLE_MODES.lan.name}`);
-            console.log('   输入 :help 查看帮助。⛔ 会修改运行中方案文件的危险指令与交互菜单(M)仍不可用。');
+            this._printConsoleIntro();
 
-            rl.on('line', async (raw) => {
-                const line = (raw || '').trim();
-                if (!line) return;
+            // V3.6.3：路由逻辑抽到 _bindConsoleLine，_backToConsole() 重建 rl 时
+            // 复用同一份判定（:wow 进菜单 / :wowlog 看日志 / 三视图切换 / 指令分发）。
+            this._bindConsoleLine(rl);
 
-                // ── 控制台元指令：切换 / 刷新日志 / 帮助 ──
-                const lower = line.toLowerCase();
-                if (MODE_ALIASES[lower]) {
-                    await this._switchConsole(MODE_ALIASES[lower]);
-                    return;
-                }
-                if (lower === ':log' || lower === ':logs') {
-                    await this._printConsoleTail(this._mode);
-                    return;
-                }
-                if (lower === ':help' || lower === ':h' || lower === ':?') {
-                    this._printConsoleHelp();
-                    return;
-                }
-
-                // ── 陶瓦控制台：允许省略 lan 前缀（host / status / stop）──
-                let effective = line;
-                if (this._mode === 'lan' && /^(host|status|stop)(\s|$)/i.test(line)) {
-                    effective = 'lan ' + line;
-                }
-
-                const d = classifyConsoleInput(effective);
-
-                if (d.action === 'deny') {
-                    console.log(`⛔ ${d.reason}`);
-                    if (this._mode === 'wow') this._appendWowLog(`⛔ ${d.reason}`);
-                    return;
-                }
-
-                if (d.action === 'mc') {
-                    // Minecraft 指令：只能在 Minecraft 控制台执行
-                    if (this._mode !== 'mc') {
-                        this._printUnsupported(line, 'mc');
-                        return;
-                    }
-                    if (this.process && this.process.stdin && this.process.stdin.writable) {
-                        this.process.stdin.write(line + '\n');
-                    }
-                    return;
-                }
-
-                // d.action === 'run'：wow 指令
-                const isLanCmd = d.args[0] === 'lan';
-                if (this._mode === 'mc') {
-                    this._printUnsupported(line, isLanCmd ? 'lan' : 'wow');
-                    return;
-                }
-                if (this._mode === 'lan' && !isLanCmd) {
-                    this._printUnsupported(line, 'wow');
-                    return;
-                }
-
-                rl.pause();
-                try {
-                    // wow 控制台的输出记入 wow 日志；陶瓦指令的 API 返回已由 terracotta 落盘
-                    const logTarget = this._mode === 'wow' ? this.wowLogFile : null;
-                    if (logTarget) this._appendWowLog(`$ wow ${d.args.join(' ')}`);
-                    await runWowSubcommand(d.args, logTarget);
-                } catch (e) {
-                    const msg = `[wow] 指令执行失败: ${e.message}`;
-                    console.error(msg);
-                    if (this._mode === 'wow') this._appendWowLog(msg);
-                }
-                if (!rl.closed) rl.resume();
-            });
-            rl.on('SIGINT', () => {
-                if (this.isRunning()) {
-                    console.log('\n⏹ 收到中断信号，正在停止服务器...');
-                    this.stop();
-                }
-            });
 
             // 捕获 Ctrl+C，优先向服务器发送 stop 命令优雅关闭
             this._sigintHandler = () => {

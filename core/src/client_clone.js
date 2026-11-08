@@ -556,6 +556,11 @@ function createSkeleton(opts = {}) {
 function copyWhitelisted(opts = {}) {
     const { srcDir, destDir } = opts;
     const io = opts.io || makeSilentIO();
+    // 额外剔除名单（如客户端版本 jar：服务端用不到，常见于只读实例目录）
+    const extraExclude = opts.excludeNames instanceof Set ? opts.excludeNames : new Set();
+    // 目标根目录：若它在复制源内部（用户把方案库放在客户端目录下），必须跳过，
+    // 否则会「复制自己正在写的目录」→ 无限递归直到 ENAMETOOLONG。
+    const destRoot = opts.destRoot ? path.resolve(opts.destRoot) : null;
     const result = { copied: 0, skipped: [], failed: [], critical: [], bytes: 0 };
 
     if (!fs.existsSync(srcDir)) return result;
@@ -577,6 +582,14 @@ function copyWhitelisted(opts = {}) {
             result.skipped.push({ path: name, reason: '按剔除规则跳过' });
             continue;
         }
+        if (extraExclude.has(name)) {
+            result.skipped.push({ path: name, reason: '客户端版本文件，服务端不需要' });
+            continue;
+        }
+        if (destRoot && path.resolve(srcPath) === destRoot) {
+            result.skipped.push({ path: name, reason: '目标目录，跳过以免递归复制' });
+            continue;
+        }
         // saves/ 留给第 4 步
         if (name === 'saves') continue;
 
@@ -588,7 +601,7 @@ function copyWhitelisted(opts = {}) {
 
         if (stat.isDirectory()) {
             fs.ensureDirSync(destPath);
-            const sub = copyWhitelisted({ srcDir: srcPath, destDir: destPath, io });
+            const sub = copyWhitelisted({ srcDir: srcPath, destDir: destPath, io, excludeNames: extraExclude, destRoot });
             result.copied += sub.copied;
             result.bytes += sub.bytes;
             // 子层路径统一加前缀，便于报告里定位
@@ -668,6 +681,16 @@ async function installCore(opts = {}) {
     if (!installer) return { ok: false, reason: '内部错误：未提供 installer' };
 
     const renamed = renameClientJars(schemePath, instanceName);
+
+    // V3.6.2：创建方案统一「优先找 pool」——池里已有同 type/version 的单文件核心
+    // 就直接复用，不再下载。安装器型（forge 等）由该方法内部拒绝，仍走安装器。
+    if (opts.schemeManager && typeof opts.schemeManager.materializePoolCore === 'function') {
+        const pooled = opts.schemeManager.materializePoolCore(type, mcVersion, schemePath);
+        if (pooled) {
+            console.log(`♻️  复用 pool 中的核心: ${pooled.coreRel}，跳过下载`);
+            return { ok: true, corePath: pooled.corePath, coreRel: pooled.coreRel, reused: true, renamed };
+        }
+    }
 
     let corePath;
     try {
@@ -1180,6 +1203,23 @@ async function cloneClient(opts = {}) {
     const instanceDir = resolved.instanceDir;
     io.log(`   实例目录：${instanceDir}`);
 
+    // V3.6.2 修复：版本隔离的客户端，versions/<实例>/ 里只有版本 json 与客户端 jar，
+    // 真正的 mods / config / saves 在「游戏根目录」（.minecraft 根）下。
+    // 旧实现把复制源固定成 instanceDir，导致「已复制 1 个文件」、模组一个没进方案、
+    // 存档也找不到（用户报告：检查文件时根本没有模组）。这里把两者拆开：
+    //   instanceDir —— 版本元数据 / 客户端 jar（识别版本、留档用）
+    //   gameDir     —— 游戏数据（mods / config / saves 的真实来源）
+    const hasGameData = (dir) => {
+        if (!dir || !fs.existsSync(dir)) return false;
+        return ['mods', 'config', 'saves', 'defaultconfigs', 'kubejs']
+            .some(n => fs.existsSync(path.join(dir, n)));
+    };
+    const gameDir = (resolved.rootDir && resolved.rootDir !== instanceDir &&
+        hasGameData(resolved.rootDir)) ? resolved.rootDir : instanceDir;
+    if (gameDir !== instanceDir) {
+        io.log(`   游戏数据目录：${gameDir}（版本隔离：模组/配置/存档取自游戏根目录）`);
+    }
+
     const det = detectInstanceMeta(instanceDir);
     let mcVersion = opts.versionOverride || det.mcVersion;
     let type = opts.typeOverride || det.type || det.loader;
@@ -1250,8 +1290,22 @@ async function cloneClient(opts = {}) {
     try {
         // ---- 第 2 步：白名单复制 ----
         io.log('\n📋 第 2 步：复制客户端内容（白名单）');
-        const copyStats = copyWhitelisted({ srcDir: instanceDir, destDir: schemePath, io });
+        // 客户端版本 jar（<实例名>.jar）是客户端启动用的，服务端不需要；
+        // 而且它常常属于另一个用户 / 只读（EACCES），无谓复制只会制造失败噪声。
+        const versionJarName = `${path.basename(instanceDir)}.jar`;
+        const copyStats = copyWhitelisted({
+            srcDir: gameDir,
+            destDir: schemePath,
+            io,
+            destRoot: schemePath,
+            excludeNames: new Set([versionJarName, 'launcher_profiles.json', 'launcher_accounts.json',
+                'launcher_log.txt', 'launcher_settings.json', 'TLauncherLogs'])
+        });
+        io.log(`   复制源：${gameDir}`);
         io.log(`   已复制 ${copyStats.copied} 个文件（${(copyStats.bytes / 1024 / 1024).toFixed(1)} MB），跳过 ${copyStats.skipped.length} 项`);
+        if (copyStats.copied === 0) {
+            io.warn('   ⚠️ 没有复制到任何文件——请确认该目录确实是客户端实例（含 mods / config）。');
+        }
         if (copyStats.critical.length > 0) {
             return rollback(
                 `关键文件复制失败，已中止：` +
@@ -1270,7 +1324,8 @@ async function cloneClient(opts = {}) {
                 mcVersion,
                 loaderVersion,
                 instanceName: path.basename(instanceDir),
-                installer: inst
+                installer: inst,
+                schemeManager: sm
             });
             if (!core.ok) return rollback(`核心装配失败：${core.reason}`);
             io.log(`   核心：${core.coreRel}`);
@@ -1300,7 +1355,8 @@ async function cloneClient(opts = {}) {
 
         // ---- 第 4 步：存档迁移 ----
         io.log('\n🌍 第 4 步：迁移存档');
-        const savesDir = path.join(instanceDir, 'saves');
+        // 同样要用游戏数据目录：版本隔离时 saves/ 在 .minecraft 根，不在 versions/<实例>/
+        const savesDir = path.join(gameDir, 'saves');
         const saves = listSaves(savesDir);
         let saveName = opts.saveName;
         if (saveName === undefined) {

@@ -24,6 +24,12 @@ const STATE = {
     FULL: 'full'          // 所有资源都在方案目录中（无pool引用）
 };
 
+/**
+ * 安装器型加载器：核心由官方 installer 生成，依赖 libraries/ 与启动脚本，
+ * 不能只靠 pool 里的单个核心文件启动。创建方案时必须仍走安装器流程。
+ */
+const MOD_LOADER_TYPES = new Set(['forge', 'neoforge', 'fabric', 'quilt']);
+
 class SchemeManager {
     constructor() {
         this.schemesDir = utils.resolvePath('../scheme');
@@ -85,6 +91,7 @@ class SchemeManager {
         // scheme.yaml、没有核心 jar 的残缺方案，在 scheme list 中显示为「已损坏」。
         let corePath;
         let coreHash;
+        let reusedPoolCore = null;
         // V3.5.8：核心的「方案内相对路径」。现代 Forge/NeoForge 的核心不在方案根目录，
         // 而在 libraries/net/minecraftforge/forge/<mc>-<ver>/ 里，甚至只有 args.txt。
         // 旧实现只存 path.basename(corePath)，瘦身后从 pool 补回会落到根目录，
@@ -96,10 +103,22 @@ class SchemeManager {
                 corePath = await this._installCoreFromPack(fromPack, schemePath);
                 coreRel = path.relative(schemePath, corePath).split(path.sep).join('/');
             } else {
-                corePath = await this.installer.install(type, version, build, schemePath);
-                coreRel = path.relative(schemePath, corePath).split(path.sep).join('/');
+                // V3.6.2：优先复用 pool——同 type/version 的核心已经在池里，
+                // 就不再下载一遍（直连类型的核心是单文件，复制即可用）。
+                // 安装器型（forge 等）由 materializePoolCore 内部拒绝，
+                // 仍走安装器流程（其会复用 pool 中的原版核心，见 installer）。
+                reusedPoolCore = this.materializePoolCore(type, version, schemePath);
+                if (reusedPoolCore) {
+                    corePath = reusedPoolCore.corePath;
+                    coreRel = reusedPoolCore.coreRel;
+                    console.log(`♻️  复用 pool 中的核心: ${coreRel}` +
+                        `（${(reusedPoolCore.size / 1024 / 1024).toFixed(1)} MB，跳过下载）`);
+                } else {
+                    corePath = await this.installer.install(type, version, build, schemePath);
+                    coreRel = path.relative(schemePath, corePath).split(path.sep).join('/');
+                }
             }
-            coreHash = await this._computeHash(corePath);
+            coreHash = reusedPoolCore ? reusedPoolCore.hash : await this._computeHash(corePath);
         } catch (e) {
             try {
                 if (fs.existsSync(schemePath)) fs.removeSync(schemePath);
@@ -653,6 +672,79 @@ class SchemeManager {
 
     _getPoolPathByHash(hash) {
         return this.poolIndex.resources[hash] || null;
+    }
+
+    /**
+     * V3.6.2：在 pool 中查找可复用的核心。
+     *
+     * pool 的核心布局是 `cores/<type>/<version>/<相对方案根的路径>`，索引里
+     * 记录的是相对 pool 根的路径。同一 type/version 下可能有多条（不同构建），
+     * 这里挑「最像服务端核心」的那一个：文件名含 server 的 jar 优先，
+     * installer 次之，其余按体积降序。
+     *
+     * @param {string} type    核心类型（vanilla / paper / forge …）
+     * @param {string} version Minecraft 版本
+     * @returns {{hash:string, rel:string, abs:string, size:number, base:string}|null}
+     */
+    findPoolCore(type, version) {
+        const prefix = ['cores', String(type), String(version)].join('/');
+        const found = [];
+        for (const [hash, rel] of Object.entries(this.poolIndex.resources || {})) {
+            if (!rel) continue;
+            const norm = String(rel).split(path.sep).join('/');
+            if (!norm.startsWith(prefix + '/')) continue;
+            const abs = path.join(this.poolDir, rel);
+            if (!fs.existsSync(abs)) continue;
+            let size = 0;
+            try { size = fs.statSync(abs).size; } catch (e) { continue; }
+            found.push({
+                hash,
+                // 相对方案根的路径（去掉 cores/<type>/<version>/ 前缀）
+                rel: norm.slice(prefix.length + 1),
+                abs,
+                size,
+                base: path.basename(abs).toLowerCase()
+            });
+        }
+        if (!found.length) return null;
+
+        const score = (c) => {
+            let s = 0;
+            if (c.base.endsWith('.jar')) s += 100;
+            if (c.base.includes('server')) s += 1000;
+            if (c.base.includes('installer')) s -= 500;
+            return s;
+        };
+        found.sort((a, b) => score(b) - score(a) || b.size - a.size);
+        return found[0];
+    }
+
+    /**
+     * V3.6.2：把 pool 里的核心复制进方案目录（创建方案时优先复用，避免重新下载）。
+     *
+     * 注意：只适用于「单文件核心」（vanilla / paper 等直连类型）。
+     * Forge/NeoForge 这类安装器型核心依赖 libraries/ 与启动脚本，仅复制核心
+     * 文件无法启动，必须仍走安装器流程（其内部会复用 pool 中的原版核心）。
+     *
+     * @param {string} type
+     * @param {string} version
+     * @param {string} schemePath
+     * @returns {{corePath:string, coreRel:string, hash:string, size:number}|null}
+     */
+    materializePoolCore(type, version, schemePath) {
+        const hit = this.findPoolCore(type, version);
+        if (!hit) return null;
+        // 安装器型（forge/neoforge/fabric/quilt）不能只靠单文件核心启动
+        if (MOD_LOADER_TYPES.has(String(type).toLowerCase())) return null;
+
+        const coreRel = hit.rel;
+        const target = path.join(schemePath, coreRel.split('/').join(path.sep));
+        fs.ensureDirSync(path.dirname(target));
+        if (!fs.existsSync(target)) {
+            fs.copyFileSync(hit.abs, target);
+        }
+        this._incrementRefCount(hit.hash);
+        return { corePath: target, coreRel, hash: hit.hash, size: hit.size };
     }
 
     /**

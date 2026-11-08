@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>模组配置 - wow</title>
+    <link rel="stylesheet" href="/css/main.css">
+    <style>
+        body { padding: 20px 24px; }
+        .page-header {
+            display: flex; justify-content: space-between; align-items: center;
+            margin-bottom: 14px; flex-wrap: wrap; gap: 12px;
+        }
+        .page-header h2 { margin: 0; color: #ccd; font-weight: 400; }
+        .header-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+        .btn-line {
+            padding: 7px 14px; border-radius: 6px; border: none; cursor: pointer;
+            font-size: 13px; background: #2a3a5e; color: #ccd; transition: background .2s;
+        }
+        .btn-line:hover { background: #3a4a6e; }
+        .btn-line.primary { background: #4CAF50; color: #fff; }
+        .btn-line.primary:hover { background: #43a047; }
+        .btn-line:disabled { opacity: .45; cursor: not-allowed; }
+
+        .layout { display: grid; grid-template-columns: 290px 1fr; gap: 16px; align-items: start; }
+        @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
+
+        .tree {
+            background: #141e2b; border: 1px solid #1a2332; border-radius: 8px;
+            padding: 10px; max-height: calc(100vh - 150px); overflow: auto;
+        }
+        .tree ul { list-style: none; margin: 0; padding-left: 14px; }
+        .tree > ul { padding-left: 0; }
+        .tree .node {
+            font-size: 13px; color: #aabbcc; padding: 4px 6px; border-radius: 4px;
+            cursor: pointer; display: flex; align-items: center; gap: 6px; white-space: nowrap;
+        }
+        .tree .node:hover { background: #1b2838; }
+        .tree .node.active { background: #21405e; color: #fff; }
+        .tree .node .tag {
+            font-size: 10px; padding: 1px 5px; border-radius: 3px;
+            background: #2c4a2c; color: #8fce8f; margin-left: auto;
+        }
+        .tree .empty { color: #556; font-size: 12px; padding: 6px; }
+
+        .editor {
+            background: #141e2b; border: 1px solid #1a2332; border-radius: 8px;
+            padding: 14px 16px; min-height: 420px;
+        }
+        .editor-head {
+            display: flex; justify-content: space-between; align-items: center;
+            gap: 12px; margin-bottom: 12px; flex-wrap: wrap;
+        }
+        .editor-head .path { color: #8fb8d8; font-size: 14px; font-family: Consolas, monospace; }
+        .editor-head .meta { color: #667788; font-size: 12px; }
+
+        .tabs { display: flex; gap: 6px; margin-bottom: 12px; }
+        .tab {
+            padding: 6px 14px; border-radius: 6px; border: 1px solid #2a3a5e;
+            background: #0f1a2f; color: #8899aa; font-size: 13px; cursor: pointer;
+        }
+        .tab.active { background: #21405e; color: #fff; border-color: #3a5a8e; }
+
+        .help-btn {
+            width: 20px; height: 20px; border-radius: 50%; border: 1px solid #3a4a6e;
+            background: #1b2838; color: #8fb8d8; font-size: 12px; cursor: pointer;
+            line-height: 1; display: inline-flex; align-items: center; justify-content: center;
+        }
+        .help-pop {
+            display: none; position: absolute; right: 0; top: 26px; width: 340px; z-index: 30;
+            background: #16202e; border: 1px solid #2a3a5e; border-radius: 8px;
+            padding: 12px 14px; font-size: 12px; color: #9fb3c8; line-height: 1.75;
+            box-shadow: 0 6px 24px rgba(0,0,0,.5);
+        }
+        .help-pop.show { display: block; }
+
+        .group-title {
+            font-size: 12px; color: #667788; margin: 16px 0 8px;
+            border-bottom: 1px solid #1f2b3a; padding-bottom: 6px;
+        }
+        .field-row {
+            display: grid; grid-template-columns: 1fr 240px; gap: 14px;
+            padding: 9px 10px; border-radius: 6px; align-items: start;
+        }
+        .field-row:hover { background: #17222f; }
+        .field-row.changed { background: rgba(76, 175, 80, .08); border-left: 2px solid #4CAF50; }
+        .field-row.missing { background: rgba(244, 67, 54, .08); border-left: 2px solid #f44336; }
+        .field-row .key {
+            font-family: Consolas, monospace; font-size: 12px; color: #ffe082;
+            word-break: break-all;
+        }
+        .field-row .label { font-size: 13px; color: #dde; margin-top: 2px; }
+        .field-row .desc { font-size: 11px; color: #667788; margin-top: 3px; line-height: 1.6; }
+        .field-row .warn { font-size: 11px; color: #ef9a9a; margin-top: 3px; }
+        .field-row .ctrl { display: flex; align-items: center; gap: 8px; justify-content: flex-end; }
+        .field-row input[type="text"], .field-row input[type="number"], .field-row select {
+            width: 100%; padding: 6px 9px; border: 1px solid #2a3a5e; border-radius: 5px;
+            background: #0f1a2f; color: #eee; font-size: 13px; outline: none;
+        }
+        .field-row input:focus, .field-row select:focus { border-color: #3a7abd; }
+        .field-row .danger-mark { color: #ff8a65; font-size: 12px; }
+
+        /* 开关 */
+        .switch { position: relative; width: 42px; height: 22px; flex: none; }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .switch .slider {
+            position: absolute; inset: 0; background: #2a3a5e; border-radius: 22px;
+            transition: .2s; cursor: pointer;
+        }
+        .switch .slider:before {
+            content: ""; position: absolute; width: 16px; height: 16px; left: 3px; top: 3px;
+            background: #ccd; border-radius: 50%; transition: .2s;
+        }
+        .switch input:checked + .slider { background: #4CAF50; }
+        .switch input:checked + .slider:before { transform: translateX(20px); background: #fff; }
+
+        .raw-editor {
+            width: 100%; min-height: 420px; padding: 12px; border-radius: 8px;
+            border: 1px solid #2a3a5e; background: #0b1420; color: #cfe3ff;
+            font-family: Consolas, "Courier New", monospace; font-size: 12px;
+            line-height: 1.6; outline: none; resize: vertical; tab-size: 4;
+        }
+        .raw-editor:focus { border-color: #3a7abd; }
+
+        .notice {
+            font-size: 12px; padding: 9px 12px; border-radius: 5px; margin-bottom: 12px;
+            line-height: 1.7;
+        }
+        .notice.info { background: rgba(33, 150, 243, .08); border-left: 3px solid #2196F3; color: #8fb8d8; }
+        .notice.warn { background: rgba(255, 152, 0, .08); border-left: 3px solid #ff9800; color: #d8b06a; }
+        .notice.err { background: rgba(244, 67, 54, .08); border-left: 3px solid #f44336; color: #e8a0a0; }
+
+        .save-bar {
+            display: flex; align-items: center; gap: 12px; margin-top: 14px;
+            padding-top: 12px; border-top: 1px solid #1f2b3a; flex-wrap: wrap;
+        }
+        .save-bar .hint { color: #667788; font-size: 12px; }
+
+        .empty-state { color: #556; font-size: 13px; padding: 40px 0; text-align: center; }
+        .toast {
+            position: fixed; bottom: 22px; right: 22px; padding: 10px 18px;
+            background: #2c4a2c; color: #cfe; border-radius: 6px; font-size: 13px;
+            opacity: 0; transform: translateY(8px); transition: all .25s; pointer-events: none; z-index: 99;
+        }
+        .toast.show { opacity: 1; transform: translateY(0); }
+        .toast.err { background: #4a2c2c; color: #fdd; }
+    </style>
+</head>
+<body>
+    <div class="page-header">
+        <h2>🪛 模组配置</h2>
+        <div class="header-tools">
+            <span style="color:#667788;font-size:12px;">当前方案：<b id="scheme-name" style="color:#8fb8d8;">--</b></span>
+            <button class="btn-line" id="btn-reload">🔄 刷新</button>
+        </div>
+    </div>
+
+    <div class="layout">
+        <div class="tree" id="tree">
+            <div class="empty">加载中...</div>
+        </div>
+
+        <div class="editor" id="editor">
+            <div class="empty-state">从左侧选择要编辑的配置文件</div>
+        </div>
+    </div>
+
+    <div class="toast" id="toast"></div>
+
+    <script>
+        (function () {
+            const token = sessionStorage.getItem('wow_token') || '';
+            const treeEl = document.getElementById('tree');
+            const editorEl = document.getElementById('editor');
+            const toastEl = document.getElementById('toast');
+            const schemeEl = document.getElementById('scheme-name');
+
+            let state = {
+                path: null,         // 当前文件
+                file: null,         // /api/modcfg/file 返回
+                mode: 'form',       // form | raw
+                dirty: {},          // key -> newValue
+                openDirs: new Set([''])
+            };
+
+            function esc(s) {
+                return String(s == null ? '' : s)
+                    .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+            }
+
+            function toast(msg, isErr) {
+                toastEl.textContent = msg;
+                toastEl.className = 'toast show' + (isErr ? ' err' : '');
+                clearTimeout(toast._t);
+                toast._t = setTimeout(() => { toastEl.className = 'toast'; }, 2600);
+            }
+
+            async function api(path, method, body) {
+                const resp = await fetch(path, {
+                    method: method || 'GET',
+                    headers: Object.assign(
+                        { 'Content-Type': 'application/json' },
+                        token ? { 'Authorization': 'Bearer ' + token } : {}
+                    ),
+                    body: body ? JSON.stringify(body) : undefined
+                });
+                const json = await resp.json().catch(() => ({}));
+                if (!resp.ok || json.success === false) {
+                    throw new Error(json.error || ('HTTP ' + resp.status));
+                }
+                return json;
+            }
+
+            // ==================== 文件树（懒加载） ====================
+            async function loadRoot() {
+                treeEl.innerHTML = '<div class="empty">加载中...</div>';
+                try {
+                    const r = await api('/api/modcfg/tree');
+                    treeEl.innerHTML = '';
+                    if (!r.dirs.length) {
+                        treeEl.innerHTML = '<div class="empty">当前方案里还没有 config / serverconfig / plugins 目录</div>';
+                        return;
+                    }
+                    const ul = document.createElement('ul');
+                    treeEl.appendChild(ul);
+                    for (const d of r.dirs) {
+                        ul.appendChild(makeDirNode(d, d));
+                    }
+                } catch (e) {
+                    treeEl.innerHTML = '<div class="empty">' + esc(e.message) + '</div>';
+                }
+            }
+
+            function makeDirNode(label, path) {
+                const li = document.createElement('li');
+                const node = document.createElement('div');
+                node.className = 'node';
+                node.innerHTML = '<span class="arrow">▸</span><span>📁 ' + esc(label) + '</span>';
+                node.dataset.dir = path;
+                const sub = document.createElement('ul');
+                sub.style.display = 'none';
+                sub.dataset.loaded = '0';
+                li.appendChild(node);
+                li.appendChild(sub);
+
+                node.addEventListener('click', async (ev) => {
+                    ev.stopPropagation();
+                    const open = sub.style.display !== 'none';
+                    if (open) {
+                        sub.style.display = 'none';
+                        node.querySelector('.arrow').textContent = '▸';
+                        return;
+                    }
+                    sub.style.display = '';
+                    node.querySelector('.arrow').textContent = '▾';
+                    if (sub.dataset.loaded === '1') return;
+                    try {
+                        const r = await api('/api/modcfg/tree?dir=' + encodeURIComponent(path));
+                        sub.innerHTML = '';
+                        for (const d of r.dirs) sub.appendChild(makeDirNode(d, path + '/' + d));
+                        for (const f of r.files) sub.appendChild(makeFileNode(f));
+                        sub.dataset.loaded = '1';
+                        if (!r.dirs.length && !r.files.length) {
+                            sub.innerHTML = '<li class="empty">（空）</li>';
+                        }
+                    } catch (e) {
+                        sub.innerHTML = '<li class="empty">' + esc(e.message) + '</li>';
+                    }
+                });
+                return li;
+            }
+
+            function makeFileNode(f) {
+                const li = document.createElement('li');
+                const node = document.createElement('div');
+                node.className = 'node';
+                node.dataset.path = f.path;
+                node.innerHTML = '<span>📄 ' + esc(f.name) + '</span>' +
+                    (f.schema ? '<span class="tag" title="' + esc(f.schema.display_name) + '">表单</span>' : '');
+                node.addEventListener('click', () => openFile(f.path));
+                li.appendChild(node);
+                return li;
+            }
+
+            function markActive() {
+                treeEl.querySelectorAll('.node.active').forEach(n => n.classList.remove('active'));
+                const n = treeEl.querySelector('.node[data-path="' + CSS.escape(state.path) + '"]');
+                if (n) n.classList.add('active');
+            }
+
+            // ==================== 打开文件 ====================
+            async function openFile(path) {
+                state.path = path;
+                state.dirty = {};
+                markActive();
+                editorEl.innerHTML = '<div class="empty-state">加载中...</div>';
+                try {
+                    const r = await api('/api/modcfg/file?path=' + encodeURIComponent(path));
+                    state.file = r;
+                    // 有表单就用表单，否则源码
+                    state.mode = r.form_mode ? 'form' : 'raw';
+                    render();
+                } catch (e) {
+                    editorEl.innerHTML = '<div class="notice err">' + esc(e.message) + '</div>';
+                }
+            }
+
+            // ==================== 渲染 ====================
+            function render() {
+                const r = state.file;
+                if (!r) return;
+                const hasForm = !!r.form_mode;
+                const rawText = r.text;
+
+                let html = '';
+                html += '<div class="editor-head">';
+                html += '<div><div class="path">' + esc(r.path) + '</div>' +
+                    '<div class="meta">' + r.line_count + ' 行' +
+                    (r.schema ? ' · 表单包：' + esc(r.schema.display_name) : ' · 无表单包') + '</div></div>';
+                html += '<div style="display:flex;align-items:center;gap:10px;position:relative;">';
+                if (hasForm) {
+                    html += '<div class="tabs">' +
+                        '<div class="tab' + (state.mode === 'form' ? ' active' : '') + '" data-mode="form">🧩 可视化配置</div>' +
+                        '<div class="tab' + (state.mode === 'raw' ? ' active' : '') + '" data-mode="raw">{ } 源码编辑</div>' +
+                        '</div>';
+                }
+                html += '<button class="help-btn" id="btn-help" title="关于表单翻译">?</button>';
+                html += '<div class="help-pop" id="help-pop">' +
+                    '<b>关于表单翻译</b><br>' +
+                    '表单翻译由社区提供，可能因模组版本差异产生偏差。' +
+                    '如遇到无法理解或疑似错误的翻译，请切换至源码模式。' +
+                    '未被翻译包覆盖的配置项不会显示在表单里，但保存时不会被删除。</div>';
+                html += '</div></div>';
+
+                // 提示条
+                if (!hasForm && r.schema) {
+                    html += '<div class="notice warn">' + esc(r.reason || '该文件暂不支持表单编辑，已切换为源码模式') + '</div>';
+                } else if (!hasForm && !r.schema) {
+                    html += '<div class="notice info">没有匹配的表单包，使用源码模式编辑（保存前会自动备份 .bak）。</div>';
+                }
+                if (hasForm && r.missing && r.missing.length) {
+                    html += '<div class="notice warn">有 ' + r.missing.length +
+                        ' 项在当前文件里找不到，可能是模组版本与翻译包不一致；已标红的字段不可编辑。</div>';
+                }
+
+                if (state.mode === 'form' && hasForm) {
+                    html += renderForm(r);
+                    html += '<div class="save-bar">' +
+                        '<button class="btn-line primary" id="btn-save">💾 保存修改</button>' +
+                        '<button class="btn-line" id="btn-reset">↩️ 放弃修改</button>' +
+                        '<span class="hint" id="dirty-hint"></span></div>';
+                } else {
+                    html += '<textarea class="raw-editor" id="raw-editor" spellcheck="false"></textarea>' +
+                        '<div class="save-bar">' +
+                        '<button class="btn-line primary" id="btn-save-raw">💾 保存源码</button>' +
+                        '<span class="hint">保存前会自动备份为 .bak，并原子替换原文件。</span></div>';
+                }
+
+                editorEl.innerHTML = html;
+
+                // 帮助浮层
+                const hb = document.getElementById('btn-help');
+                const hp = document.getElementById('help-pop');
+                if (hb) hb.addEventListener('click', (e) => { e.stopPropagation(); hp.classList.toggle('show'); });
+                document.addEventListener('click', () => { if (hp) hp.classList.remove('show'); }, { once: true });
+
+                // Tab
+                editorEl.querySelectorAll('.tab').forEach(t => {
+                    t.addEventListener('click', () => { state.mode = t.dataset.mode; render(); });
+                });
+
+                if (state.mode === 'form' && hasForm) {
+                    bindForm(r);
+                } else {
+                    const ta = document.getElementById('raw-editor');
+                    ta.value = rawText;
+                    document.getElementById('btn-save-raw').addEventListener('click', saveRaw);
+                }
+            }
+
+            function renderForm(r) {
+                let html = '';
+                const normal = r.entries.filter(e => !e.advanced);
+                const advanced = r.entries.filter(e => e.advanced);
+                if (normal.length) {
+                    html += '<div class="group-title">常用配置</div>';
+                    html += normal.map(fieldHtml).join('');
+                }
+                if (advanced.length) {
+                    html += '<div class="group-title">高级配置</div>';
+                    html += advanced.map(fieldHtml).join('');
+                }
+                if (r.truncated) {
+                    html += '<div class="notice info" style="margin-top:12px;">字段过多，只显示前 100 项；其余请用源码模式。</div>';
+                }
+                return html;
+            }
+
+            function fieldHtml(f) {
+                const id = 'k_' + f.key.replace(/[^a-zA-Z0-9]/g, '_');
+                const cls = 'field-row' + (f.present ? '' : ' missing');
+                let ctrl = '';
+
+                if (!f.present) {
+                    ctrl = '<span style="color:#f44336;font-size:12px;">未找到此项</span>';
+                } else if (f.type === 'boolean') {
+                    ctrl = '<label class="switch"><input type="checkbox" id="' + id + '" data-key="' + esc(f.key) +
+                        '" data-type="boolean"' + (f.value ? ' checked' : '') + '><span class="slider"></span></label>';
+                } else if (f.type === 'select' && f.options) {
+                    ctrl = '<select id="' + id + '" data-key="' + esc(f.key) + '" data-type="select">' +
+                        f.options.map(o => '<option value="' + esc(o.value) + '"' +
+                            (String(o.value) === String(f.value) ? ' selected' : '') + '>' + esc(o.label) + '</option>').join('') +
+                        '</select>';
+                } else if (f.type === 'number') {
+                    ctrl = '<input type="number" id="' + id + '" data-key="' + esc(f.key) + '" data-type="number"' +
+                        ' value="' + esc(f.value) + '"' +
+                        (f.min !== undefined ? ' min="' + f.min + '"' : '') +
+                        (f.max !== undefined ? ' max="' + f.max + '"' : '') + '>';
+                } else {
+                    ctrl = '<input type="text" id="' + id + '" data-key="' + esc(f.key) + '" data-type="string"' +
+                        ' value="' + esc(f.value) + '">';
+                }
+
+                let hint = '';
+                if (f.type === 'number' && (f.min !== undefined || f.max !== undefined)) {
+                    hint = '范围 ' + (f.min !== undefined ? f.min : '-∞') + ' ~ ' + (f.max !== undefined ? f.max : '+∞');
+                }
+
+                return '<div class="field-row' + (f.present ? '' : ' missing') + '" data-row="' + esc(f.key) + '">' +
+                    '<div>' +
+                        '<div class="key">' + esc(f.key) + (f.danger ? ' <span class="danger-mark" title="改动有风险">⚠️</span>' : '') + '</div>' +
+                        '<div class="label">' + esc(f.label) + '</div>' +
+                        (f.description ? '<div class="desc">' + esc(f.description) + '</div>' : '') +
+                        (f.present ? '' : '<div class="warn">当前文件里没有这个键（可能与模组版本不匹配），请用源码模式确认。</div>') +
+                        (hint ? '<div class="desc">' + hint + '</div>' : '') +
+                    '</div>' +
+                    '<div class="ctrl">' + ctrl + '</div>' +
+                '</div>';
+            }
+
+            function bindForm(r) {
+                const orig = new Map(r.entries.map(e => [e.key, e.value]));
+
+                editorEl.querySelectorAll('[data-key]').forEach(el => {
+                    el.addEventListener('change', () => {
+                        const key = el.dataset.key;
+                        let v;
+                        if (el.type === 'checkbox') v = el.checked;
+                        else if (el.dataset.type === 'number') {
+                            if (el.value === '') { delete state.dirty[key]; updateDirty(orig, key, undefined); return; }
+                            v = Number(el.value);
+                        } else v = el.value;
+
+                        if (JSON.stringify(v) === JSON.stringify(orig.get(key))) delete state.dirty[key];
+                        else state.dirty[key] = v;
+                        updateDirty(orig, key, v);
+                    });
+                    // 数字输入用 input 更跟手
+                    if (el.dataset.type === 'number') {
+                        el.addEventListener('input', () => el.dispatchEvent(new Event('change')));
+                    }
+                });
+
+                const saveBtn = document.getElementById('btn-save');
+                saveBtn.addEventListener('click', saveForm);
+                document.getElementById('btn-reset').addEventListener('click', () => {
+                    state.dirty = {};
+                    render();
+                });
+                updateDirtyHint();
+            }
+
+            function updateDirty(orig, key, v) {
+                const row = editorEl.querySelector('[data-row="' + CSS.escape(key) + '"]');
+                if (!row) return;
+                if (v === undefined || JSON.stringify(v) === JSON.stringify(orig.get(key))) {
+                    row.classList.remove('changed');
+                } else {
+                    row.classList.add('changed');
+                    const lbl = row.querySelector('.label');
+                    if (lbl && !lbl.dataset.orig) {
+                        lbl.dataset.orig = lbl.textContent;
+                        lbl.textContent = lbl.textContent + '（原值 ' + JSON.stringify(orig.get(key)) + '）';
+                    }
+                }
+                updateDirtyHint();
+            }
+
+            function updateDirtyHint() {
+                const n = Object.keys(state.dirty).length;
+                const el = document.getElementById('dirty-hint');
+                if (el) el.textContent = n ? '已修改 ' + n + ' 项，尚未保存' : '';
+                const btn = document.getElementById('btn-save');
+                if (btn) btn.disabled = n === 0;
+            }
+
+            // ==================== 保存 ====================
+            async function saveForm() {
+                const changes = state.dirty;
+                if (!Object.keys(changes).length) return;
+                const btn = document.getElementById('btn-save');
+                btn.disabled = true;
+                btn.textContent = '保存中...';
+                try {
+                    const r = await api('/api/modcfg/save', 'POST', { file: state.path, changes });
+                    toast('已保存 ' + r.changed + ' 项，已切换到源码模式供你复核');
+                    // 指令五：保存后自动切 Raw，让极客确认没误伤注释
+                    await openFile(state.path);
+                    state.mode = 'raw';
+                    render();
+                    if (r.missing && r.missing.length) {
+                        toast('有 ' + r.missing.length + ' 项因版本不匹配未写入', true);
+                    }
+                } catch (e) {
+                    toast(e.message, true);
+                    btn.disabled = false;
+                    btn.textContent = '💾 保存修改';
+                }
+            }
+
+            async function saveRaw() {
+                const ta = document.getElementById('raw-editor');
+                const btn = document.getElementById('btn-save-raw');
+                btn.disabled = true;
+                btn.textContent = '保存中...';
+                try {
+                    await api('/api/modcfg/save-raw', 'POST', { file: state.path, content: ta.value });
+                    toast('源码已保存');
+                    await openFile(state.path);
+                } catch (e) {
+                    toast(e.message, true);
+                    btn.disabled = false;
+                    btn.textContent = '💾 保存源码';
+                }
+            }
+
+            // ==================== 初始化 ====================
+            document.getElementById('btn-reload').addEventListener('click', () => {
+                state.path = null;
+                state.file = null;
+                state.dirty = {};
+                editorEl.innerHTML = '<div class="empty-state">从左侧选择要编辑的配置文件</div>';
+                loadRoot();
+            });
+
+            (async function init() {
+                try {
+                    const r = await api('/api/props');
+                    schemeEl.textContent = r.scheme && r.scheme.name ? r.scheme.name : '--';
+                } catch (e) {
+                    schemeEl.textContent = '未激活';
+                }
+                loadRoot();
+            })();
+        })();
+    </script>
+</body>
+</html>

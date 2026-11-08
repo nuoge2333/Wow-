@@ -13,6 +13,7 @@ const { spawn } = require('child_process');
 const axios = require('axios');
 const AdmZip = require('adm-zip');
 const ProgressBar = require('progress');
+const yaml = require('js-yaml');
 const utils = require('./utils');
 const config = require('./config');
 const JreManager = require('./jre_manager');
@@ -312,9 +313,14 @@ class Installer {
     async _downloadWithFallbacks(url, destPath, fallbacks = []) {
         const candidates = [url, ...fallbacks].filter(Boolean);
         let lastErr = null;
-        for (const u of candidates) {
+        for (let i = 0; i < candidates.length; i++) {
+            const u = candidates[i];
+            const hasFallback = i < candidates.length - 1;
             try {
-                await this._downloadFile(u, destPath);
+                // 与 _downloadFirst 同一套熔断策略：有备用源才限制速度
+                await this._downloadFile(u, destPath, hasFallback
+                    ? { minSpeedBps: 80 * 1024, probeMs: 15000, stallMs: 20000 }
+                    : { stallMs: 30000 });
                 if (fs.existsSync(destPath) && fs.statSync(destPath).size > 0) {
                     return;
                 }
@@ -387,21 +393,34 @@ class Installer {
                 if (missing.length === 0) {
                     console.log(`原版核心已存在于安装器期望位置，安装器将直接复用`);
                 } else {
-                    console.log(`预下载原版核心（${vanillaInfo.mc}），供 ${type} 安装器复用，避免其自行下载...`);
-                    const firstTarget = missing[0];
-                    fs.ensureDirSync(path.dirname(firstTarget));
-                    await this._downloadFirst(vanillaCandidates, firstTarget);
-                    const sz = fs.statSync(firstTarget).size;
-                    // 完整性校验：原版服务端核心至少数十 MB，过小说明下载被截断
-                    if (sz < 10 * 1024 * 1024) {
-                        try { fs.removeSync(firstTarget); } catch (e) {}
-                        throw new Error(`原版核心下载不完整（${Math.round(sz / 1024 / 1024)}MB），疑似被截断`);
+                    // V3.6.2：先找 pool。原版核心是大文件（几十 MB），
+                    // 若池里已有同版本的 vanilla 核心，直接复制，不必再经历
+                    // 「bmclapi 7% / ETA 2669s」那种下载。
+                    const pooledVanilla = this._findPooledVanilla(vanillaInfo.mc);
+                    if (pooledVanilla) {
+                        for (const p of missing) {
+                            fs.ensureDirSync(path.dirname(p));
+                            fs.copyFileSync(pooledVanilla.path, p);
+                        }
+                        console.log(`♻️  复用 pool 中的原版核心（${vanillaInfo.mc}）：` +
+                            `${path.basename(pooledVanilla.path)}，跳过下载`);
+                    } else {
+                        console.log(`预下载原版核心（${vanillaInfo.mc}），供 ${type} 安装器复用，避免其自行下载...`);
+                        const firstTarget = missing[0];
+                        fs.ensureDirSync(path.dirname(firstTarget));
+                        await this._downloadFirst(vanillaCandidates, firstTarget);
+                        const sz = fs.statSync(firstTarget).size;
+                        // 完整性校验：原版服务端核心至少数十 MB，过小说明下载被截断
+                        if (sz < 10 * 1024 * 1024) {
+                            try { fs.removeSync(firstTarget); } catch (e) {}
+                            throw new Error(`原版核心下载不完整（${Math.round(sz / 1024 / 1024)}MB），疑似被截断`);
+                        }
+                        for (const p of missing.slice(1)) {
+                            fs.ensureDirSync(path.dirname(p));
+                            fs.copyFileSync(firstTarget, p);
+                        }
+                        console.log(`✅ 原版核心已就绪: ${path.basename(firstTarget)} (${Math.round(sz / 1024 / 1024)}MB)，放置于 ${missing.length} 个安装器期望位置`);
                     }
-                    for (const p of missing.slice(1)) {
-                        fs.ensureDirSync(path.dirname(p));
-                        fs.copyFileSync(firstTarget, p);
-                    }
-                    console.log(`✅ 原版核心已就绪: ${path.basename(firstTarget)} (${Math.round(sz / 1024 / 1024)}MB)，放置于 ${missing.length} 个安装器期望位置`);
                 }
             } catch (e) {
                 console.warn(`⚠️ 预下载原版核心失败，将交由 ${type} 安装器自行下载: ${e.message}`);
@@ -660,14 +679,23 @@ class Installer {
     }
 
     /**
-     * 按顺序尝试多个下载 URL，任一成功即返回
+     * 按顺序尝试多个下载 URL，任一成功即返回。
+     *
+     * V3.6.2：对「还有备用源」的候选启用速度熔断——慢于 80KB/s 持续到观察期
+     * 结束就换下一个源；最后一个源不限制速度（避免把慢速但可用的网络误杀），
+     * 但仍检测 30s 停滞。
      */
     async _downloadFirst(urls, destPath) {
         let lastErr;
-        for (const url of urls) {
+        const list = (urls || []).filter(Boolean);
+        for (let i = 0; i < list.length; i++) {
+            const url = list[i];
+            const hasFallback = i < list.length - 1;
             try {
                 console.log(`  ├─ 尝试: ${url}`);
-                await this._downloadFile(url, destPath);
+                await this._downloadFile(url, destPath, hasFallback
+                    ? { minSpeedBps: 80 * 1024, probeMs: 15000, stallMs: 20000 }
+                    : { stallMs: 30000 });
                 if (fs.existsSync(destPath) && fs.statSync(destPath).size > 0) {
                     console.log(`  └─ ✅ 下载成功`);
                     return destPath;
@@ -1025,6 +1053,43 @@ class Installer {
     }
 
     /**
+     * V3.6.2：在 pool 中查找某个 MC 版本的原版服务端核心（供安装器复用）。
+     *
+     * 目录布局有两种来源：
+     *   - installer 自己复制：pool/cores/vanilla/<mc>/<文件名>.jar
+     *   - scheme_manager 入池：pool/cores/vanilla/<mc>/<相对方案根的路径>
+     * 所以递归找 jar，取体积最大的那个（原版核心通常几十 MB，
+     * 而 installer / 其它小 jar 会被排除），避免误拿安装器。
+     *
+     * @param {string} mc
+     * @returns {{path:string, size:number}|null}
+     */
+    _findPooledVanilla(mc) {
+        const dir = utils.getCoreStoragePath('vanilla', mc);
+        if (!dir || !fs.existsSync(dir)) return null;
+
+        const found = [];
+        const walk = (d) => {
+            let entries = [];
+            try { entries = fs.readdirSync(d); } catch (e) { return; }
+            for (const name of entries) {
+                const p = path.join(d, name);
+                let st;
+                try { st = fs.statSync(p); } catch (e) { continue; }
+                if (st.isDirectory()) { walk(p); continue; }
+                if (!st.isFile()) continue;
+                if (!/\.jar$/i.test(name)) continue;
+                if (/installer/i.test(name)) continue;
+                found.push({ path: p, size: st.size });
+            }
+        };
+        walk(dir);
+        if (!found.length) return null;
+        found.sort((a, b) => b.size - a.size);
+        return found[0];
+    }
+
+    /**
      * 复制核心到 pool/cores 供多方案共享
      */
     async _copyToPool(type, version, sourcePath) {
@@ -1043,17 +1108,56 @@ class Installer {
 
     /**
      * 下载文件（带进度条）
+     *
+     * V3.6.2：新增可选的「速度熔断」。此前 BMCLAPI 某个对象地址可能只给
+     * 几十 KB/s 甚至长时间挂住，进度条显示 ETA 2669s（实测），用户只能干等
+     * 十几分钟。现在：
+     *   - stallMs 内没有任何数据 → 判定停滞，中止当前源；
+     *   - probeMs 观察期后平均速度低于 minSpeedBps → 判定过慢，中止并换源。
+     * 只有存在备用源时才会启用（见 _downloadFirst），最后一个源不熔断速度，
+     * 避免「慢但能用」的网络被误杀。
+     *
+     * @param {string} url
+     * @param {string} destPath
+     * @param {{minSpeedBps?:number, stallMs?:number, probeMs?:number}} [opts]
      */
-    _downloadFile(url, destPath) {
+    _downloadFile(url, destPath, opts = {}) {
+        const minSpeedBps = opts.minSpeedBps || 0;
+        const stallMs = opts.stallMs || 0;
+        const probeMs = opts.probeMs || 15000;
+
         return new Promise((resolve, reject) => {
+            let settled = false;
+            let response = null;
+            let writer = null;
+            let timer = null;
+            let received = 0;
+            let lastProgressAt = Date.now();
+            const startedAt = Date.now();
+
+            const finish = (err) => {
+                if (settled) return;
+                settled = true;
+                if (timer) { clearInterval(timer); timer = null; }
+                try { if (response && response.data) response.data.destroy(); } catch (e) { /* 忽略 */ }
+                try { if (writer) writer.destroy(); } catch (e) { /* 忽略 */ }
+                if (err) {
+                    try { if (fs.existsSync(destPath)) fs.removeSync(destPath); } catch (e) { /* 忽略 */ }
+                    reject(err);
+                } else {
+                    resolve();
+                }
+            };
+
             axios({
                 method: 'get',
                 url: url,
                 responseType: 'stream',
                 timeout: 600000,
                 maxRedirects: 10
-            }).then(response => {
-                const totalLength = parseInt(response.headers['content-length'] || '0', 10);
+            }).then(res => {
+                response = res;
+                const totalLength = parseInt(res.headers['content-length'] || '0', 10);
                 const progress = new ProgressBar(`  下载中 [:bar] :percent :etas`, {
                     width: 40,
                     complete: '=',
@@ -1062,16 +1166,41 @@ class Installer {
                     total: totalLength || 1
                 });
 
-                const writer = fs.createWriteStream(destPath);
-                response.data.on('data', (chunk) => {
+                writer = fs.createWriteStream(destPath);
+                res.data.on('data', (chunk) => {
+                    received += chunk.length;
+                    lastProgressAt = Date.now();
                     if (totalLength > 0) progress.tick(chunk.length);
                 });
 
-                response.data.pipe(writer);
+                if (minSpeedBps > 0 || stallMs > 0) {
+                    let lastSampleAt = Date.now();
+                    let lastSampleBytes = 0;
+                    timer = setInterval(() => {
+                        const now = Date.now();
+                        if (stallMs > 0 && now - lastProgressAt > stallMs) {
+                            return finish(new Error(`下载停滞（${Math.round(stallMs / 1000)}s 未收到数据），切换下载源`));
+                        }
+                        if (minSpeedBps > 0 && now - startedAt >= probeMs) {
+                            const dt = (now - lastSampleAt) / 1000;
+                            const speed = dt > 0 ? (received - lastSampleBytes) / dt : 0;
+                            if (speed < minSpeedBps) {
+                                return finish(new Error(
+                                    `下载过慢（${Math.max(0, Math.round(speed / 1024))} KB/s < ${Math.round(minSpeedBps / 1024)} KB/s），切换下载源`
+                                ));
+                            }
+                            lastSampleAt = now;
+                            lastSampleBytes = received;
+                        }
+                    }, 5000);
+                    if (timer.unref) timer.unref();
+                }
 
-                writer.on('finish', () => resolve());
-                writer.on('error', (err) => reject(err));
-            }).catch(err => reject(err));
+                res.data.on('error', (err) => finish(err));
+                writer.on('finish', () => finish(null));
+                writer.on('error', (err) => finish(err));
+                res.data.pipe(writer);
+            }).catch(err => finish(err));
         });
     }
 
