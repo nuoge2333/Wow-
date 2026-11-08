@@ -23,7 +23,7 @@ WOW_NO_TUI=1 wow m   # 强制走兼容模式（逐行读，无整屏重绘）
 
 ```
 ══════════════════════════════════════════════════════════════════════
-  wow~ Minecraft 服务器管理器                 V3.7.0-26.43　[Q] 服务器
+  wow~ Minecraft 服务器管理器                 V3.7.1-26.44　[Q] 服务器
   服务器: 🟢 运行中 (PID 12345)　　方案: 生存服
   已装 Java: Java 17, Java 21
   当前 Java: /usr/lib/jvm/java-17-openjdk-amd64/bin/java
