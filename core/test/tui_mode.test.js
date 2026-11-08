@@ -58,12 +58,51 @@ check('每页内编号不重复', () => {
     }
 });
 
-check('每页至少有一项能落到原主菜单的 1~14（保证功能没丢）', () => {
+check('原主菜单的 1~14 全部有页认领（改成页内序号后旧编号不丢）', () => {
     const origin = new Set(['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14']);
-    const all = itv.PAGES.flatMap(p => p.items.map(it => it.id));
+    const all = new Set(itv.PAGES.flatMap(p => p.items.flatMap(it => itv.idsOf(it))));
     for (const n of origin) {
-        assert.ok(all.includes(n), `原主菜单 ${n} 号没有出现在任何页`);
+        assert.ok(all.has(n), `原主菜单 ${n} 号没有任何页认领`);
     }
+});
+
+check('每页序号都是 1,2,3… 连续（到哪页都是顺号）', () => {
+    for (const p of itv.PAGES) {
+        const ids = p.items.map(it => String(it.id));
+        const expect = ids.map((_, i) => String(i + 1));
+        assert.deepStrictEqual(ids, expect, `${p.key} 页序号不是 1,2,3…：${ids.join(',')}`);
+    }
+});
+
+check('页内序号不重复、旧编号不侵占别页序号（跨页解析不会互相抢）', () => {
+    for (const p of itv.PAGES) {
+        const ids = p.items.map(it => String(it.id));
+        assert.strictEqual(new Set(ids).size, ids.length, `${p.key} 页序号重复`);
+    }
+    // 旧编号只在本页查不到时才用，所以允许跨页重复；但**本页序号**必须唯一可解析
+    for (const p of itv.PAGES) {
+        for (const it of p.items) {
+            const hit = itv.resolveNumber(String(it.id), p.key);
+            assert.ok(hit, `${p.key} 页敲 ${it.id} 解析不到`);
+            assert.strictEqual(hit.item.label, it.label,
+                `${p.key} 页敲 ${it.id} 落到了「${hit.item.label}」而不是「${it.label}」`);
+        }
+    }
+});
+
+check('resolveNumber：本页序号 → 本页旧编号 → 跨页旧编号', () => {
+    // 同一数字在不同页表示不同的东西，这是「到哪页都是顺号」的核心
+    assert.strictEqual(itv.resolveNumber('1', 'Q').item.label, '启动 / 停止服务器');
+    assert.strictEqual(itv.resolveNumber('1', 'W').item.label.startsWith('方案管理'), true);
+    assert.strictEqual(itv.resolveNumber('1', 'E').item.label, '管理模组 / 插件');
+    // 本页旧编号仍认
+    assert.strictEqual(itv.resolveNumber('22', 'W').item.label, '列出全部方案（含状态）');
+    // 跨页旧编号：Q 页敲 22 会得到 W 页那一项
+    const cross = itv.resolveNumber('22', 'Q');
+    assert.strictEqual(cross.page, 'W');
+    assert.strictEqual(cross.functional, '22');
+    // 不存在的编号
+    assert.strictEqual(itv.resolveNumber('999', 'Q'), null);
 });
 
 check('Q 页第 1 项就是启动服务器', () => {
@@ -174,13 +213,11 @@ check('编号长度上限（乱按不会堆出一长串）', () => {
 check('跨页编号会自动跳到所属页执行（老习惯敲 22 不该被判无此功能）', () => {
     const m = itvSrc.match(/const runItem = async \(id\) => \{[\s\S]*?\n    \};/);
     assert.ok(m, '未找到 runItem');
-    assert.ok(/const owner = findPageOfItem\(id\)/.test(m[0]), '未按编号反查所属页');
-    assert.ok(/if \(owner && owner !== state\.page\)[\s\S]{0,120}?state\.page = owner/.test(m[0]),
-        '未切换 state.page');
-    // 本页优先：跳页只在本页查不到时才发生
-    const iLocal = m[0].indexOf('def.items.find');
-    const iJump = m[0].indexOf('findPageOfItem(id)');
-    assert.ok(iLocal !== -1 && iJump !== -1 && iLocal < iJump, '跳页判定应先查本页');
+    assert.ok(/const hit = resolveNumber\(id, state\.page\)/.test(m[0]), '未按当前页解析编号');
+    assert.ok(/if \(hit\.page !== state\.page\) state\.page = hit\.page;/.test(m[0]),
+        '跨页命中时未切换 state.page');
+    assert.ok(/dispatchMenuItem\(String\(id\), options, null, ctx, io, \{ page: hit\.page \}\)/.test(m[0]),
+        'dispatchMenuItem 没拿到当前页，无法区分「本页序号」与「旧编号」');
 });
 
 check('编号回显在提示行（输入时不至于看不见自己敲了什么）', () => {

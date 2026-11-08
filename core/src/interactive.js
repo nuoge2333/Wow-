@@ -59,6 +59,26 @@ const tui = require('./tui');
 // `hint` 是右对齐的实时备注（函数形式，画页时求值一次），
 // 拿不到数据就不显示——不会让整行消失，布局稳定。
 
+// 七页的**功能编号**改为「按页顺号」：每页都从 1 开始、依次 1 2 3 4 …，
+// 到哪一页都是「第 n 项敲 n 回车」。这样界面上看到的数字就是能敲的数字，
+// 不需要记忆「22 属于 W 页」这类跨页编号。
+//
+// 每个功能除了本页序号，还可能保留**旧编号**（legacy）——原扁平菜单的
+// 1~14 与 3.7.x 的 21/22/31/141 等扩展编号。旧编号仍然认，但按「别处才认」
+// 处理：本页没有对应项时才跳页/转调，界面上用灰字小注 `旧 22` 提示，不占编号列。
+//
+// `hint` 是右对齐的实时备注（函数形式，画页时求值一次），
+// 拿不到数据就不显示——不会让整行消失，布局稳定。
+//
+// `legacy` 的两种形态：
+//   - 数组：这些旧编号都指向本页这一项（如 Q 页第 3 项既认旧 5）；
+//   - 函数：旧编号需要转调别的菜单（由 dispatchMenuItem 的 LEGACY_ROUTES 处理）。
+// 注意 **旧编号可以在多页重复**（`4` 在 Q/E/T 都是「模组搜索下载」的不同别名），
+// 跨页解析时只用来「找一项能执行的」，执行内容以 dispatchMenuItem 的 case 为准。
+
+/** 备注列宽上限（按最长的一条留位，保证旧编号小注不会把页面撑过 70 列） */
+const HINT_MAX = 8;
+
 const PAGES = [
     {
         key: 'Q',
@@ -66,24 +86,24 @@ const PAGES = [
         title: '服务器启停 / 运行状态',
         items: [
             {
-                id: '1', label: '启动 / 停止服务器',
+                id: '1', legacy: ['1'], label: '启动 / 停止服务器',
                 hint: (ctx) => {
                     const s = ctx.status.collect();
                     return s.running ? '运行中' : '已停止';
                 }
             },
             {
-                id: '12', label: '服务器状态监控',
+                id: '2', legacy: ['12'], label: '服务器状态监控',
                 hint: (ctx) => (ctx.status.collect().running ? '可看实时日志' : null)
             },
             {
-                id: '5', label: '变更配置 (server.properties)',
+                id: '3', legacy: ['5'], label: '变更配置 (server.properties)',
                 hint: () => '端口/人数/难度…'
             },
-            { id: '11', label: '错误日志分析', hint: () => '崩溃排查' },
-            { id: '4', label: '查看控制台日志（实时跟踪）', hint: () => 'Ctrl+C 停' },
+            { id: '4', legacy: ['11'], label: '错误日志分析', hint: () => '崩溃排查' },
+            { id: '5', legacy: ['4'], label: '查看控制台日志（实时跟踪）', hint: () => 'Ctrl+C 停' },
             {
-                id: '14', label: '联机 / 我要当房主 (陶瓦)',
+                id: '6', legacy: ['14'], label: '联机 / 我要当房主 (陶瓦)',
                 hint: () => '无需公网 IP'
             }
         ]
@@ -94,20 +114,20 @@ const PAGES = [
         title: '方案管理',
         items: [
             {
-                id: '2', label: '方案管理 (新建/切换/列表/删除/信息)',
+                id: '1', legacy: ['2'], label: '方案管理 (新建/切换/列表/删除/信息)',
                 hint: (ctx) => {
                     const s = ctx.status.collect().scheme;
                     return s ? `当前: ${s}` : '未指定';
                 }
             },
-            { id: '21', label: '快速切换方案', hint: () => '输入名称即可' },
-            { id: '22', label: '列出全部方案（含状态）', hint: () => 'mark 标记当前' },
-            { id: '23', label: '方案信息 / 资源引用', hint: () => '独占统计' },
-            { id: '24', label: '新建方案', hint: () => '类型 + 版本' },
-            { id: '25', label: '删除方案', hint: () => '需二次确认' },
-            { id: '9', label: '安装整合包（新建方案的另一种入口）', hint: () => 'zip / URL' },
-            { id: '10', label: '生成客户端整合包', hint: () => '导出给朋友' },
-            { id: '26', label: '整理资源池（瘦身）', hint: () => '清未引用文件' }
+            { id: '2', legacy: ['21'], label: '快速切换方案', hint: () => '输入名称即可' },
+            { id: '3', legacy: ['22'], label: '列出全部方案（含状态）', hint: () => 'mark 标记当前' },
+            { id: '4', legacy: ['23'], label: '方案信息 / 资源引用', hint: () => '独占统计' },
+            { id: '5', legacy: ['24'], label: '新建方案', hint: () => '类型 + 版本' },
+            { id: '6', legacy: ['25'], label: '删除方案', hint: () => '需二次确认' },
+            { id: '7', legacy: ['9'], label: '安装整合包（新建方案的另一种入口）', hint: () => 'zip / URL' },
+            { id: '8', legacy: ['10'], label: '生成客户端整合包', hint: () => '导出给朋友' },
+            { id: '9', legacy: ['26'], label: '整理资源池（瘦身）', hint: () => '清未引用文件' }
         ]
     },
     {
@@ -116,7 +136,7 @@ const PAGES = [
         title: '内容与配置（模组 / 插件 / 配置文件）',
         items: [
             {
-                id: '3', label: '管理模组 / 插件',
+                id: '1', legacy: ['3'], label: '管理模组 / 插件',
                 hint: (ctx) => {
                     try {
                         const n = ctx.options.modManager ? ctx.options.modManager.listMods().length : null;
@@ -124,12 +144,12 @@ const PAGES = [
                     } catch (e) { return null; }
                 }
             },
-            { id: '4', label: '模组 / 插件搜索下载', hint: () => 'URL / 本地文件' },
-            { id: '31', label: '列出已安装模组', hint: () => '启用状态一览' },
-            { id: '32', label: '启用 / 禁用模组', hint: () => '不删文件' },
-            { id: '33', label: '查看 / 编辑模组配置文件', hint: () => 'GUI 在 Web 端' },
-            { id: '34', label: '备份模组配置文件', hint: () => '改坏能回滚' },
-            { id: '5', label: '变更配置 (server.properties)', hint: () => '核心玩法参数' }
+            { id: '2', legacy: ['4'], label: '模组 / 插件搜索下载', hint: () => 'URL / 本地文件' },
+            { id: '3', legacy: ['31'], label: '列出已安装模组', hint: () => '启用状态一览' },
+            { id: '4', legacy: ['32'], label: '启用 / 禁用模组', hint: () => '不删文件' },
+            { id: '5', legacy: ['33'], label: '查看 / 编辑模组配置文件', hint: () => 'GUI 在 Web 端' },
+            { id: '6', legacy: ['34'], label: '备份模组配置文件', hint: () => '改坏能回滚' },
+            { id: '7', legacy: ['5'], label: '变更配置 (server.properties)', hint: () => '核心玩法参数' }
         ]
     },
     {
@@ -138,16 +158,16 @@ const PAGES = [
         title: '网络与联机',
         items: [
             {
-                id: '14', label: '联机 / 我要当房主 (陶瓦)',
+                id: '1', legacy: ['14'], label: '联机 / 我要当房主 (陶瓦)',
                 hint: () => 'PCL/HMCL 内置支持'
             },
-            { id: '141', label: '开房（生成房间号）', hint: () => '好友输房间号加入' },
-            { id: '142', label: '查看房间号 / 状态', hint: () => '当前联机信息' },
-            { id: '143', label: '关房（停止陶瓦）', hint: () => '释放进程' },
-            { id: '7', label: '下载镜像 / 超时 / 重试', hint: () => 'BMCLAPI 等' },
-            { id: '121', label: '服务器端口与外网可见性', hint: () => 'server-port' },
-            { id: '122', label: '查看本机网络信息', hint: () => '内网 IP / 端口' },
-            { id: '123', label: 'Web 面板启动 / 停止', hint: () => '浏览器管理' }
+            { id: '2', legacy: ['141'], label: '开房（生成房间号）', hint: () => '好友输房间号加入' },
+            { id: '3', legacy: ['142'], label: '查看房间号 / 状态', hint: () => '当前联机信息' },
+            { id: '4', legacy: ['143'], label: '关房（停止陶瓦）', hint: () => '释放进程' },
+            { id: '5', legacy: ['7'], label: '下载镜像 / 超时 / 重试', hint: () => 'BMCLAPI 等' },
+            { id: '6', legacy: ['121'], label: '服务器端口与外网可见性', hint: () => 'server-port' },
+            { id: '7', legacy: ['122'], label: '查看本机网络信息', hint: () => '内网 IP / 端口' },
+            { id: '8', legacy: ['123'], label: 'Web 面板启动 / 停止', hint: () => '浏览器管理' }
         ]
     },
     {
@@ -156,15 +176,15 @@ const PAGES = [
         title: '工具与日志',
         items: [
             {
-                id: '11', label: '错误日志分析',
+                id: '1', legacy: ['11'], label: '错误日志分析',
                 hint: () => 'AI 摘要 / 报告'
             },
-            { id: '111', label: 'AI 分析最近日志', hint: () => '定位崩溃原因' },
-            { id: '112', label: '生成统计报告', hint: () => '保存为文件' },
-            { id: '4', label: '实时日志跟踪', hint: () => 'tail -f，Ctrl+C 退出' },
-            { id: '113', label: '清理旧日志（保留最近 N 天）', hint: () => '省磁盘' },
-            { id: '10', label: '生成客户端整合包', hint: () => '打包发给朋友' },
-            { id: '9', label: '安装整合包', hint: () => 'zip / URL' }
+            { id: '2', legacy: ['111'], label: 'AI 分析最近日志', hint: () => '定位崩溃原因' },
+            { id: '3', legacy: ['112'], label: '生成统计报告', hint: () => '保存为文件' },
+            { id: '4', legacy: ['4'], label: '实时日志跟踪', hint: () => 'tail -f，Ctrl+C 退出' },
+            { id: '5', legacy: ['113'], label: '清理旧日志（保留最近 N 天）', hint: () => '省磁盘' },
+            { id: '6', legacy: ['10'], label: '生成客户端整合包', hint: () => '打包发给朋友' },
+            { id: '7', legacy: ['9'], label: '安装整合包', hint: () => 'zip / URL' }
         ]
     },
     {
@@ -173,18 +193,18 @@ const PAGES = [
         title: '高级与杂项',
         items: [
             {
-                id: '8', label: '系统设置（Java / 性能 / 信息）',
+                id: '1', legacy: ['8'], label: '系统设置（Java / 性能 / 信息）',
                 hint: (ctx) => {
                     const s = ctx.status.collect();
                     return s.javaInstalled.length ? `${s.javaInstalled.length} 个 Java` : '未检测到 Java';
                 }
             },
-            { id: '81', label: 'Java 设置（扫描 / 选择 / 自动安装）', hint: () => '换 JDK 版本' },
-            { id: '82', label: '修改 JVM 参数（模板 a/b/c/d + 覆盖）', hint: () => '内存与 GC' },
-            { id: '83', label: '查看系统信息', hint: () => 'OS / 内存 / Node' },
-            { id: '84', label: '重置全部配置', hint: () => '⚠ 不可撤销' },
-            { id: '6', label: '认证设置 (外置登录)', hint: () => 'authlib-injector' },
-            { id: '13', label: 'Web 主题更改', hint: () => '第三方主题' }
+            { id: '2', legacy: ['81'], label: 'Java 设置（扫描 / 选择 / 自动安装）', hint: () => '换 JDK 版本' },
+            { id: '3', legacy: ['82'], label: '修改 JVM 参数（模板 a/b/c/d + 覆盖）', hint: () => '内存与 GC' },
+            { id: '4', legacy: ['83'], label: '查看系统信息', hint: () => 'OS / 内存 / Node' },
+            { id: '5', legacy: ['84'], label: '重置全部配置', hint: () => '⚠ 不可撤销' },
+            { id: '6', legacy: ['6'], label: '认证设置 (外置登录)', hint: () => 'authlib-injector' },
+            { id: '7', legacy: ['13'], label: 'Web 主题更改', hint: () => '第三方主题' }
         ]
     }
 ];
@@ -192,10 +212,68 @@ const PAGES = [
 /** 页键 → 页定义 */
 const PAGE_MAP = new Map(PAGES.map(p => [p.key, p]));
 
-/** 编号 → 页（同一编号可能出现在多页，取第一次出现；跳页时用） */
-function findPageOfItem(id) {
+/** 取一项的全部编号：本页序号 + 旧编号 */
+function idsOf(item) {
+    if (!item) return [];
+    const legacy = Array.isArray(item.legacy) ? item.legacy : [];
+    return [String(item.id), ...legacy.map(String)];
+}
+
+/** 某页里编号命中的项（本页序号优先，其次旧编号） */
+function itemOfPage(pageKey, id) {
+    const p = PAGE_MAP.get(pageKey);
+    if (!p) return null;
+    const key = String(id);
+    const exact = p.items.find(it => String(it.id) === key);
+    if (exact) return exact;
+    return p.items.find(it => idsOf(it).includes(key)) || null;
+}
+
+/**
+ * 编号 → 页（跨页查找用）。
+ *
+ * 顺序：本页序号 → 本页旧编号 → 其他页序号 → 其他页旧编号。
+ * 旧编号可以在多页重复（`4` = 模组搜索下载 / 实时日志），取第一次出现的页即可——
+ * 真正执行时由 dispatchMenuItem 的 case 决定做什么，这里只负责「找得到」。
+ */
+function findPageOfItem(id, currentPage) {
+    const key = String(id);
+    if (currentPage && PAGE_MAP.has(currentPage)) {
+        const p = PAGE_MAP.get(currentPage);
+        if (p.items.some(it => String(it.id) === key)) return currentPage;
+        if (p.items.some(it => idsOf(it).includes(key))) return currentPage;
+    }
     for (const p of PAGES) {
-        if (p.items.some(it => it.id === String(id))) return p.key;
+        if (p.items.some(it => String(it.id) === key)) return p.key;
+    }
+    for (const p of PAGES) {
+        if (p.items.some(it => idsOf(it).includes(key))) return p.key;
+    }
+    return null;
+}
+
+/**
+ * 编号解析（模块级，TUI 与兼容模式共用）。
+ *
+ * 返回 `{ page, item, functional }`，找不到返回 null。
+ *   - `page`       命中项所在页（跨页命中时调用方要把 state.page 改过去）；
+ *   - `item`       命中的项（用于取 label 等）；
+ *   - `functional` 稳定功能键（该项的旧编号 / 主编号），dispatchMenuItem 认这个。
+ *
+ * 优先级：本页序号（界面上显示的 1 2 3…）→ 本页旧编号 → 别的页的旧编号。
+ * 「到哪一页都是 1,2,3,4,5」靠第一条：同一页里序号唯一，敲几就是本页第几项。
+ */
+function resolveNumber(id, page) {
+    const key = String(id);
+    const firstLegacy = (it) => String((Array.isArray(it.legacy) ? it.legacy : [])[0] || it.id);
+
+    let item = itemOfPage(page, key);
+    if (item) return { page, item, functional: firstLegacy(item) };
+
+    const owner = findPageOfItem(key, null);
+    if (owner) {
+        item = itemOfPage(owner, key);
+        if (item) return { page: owner, item, functional: firstLegacy(item) };
     }
     return null;
 }
@@ -334,7 +412,11 @@ async function runTuiMode(options, state) {
             items: def.items.map(it => ({
                 id: it.id,
                 label: it.label,
-                hint: typeof it.hint === 'function' ? it.hint(ctx) : it.hint
+                legacy: it.legacy,
+                // hint 长度也计入排版：旧编号小注 + 备注必须塞进 70 列，
+                // 最长的一条按 8 个字算（`旧 141  内网 IP / 端口`）
+                hint: typeof it.hint === 'function' ? it.hint(ctx) : it.hint,
+                maxHint: HINT_MAX
             }))
         };
         tui.drawPage({
@@ -352,31 +434,17 @@ async function runTuiMode(options, state) {
 
     /** 执行一个功能：挂起键盘 → 跑 dispatch → 按回车返回 → 恢复并重绘 */
     const runItem = async (id) => {
-        let def = PAGE_MAP.get(state.page);
-        let item = def && def.items.find(it => it.id === String(id));
-
-        // 本页没有这个编号 → 去它所属的页执行。
-        //
-        // 老用户是按扁平菜单的习惯记编号的（`22` = 列出方案），七页拆分后
-        // 在 Q 页直接敲 `22` 回车，不该只得到一句「本页没有编号 22」。
-        // 同编号出现在多页时（`4` 在 Q/E/T 都有）**本页优先**，只有本页
-        // 完全没有才跳页——跳过去后 state.page 也跟着改，返回时停在新页，
-        // 用户自然就记住了「22 属于 W 页」。
-        if (!item) {
-            const owner = findPageOfItem(id);
-            if (owner && owner !== state.page) {
-                state.page = owner;
-                def = PAGE_MAP.get(owner);
-                item = def && def.items.find(it => it.id === String(id));
-            }
-        }
-        if (!item) {
-            state.notice = `没有编号 ${id} 的功能（Q/W/E/R/T/Y 切页查看）`;
+        const hit = resolveNumber(id, state.page);
+        if (!hit) {
+            state.notice = `没有编号 ${id} 的功能（本页 1~${(PAGE_MAP.get(state.page) || { items: [] }).items.length || 1}，Q/W/E/R/T/Y 切页）`;
             return null;
         }
+        // 跨页命中：切到那一页再执行，返回时用户停在新页
+        if (hit.page !== state.page) state.page = hit.page;
+        const functional = hit.functional;
 
         // 启动服务器：服务端控制台会接管 stdin，必须关掉 TUI 的 readline
-        if (String(id) === '1') {
+        if (functional === '1') {
             const r = await maybeJumpToServer(options, kb, status);
             if (r.handled) return 'SERVER';
             // 服务器已在运行 / 用户拒绝启动 / 启动失败 → 停在原地重绘。
@@ -391,7 +459,7 @@ async function runTuiMode(options, state) {
         if (io) await io.enter();
         let jumpServer = false;
         try {
-            jumpServer = await dispatchMenuItem(String(id), options, null, ctx, io);
+            jumpServer = await dispatchMenuItem(String(id), options, null, ctx, io, { page: hit.page });
         } catch (e) {
             console.error(`\n❌ 执行出错: ${e.message}`);
             logger.erro(`菜单操作 ${id} 出错: ${e.message}`);
@@ -598,7 +666,9 @@ async function runCompatMode(options, state) {
                 items: def.items.map(it => ({
                     id: it.id,
                     label: it.label,
-                    hint: typeof it.hint === 'function' ? it.hint(ctx) : it.hint
+                    legacy: it.legacy,
+                    hint: typeof it.hint === 'function' ? it.hint(ctx) : it.hint,
+                    maxHint: HINT_MAX
                 }))
             };
             tui.drawPage({ page: def.key, def: plain, status, notice: state.notice });
@@ -638,7 +708,15 @@ async function runCompatMode(options, state) {
                 return;
             }
             if (/^[0-9]+$/.test(k)) {
-                if (k === '1') {
+                // 与 TUI 模式同一套解析：本页序号 → 本页旧编号 → 跨页旧编号
+                const hit = resolveNumber(k, state.page);
+                if (!hit) {
+                    state.notice = `没有编号 ${k} 的功能（本页 1~${(PAGE_MAP.get(state.page) || { items: [] }).items.length || 1}，Q/W/E/R/T/Y 切页）`;
+                    logger.warn(`无效菜单选择: ${raw}`);
+                    continue;
+                }
+                if (hit.page !== state.page) state.page = hit.page;
+                if (hit.functional === '1') {
                     const r = await maybeJumpToServer(options, null, status, rl);
                     if (r.handled) {
                         rl.close();
@@ -648,7 +726,7 @@ async function runCompatMode(options, state) {
                     status.invalidate();
                     continue;
                 }
-                const jump = await dispatchMenuItem(k, options, rl, ctx);
+                const jump = await dispatchMenuItem(k, options, rl, ctx, null, { page: hit.page });
                 if (jump) {
                     rl.close();
                     return;
@@ -838,18 +916,37 @@ async function maybeJumpToServer(options, kb, status, rl = null) {
 /**
  * 分发一个功能编号。
  *
- * 与 dispatchMenu 的区别：本函数处理 15 这种「扩展编号」（原主菜单没有的
- * 快速入口），并在结束时返回「是否需要交出 stdin」。
+ * 编号有两套：
+ *   - **本页序号**（1 2 3 …）：`wow m` 界面上显示、用户实际敲的那套。
+ *     同一页里序号唯一，所以「敲 3」到底是「变更配置」还是「列出方案」
+ *     取决于当前页——调用方用 `opts.page` 传进来。
+ *   - **旧编号**（原扁平菜单 1~14，以及 3.7.x 的 21/22/31/141 等扩展编号）：
+ *     仍然认，但只在本页找不到时才生效，界面上以灰字 `旧 22` 标注。
  *
- * @returns {Promise<boolean>} true = 调用方必须 close 自己的 readline
+ * 为什么要区分：七页拆分后旧编号散落在各页，用户在 W 页敲 `1` 期望的是
+ * 「方案管理」（本页第 1 项），而在 Q 页敲 `1` 期望的是「启动服务器」。
+ * 只按旧编号分发的话，这两者无法同时成立。
+ *
+ * @param {object} opts
+ *   - `page` 当前页键（Q/W/E/R/T/Y），用于解析本页序号
+ * @returns {Promise<boolean>} true = 调用方必须交出 stdin（服务端接管 / 进日志跟踪）
  */
-async function dispatchMenuItem(id, options, rl, ctx, io) {
+async function dispatchMenuItem(id, options, rl, ctx, io, opts = {}) {
     const key = String(id);
-    // 扩展编号里的提问统一走 io（有 TUI 时是「挂起键盘再问」的安全通道）
+    const page = opts.page || null;
+    // 提问统一走 io（有 TUI 时是「挂起键盘再问」的安全通道）
     const ask2 = (prompt) => ioAsk(io, rl, prompt);
 
-    // ── W 页的快捷入口（不新写业务，转调已有管理器方法）──
-    switch (key) {
+    // 本页序号先解析成「稳定的功能键」（旧编号），再走原来的 case。
+    // 这样新增页 / 调整页内顺序时，下面的业务代码一行都不用动。
+    const item = page ? itemOfPage(page, key) : null;
+    const isPageNumber = !!(item && String(item.id) === key);
+    const functional = isPageNumber
+        ? String((Array.isArray(item.legacy) ? item.legacy : [])[0] || item.id)
+        : key;
+
+    switch (functional) {
+        // ── 方案页的快捷入口（不新写业务，转调已有管理器方法）──
         case '21': {   // 快速切换方案
             printHeader('快速切换方案');
             if (!options.schemeManager) { console.log('方案管理模块未加载'); return false; }
@@ -882,12 +979,8 @@ async function dispatchMenuItem(id, options, rl, ctx, io) {
             }
             return false;
         }
-        case '24': {   // 新建方案 → 复用 case 2 的子菜单 1
-            return dispatchMenu('2', options, rl, { sub: '1' }, io);
-        }
-        case '25': {   // 删除方案 → 复用 case 2 的子菜单 4
-            return dispatchMenu('2', options, rl, { sub: '4' }, io);
-        }
+        case '24': return dispatchMenu('2', options, rl, { sub: '1' }, io);   // 新建方案
+        case '25': return dispatchMenu('2', options, rl, { sub: '4' }, io);   // 删除方案
         case '26': {   // 整理资源池
             printHeader('整理资源池（瘦身）');
             if (!options.schemeManager) { console.log('方案管理模块未加载'); return false; }
@@ -903,13 +996,13 @@ async function dispatchMenuItem(id, options, rl, ctx, io) {
             return false;
         }
 
-        // ── E 页的模组快捷入口 ──
+        // ── 内容页的模组快捷入口 ──
         case '31': return dispatchMenu('3', options, rl, { sub: '1' }, io);
         case '32': return dispatchMenu('3', options, rl, { sub: '4' }, io);
         case '33': return dispatchMenu('3', options, rl, { sub: '6' }, io);
         case '34': return dispatchMenu('3', options, rl, { sub: '7' }, io);
 
-        // ── R 页的联机快捷入口 ──
+        // ── 网络页的联机快捷入口 ──
         case '141': return dispatchMenu('14', options, rl, { sub: '1' }, io);
         case '142': return dispatchMenu('14', options, rl, { sub: '2' }, io);
         case '143': return dispatchMenu('14', options, rl, { sub: '3' }, io);
@@ -917,22 +1010,30 @@ async function dispatchMenuItem(id, options, rl, ctx, io) {
         case '122': return lanNetInfo(io, rl);
         case '123': return dispatchMenu('5', options, rl, { sub: '1' }, io);
 
-        // ── T 页的日志快捷入口 ──
+        // ── 工具页的日志快捷入口 ──
         case '111': return dispatchMenu('11', options, rl, { sub: '1' }, io);
         case '112': return dispatchMenu('11', options, rl, { sub: '2' }, io);
-        case '4': return tailLogs(options);
         case '113': return cleanLogs(io, rl);
 
-        // ── Y 页的系统设置快捷入口 ──
+        // ── 高级页的系统设置快捷入口 ──
         case '81': return dispatchMenu('8', options, rl, { sub: '1' }, io);
         case '82': return dispatchMenu('8', options, rl, { sub: '2' }, io);
         case '83': return dispatchMenu('8', options, rl, { sub: '3' }, io);
         case '84': return dispatchMenu('8', options, rl, { sub: '4' }, io);
 
+        // 实时日志跟踪：只从「工具页第 4 项」这一处进入。
+        // 旧编号 `4` 在别的页表示「模组搜索下载」，若在这里截住会误伤——
+        // 所以要求要么是工具页的本页序号，要么显式写了旧编号 4 且当前不在内容页。
+        case '4':
+            if (page === 'T' ? isPageNumber : page !== 'E') return tailLogs(options);
+            break;
+
         default:
-            // 落到原主菜单的 1~14
-            return dispatchMenu(key, options, rl, null, io);
+            break;
     }
+
+    // 落到原主菜单的 1~14
+    return dispatchMenu(functional, options, rl, null, io);
 }
 
 /**
@@ -1969,6 +2070,9 @@ module.exports = {
     PAGES,
     PAGE_MAP,
     findPageOfItem,
+    itemOfPage,
+    idsOf,
+    resolveNumber,
     // 兼容旧接口
     createRL,
     ask,

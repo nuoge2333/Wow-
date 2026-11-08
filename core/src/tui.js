@@ -138,6 +138,27 @@ function padRight(str, width) {
     return pad > 0 ? str + ' '.repeat(pad) : str;
 }
 
+/**
+ * 按显示宽度截断（超宽时以 `…` 收尾）。
+ *
+ * 只给「标签 + 旧编号小注 + 备注」这一行用：三者加起来可能超过 70 列，
+ * 与其让终端折行把版面弄乱，不如把最长的那个标签截掉尾巴——
+ * 编号列永远完整，用户敲的数字始终看得见。
+ */
+function fit(str, width) {
+    const s = String(str);
+    if (dispWidth(s) <= width) return s;
+    let out = '';
+    let w = 0;
+    for (const ch of s) {
+        const cw = dispWidth(ch);
+        if (w + cw > width - 1) break;
+        out += ch;
+        w += cw;
+    }
+    return out + '…';
+}
+
 // ==================== 输出 ====================
 
 let lastRenderHeight = 0;
@@ -301,7 +322,7 @@ class StatusBar {
  *
  * 布局（从上到下）：
  *   ══════════════════════════════════════════   ← 状态栏顶
- *     wow~ ... V3.7.1-26.44        [Q] 服务器
+ *     wow~ ... V3.7.2-26.45        [Q] 服务器
  *     服务器: ⚫ 已停止    方案: xxx
  *     已装 Java: ...
  *     当前 Java: ...
@@ -336,11 +357,42 @@ function drawPage(ctx) {
     const items = def.items || [];
     const idWidth = Math.max(2, ...items.map(it => String(it.id).length));
     const labelWidth = Math.max(0, ...items.map(it => dispWidth(it.label))) + 2;
-    for (const it of items) {
+    // 旧编号小注：`旧 22`。只在对本页序号有歧义时显示（老用户靠它找旧习惯），
+    // 且**不占编号列**——编号列永远只有界面上那套 1 2 3 4 5。
+    const legacyTags = items.map(it => {
+        const legacy = Array.isArray(it.legacy) ? it.legacy.map(String) : [];
+        return legacy.length ? `旧 ${legacy.join('/')}` : '';
+    });
+    const tagWidth = Math.max(0, ...legacyTags.map(t => dispWidth(t)));
+    // 备注列宽：本页实际最长的一条（会被下面的列预算再压一次）。
+    // 早先这里还夹了一个「建议上限」，结果 13 字的备注被截成 `PCL/HMC…`，
+    // 而 70 列其实放得下——真正需要截断的判断只在列预算里做。
+    const hintWidth = Math.max(0, ...items.map(it => (it.hint ? dispWidth(String(it.hint)) : 0)));
+    for (let i = 0; i < items.length; i++) {
+        const it = items[i];
         const num = paint(String(it.id).padStart(idWidth), 'cyan');
-        const label = padRight(it.label, labelWidth);
-        const hint = it.hint ? paint(String(it.hint), 'gray') : '';
-        line(`  ${num}. ${label}${hint}`);
+        // 标签列按「本页最长标签」排；但标签 + 旧编号小注 + 备注加起来
+        // 可能超过 70 列（网络页第一项标签就有 18 字），超了就等比压两列：
+        // 先压标签（截断加 …），不够再压备注。编号列永远完整。
+        //
+        // 右边距留 1 格：正好贴到 70 列时有些终端会在最后一列自动换行。
+        const tagReserve = tagWidth ? tagWidth + 2 : 0;
+        const budget = WIDTH - 1 - 4 - idWidth - 2 - tagReserve;
+        let labelCol = Math.min(labelWidth, budget);
+        // 标签列不低于 10 格（`变更配置 (se…`），否则名字短到认不出，
+        // 剩下的空间让备注去截
+        const labelFloor = Math.min(labelWidth, 10);
+        let hintCol = hintWidth;
+        if (labelCol + hintCol > budget) {
+            labelCol = Math.max(labelFloor, budget - hintCol);
+            hintCol = Math.max(0, budget - labelCol);
+        }
+        const label = padRight(fit(it.label, labelCol - 2), labelCol);
+        const tag = legacyTags[i]
+            ? paint(padRight(legacyTags[i], tagWidth), 'dim') + '  '
+            : (tagWidth ? ' '.repeat(tagWidth + 2) : '');
+        const hint = it.hint ? paint(fit(String(it.hint), hintCol), 'gray') : '';
+        line(`  ${num}. ${label}${tag}${hint}`);
     }
 
     line('');
@@ -422,10 +474,17 @@ function createKeyboard(handlers = {}) {
         if (typeof handlers.onInterrupt === 'function') handlers.onInterrupt();
     };
 
+    // 判断 stdin 是否真的连着终端。管道 / cron / Docker 里 resume() 后
+    // 不能再建「terminal: true」的 readline——那会把流水线输入当行编辑处理，
+    // 行为与兼容模式不一致。
+    const stdinIsTty = () => {
+        try { return Boolean(stdin.isTTY); } catch (e) { return false; }
+    };
+
     const mkRl = () => readline.createInterface({
         input: stdin,
         output: stdout,
-        terminal: true,
+        terminal: stdinIsTty(),
         // 不让 readline 自己缓存历史行——TUI 的输入是一键一动作
         historySize: 0,
         // TUI 不要「行编辑器」的自动补全 / 历史兜底
@@ -470,9 +529,21 @@ function createKeyboard(handlers = {}) {
         rl = mkRl();
         rl.setPrompt('');
         readline.emitKeypressEvents(stdin, rl);
-        try { stdin.setRawMode(true); } catch (e) { /* 非 TTY */ }
+        const tty = stdinIsTty();
+        // 只有真终端才有 raw 模式。非 TTY 下强行 setRawMode 会抛错（已吞），
+        // 但更重要的是：**必须把流重新 resume 起来**，否则经过 askLine
+        // （它建了临时 readline、关掉后把 stdin 停在 paused）之后，
+        // keypress 再也收不到字节——表现为「回到界面后要按两次回车」。
+        if (tty) {
+            try { stdin.setRawMode(true); } catch (e) { /* 非 TTY */ }
+        }
         stdin.on('keypress', onKeypress);
         try { rl.resume(); } catch (e) { /* 忽略 */ }
+        // 非 TTY（或是 raw 模式没生效的情况）：readline 自己不会去读流，
+        // 这里显式开流，保证按键能到达 keypress
+        if (!tty) {
+            try { stdin.resume(); } catch (e) { /* 忽略 */ }
+        }
         rl.on('SIGINT', () => {
             fireInterrupt();
         });
@@ -554,6 +625,8 @@ function createKeyboard(handlers = {}) {
                     if (!drained) break;
                 }
             } catch (e) { /* 忽略 */ }
+            // 顺序说明：activate() 内部负责在 TTY 下进 raw 模式、
+            // 重新挂 keypress 监听。这里不要提前改终端模式。
             activate();
             // readline 在 resume 时会打一次提示符，TUI 不需要，擦掉这一行
             try {
@@ -610,6 +683,15 @@ function askLine(prompt = '', handlers = {}) {
         // 防御：如果 stdin 还在 raw 模式，先退出来，否则读不到整行
         try { if (stdin.isRaw && stdin.setRawMode) stdin.setRawMode(false); } catch (e) { /* 忽略 */ }
 
+        // **必须显式 resume**。
+        //
+        // 走到这里时 stdin 经常是 paused 的：调用方在离开上一个 readline
+        // 之后（或我们自己在上一次 askLine 收尾时）会把流停住。paused 的
+        // 流不会触发 data，新建的 readline 也就永远等不到那一行——
+        // 现象是「按回车没反应，得再按一次」，因为第二次按的时候流已经
+        // 被上一次的残留事件顺带唤醒。
+        try { stdin.resume(); } catch (e) { /* 忽略 */ }
+
         let rl = null;
         try {
             rl = readline.createInterface({
@@ -647,6 +729,7 @@ function askLine(prompt = '', handlers = {}) {
         try {
             stdout.write(prompt);
         } catch (e) { /* 忽略 */ }
+
         try {
             rl.question('', ans => fin(ans));
         } catch (e) {
