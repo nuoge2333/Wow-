@@ -18,16 +18,21 @@
  * 这样 `dispatch()` 里的 `case '1'` … `case '14'` 一行都不用改：
  * 改的只是「用户按哪个键能走到这个 case」，不是「case 里做什么」。
  *
- * 按键（TUI 模式，按下即触发，无需回车）：
- *   - Q/W/E/R/T/Y 切页并重绘
- *   - 数字         执行当前页对应功能
+ * 按键（TUI 模式）：
+ *   - Q/W/E/R/T/Y 切页并重绘（字母键按下即生效）
+ *   - 数字         进入编号输入框，**回车**执行当前页对应功能
+ *   - Backspace    删掉输错的最后一位编号
  *   - L            进入长命令模式
- *   - 0            退出（二次确认）
- *   - 回车         重绘当前页（刷新状态）
+ *   - 0 + 回车     退出（二次确认）
+ *   - 回车         编号为空时重绘当前页（刷新状态）
  *   - Ctrl+C       退出（二次确认）
  *
+ * 数字为什么必须回车：编号有 1~3 位（`1` / `14` / `141`），单键触发要么猜、
+ * 要么加等待窗口——两者都会让「手快」变成错误。与原来的数字菜单保持一致，
+ * 输入完整编号再回车，简单且没有时序问题。
+ *
  * 无 TTY（管道 / CI / Docker）时自动降级为「输入一行 + 回车」的兼容模式，
- * 七页与功能完全一致，只是没有按键即触发。
+ * 七页与功能完全一致。
  *
  * 单 readline 原则：
  *   整个 M 模式只有 tui.createKeyboard() 创建的那一个 readline。二级菜单
@@ -187,19 +192,6 @@ const PAGES = [
 /** 页键 → 页定义 */
 const PAGE_MAP = new Map(PAGES.map(p => [p.key, p]));
 
-/**
- * 多位数编号的等待窗口（毫秒）。
- *
- * TUI 是「按下即触发」，按 `2` 时无法判断用户是不是想按 `22`。这里等一小段
- * 时间收集后续数字。
- *
- * 90ms 是拍脑袋定的，实测不可用：人手连按同一个键的间隔普遍在 120~250ms
- * （pty 里用 150ms 间隔敲 `22`，第一下就落到了「方案管理」子菜单）。
- * 250ms 能覆盖绝大多数人的连按，同时单键动作最多等 0.25 秒，
- * 体感仍是「按下就有」。
- */
-const NUM_KEY_DELAY = 250;
-
 /** 编号 → 页（同一编号可能出现在多页，取第一次出现；跳页时用） */
 function findPageOfItem(id) {
     for (const p of PAGES) {
@@ -309,7 +301,7 @@ async function showMainMenu(options = {}, directChoice = null) {
 }
 
 /**
- * TUI 模式：唯一 readline + 按键即触发。
+ * TUI 模式：唯一 readline + 字母键即时、数字回车提交。
  */
 async function runTuiMode(options, state) {
     const status = new tui.StatusBar(options);
@@ -318,6 +310,19 @@ async function runTuiMode(options, state) {
     // 标记「本页要离开 TUI」：置成 'L' 后主循环 return，由外层决定去哪儿
     let leaving = null;
     let pendingConfirmExit = false;
+
+    /**
+     * 编号输入缓冲：敲数字累积、回车提交。
+     *
+     * 与原生（兼容）模式一致——「选择」永远是「输入编号 + 回车」，
+     * 不做「按下即触发」。早先试过按键即触发 + 250ms 拼接窗口，两个毛病：
+     *   - 人手连按同键要 120~250ms，`22` 常被拆成两次 `2`，落进方案管理子菜单；
+     *   - 等待窗口里的定时器没随切页取消时，旧页编号会在新页执行，
+     *     更糟的是泄漏到已经交还 stdin 的 REPL 里抢输入。
+     * 回车提交后缓冲只在 onKey 里存活，切页 / 进 L / 退出即清空，两类问题一起消失。
+     */
+    let numBuf = '';
+    const cancelNumber = () => { numBuf = ''; };
 
     const render = (notice) => {
         const def = PAGE_MAP.get(state.page) || PAGE_MAP.get('Q');
@@ -332,7 +337,14 @@ async function runTuiMode(options, state) {
                 hint: typeof it.hint === 'function' ? it.hint(ctx) : it.hint
             }))
         };
-        tui.drawPage({ page: def.key, def: withHints, status, notice });
+        tui.drawPage({
+            page: def.key,
+            def: withHints,
+            status,
+            notice,
+            // 正在输入的编号回显在提示行，否则敲了 `2` 屏幕上看不见
+            input: numBuf || null
+        });
         // notice 是「上一个动作的尾巴」，画过一次就作废。
         // 不清的话它会一直挂在页面底部，用户切回来看见一条早就不成立的提示。
         state.notice = null;
@@ -340,15 +352,28 @@ async function runTuiMode(options, state) {
 
     /** 执行一个功能：挂起键盘 → 跑 dispatch → 按回车返回 → 恢复并重绘 */
     const runItem = async (id) => {
-        const def = PAGE_MAP.get(state.page);
-        const item = def && def.items.find(it => it.id === String(id));
+        let def = PAGE_MAP.get(state.page);
+        let item = def && def.items.find(it => it.id === String(id));
+
+        // 本页没有这个编号 → 去它所属的页执行。
+        //
+        // 老用户是按扁平菜单的习惯记编号的（`22` = 列出方案），七页拆分后
+        // 在 Q 页直接敲 `22` 回车，不该只得到一句「本页没有编号 22」。
+        // 同编号出现在多页时（`4` 在 Q/E/T 都有）**本页优先**，只有本页
+        // 完全没有才跳页——跳过去后 state.page 也跟着改，返回时停在新页，
+        // 用户自然就记住了「22 属于 W 页」。
         if (!item) {
-            state.notice = `本页没有编号 ${id} 的功能`;
+            const owner = findPageOfItem(id);
+            if (owner && owner !== state.page) {
+                state.page = owner;
+                def = PAGE_MAP.get(owner);
+                item = def && def.items.find(it => it.id === String(id));
+            }
+        }
+        if (!item) {
+            state.notice = `没有编号 ${id} 的功能（Q/W/E/R/T/Y 切页查看）`;
             return null;
         }
-
-        // L：需要彻底交还 stdin，交给主循环处理
-        if (String(id) === 'L') return 'L';
 
         // 启动服务器：服务端控制台会接管 stdin，必须关掉 TUI 的 readline
         if (String(id) === '1') {
@@ -383,41 +408,11 @@ async function runTuiMode(options, state) {
         return jumpServer ? 'SERVER' : null;
     };
 
-    /**
-     * 数字键处理（带「两位数编号」的等待窗口）。
-     *
-     * 页内的编号有 1~3 位（`1`、`14`、`141`）。单键触发模式下，按下 `1`
-     * 时无法知道用户还想不想再按一个 `4`。做法：按下数字后先等
-     * `NUM_KEY_DELAY` 毫秒，收集这段时间内到达的后续数字，拼成一个编号再执行。
-     *
-     * 这个窗口只对「存在更长的同前缀编号」时生效——按 `0`（退出）或按
-     * 本页唯一以该数字开头的编号时立刻执行，不让用户感觉卡顿。
-     */
-    let numBuf = '';
-    let numTimer = null;
+    /** 主循环等待的「离开信号」：由任一路径 fulfill */
+    let signalLeave = () => {};
+    const leave = new Promise(resolve => { signalLeave = resolve; });
 
-    const idsOnPage = () => (PAGE_MAP.get(state.page) || { items: [] }).items.map(it => it.id);
-
-    /** 判断 buf 是否还是某编号的前缀（且不是完整唯一命中） */
-    const couldExtend = (buf) => {
-        const ids = idsOnPage();
-        return ids.some(id => id.length > buf.length && id.startsWith(buf));
-    };
-
-    /**
-     * 丢掉还没落地的编号（缓冲 + 等待窗口）。
-     *
-     * 必须在「切页 / 进 L / 退出 / 离开 TUI」时调用。否则会出现：
-     *   在 Q 页按 `1`（等 90ms 看是否要拼成 12/11/14），紧接着按 `W` 切页——
-     *   90ms 后定时器仍然按 `1` 去执行，于是 W 页底部冒出「本页没有编号 1 的功能」；
-     *   更糟的是按 `2` 后立刻按 `L`：TUI 已经关掉键盘进 REPL 了，
-     *   泄漏的定时器又在 REPL 里弹出「方案名称:」提问，两个消费者抢同一个 stdin。
-     */
-    const cancelNumber = () => {
-        if (numTimer) { clearTimeout(numTimer); numTimer = null; }
-        numBuf = '';
-    };
-
+    /** 提交编号：执行 → 处理离开 → 重绘。编号由回车触发，见 onKey 的 RETURN 分支 */
     const flushNumber = async (id) => {
         const next = await runItem(id);
         if (next) {
@@ -427,37 +422,6 @@ async function runTuiMode(options, state) {
         }
         render(state.notice);
     };
-
-    const onDigit = (d) => {
-        numBuf += d;
-        if (numTimer) { clearTimeout(numTimer); numTimer = null; }
-
-        // `0` 是全局退出键，不参与编号拼接
-        if (numBuf === '0') {
-            numBuf = '';
-            pendingConfirmExit = true;
-            render('确定要退出吗？按 Y 确认，其他任意键取消');
-            return;
-        }
-        // 还能更长 → 再等一等
-        if (couldExtend(numBuf)) {
-            numTimer = setTimeout(() => {
-                const id = numBuf;
-                numBuf = '';
-                numTimer = null;
-                flushNumber(id);
-            }, NUM_KEY_DELAY);
-            return;
-        }
-        // 没有更长的编号了 → 立即执行
-        const id = numBuf;
-        numBuf = '';
-        flushNumber(id);
-    };
-
-    /** 主循环等待的「离开信号」：由任一路径 fulfill */
-    let signalLeave = () => {};
-    const leave = new Promise(resolve => { signalLeave = resolve; });
 
     /**
      * 退出确认通过后的收尾。
@@ -479,8 +443,15 @@ async function runTuiMode(options, state) {
         process.exit(0);
     };
 
+    /** 进入退出确认。`0` + 回车，或 Ctrl+C，都走这里 */
+    const askExit = () => {
+        cancelNumber();
+        pendingConfirmExit = true;
+        render('确定要退出吗？按 Y 确认，其他任意键取消');
+    };
+
     const onKey = async (k) => {
-        // 退出确认
+        // 退出确认：只有 Y 走，其余键取消；若按的是数字，顺手当作新输入的开头
         if (pendingConfirmExit) {
             if (k === 'Y') {
                 finishExit();
@@ -488,10 +459,12 @@ async function runTuiMode(options, state) {
             }
             pendingConfirmExit = false;
             state.notice = null;
+            numBuf = /^[0-9]$/.test(k) ? k : '';
             render();
             return;
         }
 
+        // 页键 / L：字母键仍然「按下即切」，那是 TUI 的顺手之处，不需要回车
         if (PAGE_MAP.has(k)) {
             cancelNumber();
             state.page = k;
@@ -505,22 +478,49 @@ async function runTuiMode(options, state) {
             signalLeave();
             return;
         }
-        if (k === '0') {
-            cancelNumber();
-            pendingConfirmExit = true;
-            render('确定要退出吗？按 Y 确认，其他任意键取消');
+
+        // 回车：提交编号缓冲。空缓冲时只刷新状态（保留旧的行为）
+        if (k === 'RETURN') {
+            const id = numBuf;
+            numBuf = '';
+            if (!id) {
+                status.invalidate();
+                state.notice = null;
+                render();
+                return;
+            }
+            // `0` 是退出，不是本页功能
+            if (id === '0') {
+                askExit();
+                return;
+            }
+            await flushNumber(id);
             return;
         }
+
+        // 退格：删一位
+        if (k === 'BACKSPACE') {
+            if (numBuf) {
+                numBuf = numBuf.slice(0, -1);
+                render();
+            }
+            return;
+        }
+
+        // 数字：只入缓冲，等回车。最多 4 位，防止乱按堆出一长串
+        if (/^[0-9]$/.test(k)) {
+            if (numBuf.length < 4) {
+                numBuf += k;
+                render();
+            }
+            return;
+        }
+
+        // 兼容旧的「回车 = 刷新」语义（tui.js 已改为发 RETURN，这里留个兜底）
         if (k === 'REFRESH') {
-            cancelNumber();
             status.invalidate();
             state.notice = null;
             render();
-            return;
-        }
-        if (/^[0-9]$/.test(k)) {
-            // 单键触发：交给「编号拼接器」，它会处理两位数编号的等待窗口
-            onDigit(k);
             return;
         }
         // 其他键：忽略（不刷屏、不响铃）
@@ -535,9 +535,7 @@ async function runTuiMode(options, state) {
                 finishExit();
                 return;
             }
-            cancelNumber();
-            pendingConfirmExit = true;
-            render('确定要退出吗？按 Y 确认，其他任意键取消');
+            askExit();
         },
         onEof: () => {
             cancelNumber();
@@ -787,14 +785,46 @@ async function maybeJumpToServer(options, kb, status, rl = null) {
     }
     if (status) status.invalidate();
 
+    /**
+     * 启动没成：先停一屏让用户读完原因，再把键盘还给 TUI。
+     *
+     * 两个来源都走这里：
+     *   - `start()` 抛错；
+     *   - `start()` 返回 false（方案未就绪 / 核心缺失 / 内存红线 —— 它自己
+     *     打印完原因就 return 了，**没有接管 stdin**）。
+     * 此时 TUI 的键盘还是挂起状态、stdin 空着，正好用 askLine 停一屏。
+     * 若直接重绘，刚打印的失败原因会被清屏擦掉，用户只看到一句「启动失败」。
+     */
+    const noteAndResume = async (message) => {
+        if (kb) {
+            if (io) {
+                await ioAsk(io, rl, '\n按回车键返回...');
+                io.leave();
+            } else {
+                await tui.askLine('\n按回车键返回...');
+                kb.resume();
+            }
+        } else if (rl) {
+            await ask(rl, '\n按回车键返回...');
+        }
+        if (status) status.invalidate();
+        return { handled: false, message };
+    };
+
+    let started = false;
     try {
-        await serverManager.start(memory);
+        started = await serverManager.start(memory);
     } catch (e) {
         console.error(`❌ 启动失败: ${e.message}`);
         logger.erro(`启动服务器失败: ${e.message}`);
-        // 启动失败：服务端没接管 stdin，把键盘还给用户，继续留在 TUI
-        if (kb) kb.resume();
-        return { handled: false, message: `❌ 启动失败: ${e.message}` };
+        return noteAndResume(`❌ 启动失败: ${e.message}`);
+    }
+
+    if (started === false) {
+        // start() 提前返回：服务端没接管 stdin，TUI 不能按「跑完退出」处理，
+        // 否则键盘再也不会回到 TUI（终端停在行模式，按什么键都只是回显）。
+        logger.erro('启动服务器失败：start() 提前返回（方案 / 核心 / 内存检查未通过）');
+        return noteAndResume('❌ 启动失败（原因见上一屏）');
     }
 
     // start() 在交互模式下会阻塞到服务端退出；走到这里说明服务端已经停了。

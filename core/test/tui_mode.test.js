@@ -3,8 +3,8 @@
  *
  * 本文件是**源码级 + 模块级混合断言**：
  *
- *   - 模块级：直接 require tui.js / interactive.js，验证页面表、编号拼接器
- *     的前缀判定、状态栏采集、框线宽度计算等纯函数行为；
+ *   - 模块级：直接 require tui.js / interactive.js，验证页面表、编号跨页归属、
+ *     状态栏采集、框线宽度计算等纯函数行为；
  *   - 源码级：TUI 的按键流依赖真实 TTY，无法在 CI 里跑。这里用源码断言锁住
  *     几条「改坏了就再也对不上」的硬约束（单 readline、suspend 顺序、
  *     返回 :wow、底部导航七项）。
@@ -127,32 +127,67 @@ check('WIDTH 与底部导航齐边（框线不能比导航短）', () => {
 });
 
 // ─────────────────────────────────────────────
-console.log('\n— 编号拼接（两位/三位编号的等待窗口）—');
+console.log('\n— 编号输入（数字 + 回车）—');
 
-check('NUM_KEY_DELAY 覆盖人手连按间隔（200~400ms）', () => {
-    const m = itvSrc.match(/const NUM_KEY_DELAY = (\d+);/);
-    assert.ok(m, '未找到 NUM_KEY_DELAY');
-    const v = Number(m[1]);
-    // 下限 200：人手连按同键常见 120~250ms，90ms 会把 `22` 拆成两次 `2`
-    // 上限 400：再长单键动作就有明显延迟了
-    assert.ok(v >= 200 && v <= 400, `NUM_KEY_DELAY=${v} 不在可用区间`);
+check('数字键只入缓冲，不直接执行（不再是单键触发）', () => {
+    const onKey = itvSrc.match(/const onKey = async \(k\) => \{[\s\S]*?\n    \};/);
+    assert.ok(onKey, '未找到 onKey');
+    const m = onKey[0].match(/\n        if \(\/\^\[0-9\]\$\/\.test\(k\)\) \{[\s\S]*?\n        \}/);
+    assert.ok(m, '未找到数字输入分支');
+    assert.ok(/numBuf \+= k;/.test(m[0]), '数字未进缓冲');
+    assert.ok(!/flushNumber|runItem|setTimeout/.test(m[0]), '数字分支里仍在直接执行');
 });
 
-check('onDigit 有「可延长则等待」的分支', () => {
-    assert.ok(/couldExtend\(numBuf\)/.test(itvSrc), '缺 couldExtend 判断');
-    assert.ok(/setTimeout\(\(\) => \{[\s\S]{0,200}?flushNumber\(id\)/.test(itvSrc),
-        '缺延迟 flush');
+check('回车是唯一执行入口（tui 发 RETURN，interactive 提交编号）', () => {
+    assert.ok(/handlers\.onKey\('RETURN'\)/.test(tuiSrc), 'tui 未把回车映射成 RETURN');
+    const onKey = itvSrc.match(/const onKey = async \(k\) => \{[\s\S]*?\n    \};/)[0];
+    const m = onKey.match(/if \(k === 'RETURN'\) \{[\s\S]*?\n        \}/);
+    assert.ok(m, '未找到 RETURN 分支');
+    assert.ok(/await flushNumber\(id\)/.test(m[0]), '回车未提交编号');
 });
 
-check('couldExtend 只看「更长的同前缀编号」', () => {
-    const m = itvSrc.match(/const couldExtend = \(buf\) => \{[\s\S]*?\};/);
-    assert.ok(m, '未找到 couldExtend');
-    assert.ok(/id\.length > buf\.length && id\.startsWith\(buf\)/.test(m[0]),
-        'couldExtend 判定条件不对');
+check('空缓冲回车只刷新状态（保留旧行为）', () => {
+    const m = itvSrc.match(/if \(k === 'RETURN'\) \{[\s\S]*?\n        \}/)[0];
+    assert.ok(/if \(!id\) \{[\s\S]{0,120}?status\.invalidate\(\)/.test(m), '空回车未刷新状态');
 });
 
-check('数字 0 单独处理为退出（不参与拼接）', () => {
-    assert.ok(/if \(numBuf === '0'\)/.test(itvSrc), '未特殊处理 0');
+check('0 要回车才退出，且不再走单键触发', () => {
+    const m = itvSrc.match(/if \(k === 'RETURN'\) \{[\s\S]*?\n        \}/)[0];
+    assert.ok(/if \(id === '0'\) \{[\s\S]{0,60}?askExit\(\)/.test(m), '0 未在回车分支处理');
+    const onKey = itvSrc.match(/const onKey = async \(k\) => \{[\s\S]*?\n    \};/)[0];
+    assert.ok(!/\n        if \(k === '0'\) \{/.test(onKey), '仍有单键触发 0 的分支');
+    assert.ok(/const askExit = \(\) => \{/.test(itvSrc), '缺 askExit');
+});
+
+check('Backspace 删一位（输错了不用重来）', () => {
+    assert.ok(/if \(k === 'BACKSPACE'\) \{[\s\S]{0,120}?numBuf\.slice\(0, -1\)/.test(itvSrc),
+        'Backspace 未删位');
+    // tui 侧不能再把 backspace 当无关键吞掉
+    const swallow = tuiSrc.match(/\/\^\(up\|down[\s\S]*?\$\/i/);
+    assert.ok(swallow && !/backspace/.test(swallow[0]), 'backspace 仍被吞掉');
+});
+
+check('编号长度上限（乱按不会堆出一长串）', () => {
+    assert.ok(/numBuf\.length < 4/.test(itvSrc), '缺长度上限');
+});
+
+check('跨页编号会自动跳到所属页执行（老习惯敲 22 不该被判无此功能）', () => {
+    const m = itvSrc.match(/const runItem = async \(id\) => \{[\s\S]*?\n    \};/);
+    assert.ok(m, '未找到 runItem');
+    assert.ok(/const owner = findPageOfItem\(id\)/.test(m[0]), '未按编号反查所属页');
+    assert.ok(/if \(owner && owner !== state\.page\)[\s\S]{0,120}?state\.page = owner/.test(m[0]),
+        '未切换 state.page');
+    // 本页优先：跳页只在本页查不到时才发生
+    const iLocal = m[0].indexOf('def.items.find');
+    const iJump = m[0].indexOf('findPageOfItem(id)');
+    assert.ok(iLocal !== -1 && iJump !== -1 && iLocal < iJump, '跳页判定应先查本页');
+});
+
+check('编号回显在提示行（输入时不至于看不见自己敲了什么）', () => {
+    assert.ok(/input: numBuf \|\| null/.test(itvSrc), 'render 未传 input');
+    assert.ok(/ctx\.input/.test(tuiSrc) || /const \{ page, def, status, notice, input, plain \}/.test(tuiSrc),
+        'drawPage 未接收 input');
+    assert.ok(/编号: /.test(tuiSrc), '提示行未显示「编号:」');
 });
 
 // ─────────────────────────────────────────────
@@ -476,20 +511,18 @@ check('Ctrl+C 双路径去重（keypress 与 rl SIGINT 各报一次，不能连�
     assert.strictEqual(naked, 1, `createKeyboard 内应只有 fireInterrupt 一处，实际 ${naked}`);
 });
 
-check('切页 / 进 L / 退出 / 刷新都会丢掉未落地的编号', () => {
-    assert.ok(/const cancelNumber = \(\) => \{/.test(itvSrc), '缺 cancelNumber');
+check('切页 / 进 L / 退出确认 / EOF 都会丢掉半截编号', () => {
+    assert.ok(/const cancelNumber = \(\) => \{ numBuf = ''; \};/.test(itvSrc), '缺 cancelNumber');
     const onKey = itvSrc.match(/const onKey = async \(k\) => \{[\s\S]*?\n    \};/);
     assert.ok(onKey, '未找到 onKey');
     const body = onKey[0];
-    // 四个分支（切页 / L / 0 / REFRESH）都要先取消
     const branches = [
         /if \(PAGE_MAP\.has\(k\)\) \{\s*\n\s*cancelNumber\(\)/,
-        /if \(k === 'L'\) \{\s*\n\s*cancelNumber\(\)/,
-        /if \(k === '0'\) \{\s*\n\s*cancelNumber\(\)/,
-        /if \(k === 'REFRESH'\) \{\s*\n\s*cancelNumber\(\)/
+        /if \(k === 'L'\) \{\s*\n\s*cancelNumber\(\)/
     ];
     for (const re of branches) assert.ok(re.test(body), `分支未调用 cancelNumber: ${re}`);
-    // 退出确认与 EOF 也要清
+    // 退出确认走 askExit，它必须清缓冲
+    assert.ok(/const askExit = \(\) => \{\s*\n\s*cancelNumber\(\)/.test(itvSrc), 'askExit 未清编号');
     assert.ok(/const finishExit = \(\) => \{[\s\S]{0,120}?cancelNumber\(\)/.test(itvSrc), 'finishExit 未清编号');
     assert.ok(/onEof: \(\) => \{[\s\S]{0,80}?cancelNumber\(\)/.test(itvSrc), 'EOF 未清编号');
 });
@@ -518,8 +551,10 @@ check('maybeJumpToServer 在兼容模式下用调用方的 rl 提问（不再 as
 });
 
 check('启动失败要把原因带进 notice（重绘会清屏，console.error 会被擦掉）', () => {
-    assert.ok(/return \{ handled: false, message: `❌ 启动失败: \$\{e\.message\}` \}/.test(itvSrc),
-        '失败未返回 message');
+    assert.ok(/return noteAndResume\(`❌ 启动失败: \$\{e\.message\}`\)/.test(itvSrc),
+        'start 抛错时未返回 message');
+    assert.ok(/return noteAndResume\('❌ 启动失败（原因见上一屏）'\)/.test(itvSrc),
+        'start 提前返回时未返回 message');
     assert.ok(/if \(r\.message\) state\.notice = r\.message;/.test(itvSrc), 'runItem 未把 message 放进 notice');
 });
 
@@ -553,6 +588,28 @@ check('兼容模式遇到 EOF 不会死循环重绘（管道输入用完必须�
     const m = itvSrc.match(/const raw = \(await ask\(rl,[\s\S]{0,700}?if \(!raw\) continue;/);
     assert.ok(m, '未找到兼容模式读入逻辑');
     assert.ok(/if \(rl\.closed\) \{/.test(m[0]), 'EOF 判定缺失或晚于 continue');
+});
+
+check('server.start 返回「是否真的拉起了进程」：失败一律 false', () => {
+    const i = srvSrc.indexOf("async start(memory = null, extraJvmArgs = '')");
+    assert.ok(i > 0, '未找到 start');
+    // 截到下一个方法（_diagnoseCrash 的注释）为止
+    const j = srvSrc.indexOf('V3.5.18：异常退出时的本地初级诊断', i);
+    const body = srvSrc.slice(i, j > i ? j : i + 12000);
+    assert.ok(/return true;/.test(body), '成功路径未返回 true');
+    const falses = (body.match(/return false;/g) || []).length;
+    // 5 处：已在运行 / 方案目录缺失 ×2 / 核心缺失 / 内存红线
+    assert.ok(falses >= 5, `失败路径 return false 只有 ${falses} 处`);
+});
+
+check('start 提前返回时不能把 TUI 按「跑完退出」处理', () => {
+    assert.ok(/if \(started === false\) \{/.test(itvSrc), '未判定 start 返回值');
+    const m = itvSrc.match(/const noteAndResume = async \(message\) => \{[\s\S]*?\n    \};/);
+    assert.ok(m, '缺 noteAndResume');
+    assert.ok(/kb\.resume\(\)/.test(m[0]), '失败路径未收回键盘');
+    assert.ok(!/kb\.close\(\)/.test(m[0]), '失败路径不该 close（不可逆）');
+    // 失败原因要停在同一屏给用户看，不能直接重绘
+    assert.ok(/按回车键返回/.test(m[0]), '失败后未停一屏');
 });
 
 check('从控制台进菜单不重复打印控制台横幅（restored 标记）', () => {

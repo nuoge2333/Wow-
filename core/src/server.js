@@ -1127,7 +1127,7 @@ class ServerManager {
         if (this.isRunning()) {
             console.log('服务器已在运行中');
             logger.info('启动服务器：服务器已在运行中');
-            return;
+            return false;
         }
 
         // V3.4.x：若激活了方案，确保方案已补齐为完整实例（FULL）再直接在其目录内启动。
@@ -1137,7 +1137,7 @@ class ServerManager {
         if (activeScheme) {
             // V3.5.13：方案目录不存在时后续步骤必然失败（getServerDir 已回退到 scheme 根目录），
             // 立刻中止并明确说明原因，避免把「目录不存在」误报成「核心丢失」。
-            if (this._reportMissingSchemeDir(activeScheme)) return;
+            if (this._reportMissingSchemeDir(activeScheme)) return false;
             try {
                 const SchemeManager = require('./scheme_manager');
                 const sm = new SchemeManager();
@@ -1172,7 +1172,7 @@ class ServerManager {
             // V3.5.2 起核心安装统一走 scheme create，不再存在 install <类型> <版本> 命令
             const activeScheme = this.config.getConfig('server.scheme', null);
             // V3.5.13：兜底——正常流程已在补齐检查前拦下「方案目录不存在」，此处仅在异常路径下复用同一诊断。
-            if (activeScheme && this._reportMissingSchemeDir(activeScheme)) return;
+            if (activeScheme && this._reportMissingSchemeDir(activeScheme)) return false;
             console.error('未找到服务器核心（.jar）');
             if (activeScheme) {
                 console.error(`当前方案「${activeScheme}」目录内没有可运行的核心`);
@@ -1184,7 +1184,7 @@ class ServerManager {
                 console.error('例如: scheme create myserver --type vanilla --version 1.20.1');
             }
             logger.erro(`启动服务器失败：未找到服务器核心文件（方案=${activeScheme || '无'}，目录=${this.serverDir}）`);
-            return;
+            return false;
         }
 
         const cmd = await this._buildCommand(memory, extraJvmArgs);
@@ -1197,7 +1197,7 @@ class ServerManager {
             console.error(`\x1b[31m${memCheck.message}\x1b[39m`);
             console.error('');
             logger.erro(`启动服务器被拦截：-Xmx ${memCheck.xmxText} 超过物理内存（${memCheck.totalText}）的 80% 红线`);
-            return;
+            return false;
         }
 
         console.log(`启动命令: ${cmd.fullCommand.join(' ')}`);
@@ -1316,6 +1316,13 @@ class ServerManager {
                 this.process.on('exit', resolve);
             });
         }
+
+        // 真把进程拉起来过：交互模式走完 exit，非交互模式进程仍在后台跑。
+        // 与上面 5 处「没启动就返回 false」一起构成调用方可判定的契约——
+        // M 模式的 `1` 靠它区分「服务端跑完退出了」和「压根没起来」，
+        // 后者 stdin 没人接管，TUI 必须先收回键盘（否则终端停在行模式、
+        // 按什么键都只是回显）。
+        return true;
     }
 
     /**

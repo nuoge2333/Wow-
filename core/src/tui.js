@@ -52,7 +52,7 @@ const PAGE_KEYS = new Set(NAV_ITEMS.map(([k]) => k).filter(k => k !== 'L'));
 // ==================== 环境判定 ====================
 
 /**
- * 能否使用 TUI（按键即触发）模式。
+ * 能否使用 TUI 模式（raw 键盘，按键即时到达）。
  *
  * 必须同时满足：stdin 是 TTY 且能进 raw 模式。管道输入（`echo 1 | wow m`）、
  * CI、Docker 无 TTY 场景全部退回「数字 + 回车」的兼容模式，
@@ -311,17 +311,18 @@ class StatusBar {
  *     ...
  *   ──────────────────────────────────────────
  *    [Q]服务器 [W]方案 ... [0]退出
- *   提示: 数字执行 · Q/W/E/R/T/Y 切页 · L 长命令 · 0 退出
+ *   提示: 输入编号后回车执行 · Q/W/E/R/T/Y 切页 · L 长命令 · 0 退出
  *
  * @param {object} ctx
  * @param {string} ctx.page       当前页键
  * @param {object} ctx.def        页定义 { key, label, title, items }
  * @param {StatusBar} ctx.status  状态栏实例
  * @param {string} [ctx.notice]   一次性提示（上个动作的尾巴，重绘后清空）
+ * @param {string} [ctx.input]    正在输入的编号（非空时占据提示行）
  * @param {boolean} [ctx.plain]   true = 不用清屏，直接追加（兼容模式用）
  */
 function drawPage(ctx) {
-    const { page, def, status, notice, plain } = ctx;
+    const { page, def, status, notice, input, plain } = ctx;
     if (!plain) clear();
     status.render(page, def.label);
 
@@ -351,7 +352,14 @@ function drawPage(ctx) {
         return k === page ? paint(text, 'reverse') : paint(text, 'dim');
     }).join(' ');
     line('  ' + nav + '  ' + paint('[0]退出', 'dim'));
-    line('  ' + paint('数字执行当前页功能　Q/W/E/R/T/Y 切页　L 长命令模式　0 退出', 'gray'));
+    // 提示行：没在输入编号时显示操作提示；正在输入时让位给输入回显，
+    // 否则用户敲了 `2` 屏幕上看不见，得靠猜。
+    if (input) {
+        line('  ' + paint('编号: ', 'gray') + paint(String(input), 'cyan')
+            + paint('▏', 'cyan') + paint('　回车执行 · Backspace 删除', 'gray'));
+    } else {
+        line('  ' + paint('输入编号后回车执行　Q/W/E/R/T/Y 切页　L 长命令　0 退出', 'gray'));
+    }
 
     if (notice) {
         line('');
@@ -433,14 +441,19 @@ function createKeyboard(handlers = {}) {
             fireInterrupt();
             return;
         }
-        // 方向键 / 功能键：TUI 不用，直接吞掉，避免转义序列污染屏幕
-        if (k.name && /^(up|down|left|right|home|end|pageup|pagedown|delete|insert|tab|escape|backspace)$/i.test(k.name)) {
+        // 退格：交给上层删一位（编号输入用）。其余方向键 / 功能键 TUI 不用，
+        // 直接吞掉，避免转义序列污染屏幕。
+        if (k.name && /^backspace$/i.test(k.name)) {
+            if (typeof handlers.onKey === 'function') handlers.onKey('BACKSPACE');
+            return;
+        }
+        if (k.name && /^(up|down|left|right|home|end|pageup|pagedown|delete|insert|tab|escape)$/i.test(k.name)) {
             return;
         }
         if (!k.sequence && !str) return;
-        // 回车在 TUI 里等价于「刷新状态」
+        // 回车：上层用它提交编号输入（空缓冲时等同刷新）
         if (k.name && /^(return|enter)$/i.test(k.name)) {
-            if (typeof handlers.onKey === 'function') handlers.onKey('REFRESH');
+            if (typeof handlers.onKey === 'function') handlers.onKey('RETURN');
             return;
         }
         const raw = str || '';
@@ -509,9 +522,9 @@ function createKeyboard(handlers = {}) {
 
             // **排空 stdin 的残留字节**。
             //
-            // TUI 是单键触发，用户连按两位数编号（如 22）时，第二个键在
-            // 内核缓冲里还没被读走。如果不管它，二级菜单的第一次 question
-            // 会先把它吃掉（表现为「要切换到的方案名: 2」，直接进下一步）。
+            // raw 模式下按键即时到达，用户在回车之后很可能又敲了一两个键，
+            // 字节还留在内核缓冲里没被读走。如果不管它，二级菜单的第一次
+            // question 会先把它吃掉（表现为「要切换到的方案名: 2」）。
             //
             // 这里把已到达的字节读干净：用户敲的是「当前这一屏的动作」，
             // 二级菜单的输入应该从用户看到新画面之后的按键算起。

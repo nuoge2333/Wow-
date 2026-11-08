@@ -80,7 +80,8 @@ console.log('\n— 源码级：start() 提前中止 —');
 
 check('start() 在补齐检查前调用诊断并 return', () => {
     const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'server.js'), 'utf8');
-    const startIdx = src.indexOf('_reportMissingSchemeDir(activeScheme)) return;');
+    // 609 起 start() 返回「是否真启动了」，提前中止一律 return false
+    const startIdx = src.indexOf('_reportMissingSchemeDir(activeScheme)) return false;');
     assert.ok(startIdx > 0, 'start() 未在方案缺失时提前返回');
     // 该调用应出现在 ensureDirSync(serverDir) 之前，避免在错误目录建 logs/ 写 eula
     const ensureIdx = src.indexOf('fs.ensureDirSync(path.join(this.serverDir, \'logs\'))');
