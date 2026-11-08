@@ -90,6 +90,8 @@ git push origin main
 | Release 附件上传接口 | REST 直接 POST 到 assets 返回 `Not Found` | 用 `gh release upload`，别手搓 API |
 | GitHub 归档缓存延迟 | 刚推 tag 后下载到的可能是旧内容 | 独立核对包内 `cli.js` 的版本号，别只看哈希稳定 |
 | Gitee Release 建不了 | 需要私人令牌（`GITEE_TOKEN`），git remote 里的密码用不了 | 用户提供令牌后补建 |
+| GitHub release 下载端点 504 | `releases/download/...` 直连频繁 504 / 传输中断 | 用 API 取 asset（`/releases/assets/<id>` + `Accept: application/octet-stream`），或走 `gh-proxy.com` 镜像 |
+| GitHub 源码归档 404 | `archive/refs/tags/<tag>.zip` 直连偶发 404（缓存未生成） | 走 `gh-proxy.com` 镜像；下载后**必须**核对包内 `core/package.json` 的 version |
 
 ---
 
@@ -98,6 +100,19 @@ git push origin main
 - 已发布的最新版本：`v3.7.0-26.43`（2026-11-08）
 - **下一个版本号尚未确定**，等用户说「发行」时再定
 - 下一周期累积的改动：见 `git log v3.7.0-26.43..HEAD`
+
+### 本版发行进度（v3.7.0-26.43，2026-11-08）
+
+| 步骤 | 状态 |
+|------|------|
+| 升版本号（cli.js / package.json / package-lock.json） | ✅ `3.7.0-26.43` |
+| CHANGELOG 合并 7 个未发布批次 | ✅ |
+| 全量回归 39 文件 | ✅ 37.7s |
+| commit + tag + 双端推送 | ✅ `46129c1`，两端 tag 一致 |
+| SHA256SUMS 生成 | ✅ 两份归档哈希已核对包内 version |
+| GitHub Release + 附件 | ✅ [v3.7.0-26.43](https://github.com/nuoge2333/Wow-/releases/tag/v3.7.0-26.43) |
+| Gitee Release + 附件 | ⬜ **待补**：需要私人令牌（remote 里是登录密码） |
+| 端到端下载核对 | ✅ 附件经 API 下载，与本地清单逐字节一致 |
 
 ### 上一周期已发行（v3.7.0-26.43）
 
