@@ -139,7 +139,7 @@ FAIL=0
 
 echo "计算 GitHub 源码归档…"
 if line=$(hash_of "$GH_URL" "github" "wow-$TAG-github.zip"); then
-    echo "  $line" | tee -a "$TMP/SHA256SUMS"
+    echo "$line" | tee -a "$TMP/SHA256SUMS"
 else
     echo "  ❌ GitHub 归档不可用"
     FAIL=1
@@ -147,7 +147,7 @@ fi
 
 echo "计算 Gitee 源码归档…"
 if line=$(hash_of "$GT_URL" "gitee" "wow-$TAG-gitee.zip"); then
-    echo "  $line" | tee -a "$TMP/SHA256SUMS"
+    echo "$line" | tee -a "$TMP/SHA256SUMS"
 else
     echo "  ❌ Gitee 归档不可用"
     FAIL=1
