@@ -100,42 +100,41 @@ git push origin main
 
 ## 五、当前状态
 
-- 已发布的最新版本：`v3.7.1-26.44`（2026-11-08）
+- 已发布的最新版本：`v3.7.2-26.45`（2026-11-08）
 - **下一个版本号尚未确定**，等用户说「发行」时再定
-- 下一周期累积的改动：见 `git log v3.7.1-26.44..HEAD`
+- 下一周期累积的改动：见 `git log v3.7.2-26.45..HEAD`
 
-### 本版发行进度（v3.7.1-26.44，2026-11-08）
+### 本版发行进度（v3.7.2-26.45，2026-11-08）
 
 | 步骤 | 状态 |
 |------|------|
-| 升版本号（cli.js / package.json / tui.js 注释 / docs/TUI.md） | ✅ `3.7.1-26.44`（`package-lock.json` 被 gitignore，不入库） |
-| CHANGELOG 未发布章节转正 + 版本表更新 | ✅ |
-| 全量回归 39 文件 | ✅ 37.9s |
-| commit + tag + 双端推送 | ✅ `67c1b4a`，两端 tag 一致 |
-| 打包 `wow-v3.7.1-26.44.zip` | ✅ 825,541 B，132 条目，包内 version 已核对 |
+| 升版本号（cli.js / package.json / tui.js 注释 / docs/TUI.md） | ✅ `3.7.2-26.45`（`package-lock.json` 被 gitignore，不入库） |
+| CHANGELOG 新增 3.7.2 章节 + 版本表更新 | ✅ |
+| 全量回归 39 文件 | ✅ 连跑三次均 37.1~37.3s，全绿 |
+| pty 逐键实测 | ✅ 六页顺号 / 跨页旧编号 / 非法编号 / 日志跟踪 / 一次回车返回 |
+| commit + tag + 双端推送 | ✅ `8583ea6`，两端 tag `6086836` 一致（GitHub 首次推送连接被重置，重试成功） |
+| 打包 `wow-v3.7.2-26.45.zip` | ✅ 831,130 B，包内 version 已核对 |
 | SHA256SUMS 生成 | ✅ 两份归档哈希均已复算（github 走 gh-proxy 镜像） |
-| GitHub Release + 附件 | ✅ [v3.7.1-26.44](https://github.com/nuoge2333/Wow-/releases/tag/v3.7.1-26.44)（`SHA256SUMS` 187 B + zip 825,541 B） |
-| Gitee Release + 附件 | ✅ [v3.7.1-26.44](https://gitee.com/nuoge233/wow/releases/tag/v3.7.1-26.44)（id `1288032`，同样两个附件） |
-| 端到端下载核对 | ✅ 两端 zip 下载后哈希均为 `7afbd3f3…`；两端清单字节相同；`releases/latest` 均已指向本版 |
+| GitHub Release + 附件 | ✅ [v3.7.2-26.45](https://github.com/nuoge2333/Wow-/releases/tag/v3.7.2-26.45) |
+| Gitee Release + 附件 | ✅ [v3.7.2-26.45](https://gitee.com/nuoge233/wow/releases/tag/v3.7.2-26.45)（id `1288326`） |
+| 端到端下载核对 | ✅ 两端 zip 均为 `4b1fa7fa…`；两端清单字节相同；两端 `releases/latest` 已指向本版 |
 
-### 上一周期已发行（v3.7.1-26.44）
+### 上一周期已发行（v3.7.2-26.45）
 
 | 内容 | 文档 | 测试 |
 |------|------|------|
-| M 模式数字选择改回「输入编号 + 回车」 | `docs/TUI.md` | `core/test/tui_mode.test.js`（69 项） |
-| 编号跨页生效（本页优先） | `docs/TUI.md` | `core/test/tui_mode.test.js` |
-| 修「启动失败后界面变死图」（`start()` 布尔契约） | `docs/CHANGELOG.md` | `core/test/tui_mode.test.js`、`scheme_missing_dir.test.js` |
-| `SHA256SUMS` 去掉行首多余空格 | `scripts/make-sha256sums.sh` | 实跑生成 + `sha256sum -c` 格式核对 |
-
-> 开发期间**不改版本号**。下个周期里 `wow -V` 会一直显示 `3.7.1-26.44`，
-> 这是刻意的——避免「版本号已占用但远端没发布」的中间态。
+| M 模式每页编号改为 1,2,3… 顺号（`legacy` 兼容旧编号） | `docs/TUI.md` | `core/test/tui_mode.test.js`（72 项） |
+| `resolveNumber()` 三层解析（本页序号 → 本页旧编号 → 跨页旧编号） | `docs/TUI.md` | 同上 |
+| 70 列内排版：标签/备注按预算截断，编号列完整 | `docs/TUI.md` | pty 逐页宽度实测 |
+| `askLine` 前 `stdin.resume()`，修「返回要按两次回车」 | `docs/TUI.md` | pty 实测 |
+| 编号相关两条旧断言同步到新编号 | — | `core/test/interactive_menu.test.js` |
 
 ### 序号纪律
 
-`26.40` 是新的干净起点，`40` → `41` → `42` → `43` → `44` 一路递增下来。
+`26.40` 是新的干净起点，`40` → `41` → `42` → `43` → `44` → `45` 一路递增下来。
 继续保持**严格十六进制递增**，具体约束：
 
-- 下一个是 `45`，之后 `46` … — 正常十六进制递增，**不要跳过中间值**
+- 下一个是 `46`，之后 `47` … — 正常十六进制递增，**不要跳过中间值**
 - **绝不回绕复用**旧序号。历史上 `26.3a` ~ `26.3f` 因反复回绕被用了 2～3 次，
   导致无法用序号判断版本新旧，详见 `docs/CHANGELOG.md` 文首说明
 - 发版前先 `git tag --list | grep <候选序号>` 确认未被占用
