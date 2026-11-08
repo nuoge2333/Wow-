@@ -92,6 +92,7 @@ git push origin main
 | Gitee Release 建不了 | OpenAPI 只认私人令牌（`access_token`），git remote 里的登录密码返回 401；网页端在无登录态的环境里也走不通 | 让用户给一个勾了 `projects` 权限的私人令牌，用它调 `POST /repos/{owner}/{repo}/releases` 建完再 `attach_files` |
 | GitHub Release 漏传源码 zip | 附件只有 `SHA256SUMS`、缺 `wow-<tag>.zip`（v3.6.1 时两个都在），自动更新不受影响，手动下载的人拿不到包 | 发版后核对附件清单必须是 `SHA256SUMS` + `wow-<tag>.zip` 两项；补包用 `git archive --format=zip --prefix=wow-<tag>/ -o wow-<tag>.zip <tag>`，可复现历史包的字节 |
 | Gitee 附件上传字段 | 直传会失败，`browser_download_url` 不返回 | `-F "access_token=…" -F "file=@<path>;filename=<附件名>"`，附件名要用 `filename=` 显式指定 |
+| Gitee 同名附件不覆盖 | 重复上传 `SHA256SUMS` 会变成**两个同名附件**，`browser_download_url` 完全相同，下载时可能拿到旧的那份 | 上传前先删。注意 `GET /releases/tags/<tag>` 返回的 `assets` **没有 `id` 字段**，必须调 `GET /releases/{id}/attach_files` 才拿得到可删除的 id（`DELETE …/attach_files/{id}` 返回 204） |
 | GitHub release 下载端点 504 | `releases/download/...` 直连频繁 504 / 传输中断 | 用 API 取 asset（`/releases/assets/<id>` + `Accept: application/octet-stream`），或走 `gh-proxy.com` 镜像 |
 | GitHub 源码归档 404 | `archive/refs/tags/<tag>.zip` 直连偶发 404（缓存未生成） | 走 `gh-proxy.com` 镜像；下载后**必须**核对包内 `core/package.json` 的 version |
 
@@ -112,7 +113,7 @@ git push origin main
 | 全量回归 39 文件 | ✅ 37.7s |
 | commit + tag + 双端推送 | ✅ `46129c1`，两端 tag 一致 |
 | SHA256SUMS 生成 | ✅ 两份归档哈希已核对包内 version |
-| GitHub Release + 附件 | ✅ [v3.7.0-26.43](https://github.com/nuoge2333/Wow-/releases/tag/v3.7.0-26.43) |
+| GitHub Release + 附件 | ✅ [v3.7.0-26.43](https://github.com/nuoge2333/Wow-/releases/tag/v3.7.0-26.43)（首次发布漏了 `wow-v3.7.0-26.43.zip`，2026-11-08 23:08 已补传） |
 | Gitee Release + 附件 | ✅ [v3.7.0-26.43](https://gitee.com/nuoge233/wow/releases/tag/v3.7.0-26.43)（2026-11-08 23:05 用私人令牌补建，含 `wow-v3.7.0-26.43.zip` + `SHA256SUMS`，`releases/latest` 已指向本版） |
 | 端到端下载核对 | ✅ 两端附件下载后哈希与清单一致；Gitee 包内 `core/package.json` 的 version = `3.7.0-26.43` |
 
