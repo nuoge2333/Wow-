@@ -231,7 +231,7 @@ console.log('\n— V3.5.8 启动方式（cli.js）—');
         assert.ok(/st\.size < followOffset/.test(cli), '日志被重写（重启）时未重置 offset');
     });
     check('跟踪不干扰 REPL 输入（清行 + 重绘提示符）', () => {
-        const m = cli.match(/const printLine = \(line\) => \{[\s\S]{0,400}?\n    \};/);
+        const m = cli.match(/const printLine = \(line\) => \{[\s\S]{0,900}?\n    \};/);
         assert.ok(m, '未抽出 printLine');
         assert.ok(/clearLine/.test(m[0]) && /rl\.prompt\(true\)/.test(m[0]), '打印未重绘提示符');
         // echoSink 与日志跟踪共用同一打印通道

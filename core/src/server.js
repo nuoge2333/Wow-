@@ -19,6 +19,17 @@ const Jvm = require('./jvm_args');
 // V3.5.0：事件日志
 const { logger } = require('./log');
 
+/**
+ * TUI 是否正占着终端画面（见 tui.markScreenActive）。
+ *
+ * 这里是「最后一道闸」：即使 `_mode` 因为某条路径没来得及切换（或将来新增了
+ * 别的入口把菜单叫起来），只要菜单在画，MC 输出就不回显。日志照常落盘，
+ * 退出菜单后 `:mc` / 菜单 5 仍可查看。
+ */
+function tuiOwnsScreen() {
+    try { return require('./tui').isScreenActive(); } catch (e) { return false; }
+}
+
 // ==================== 开服控制台：wow 指令拦截 ====================
 // 在 `wow server start` 的交互终端中，用户输入既可发给 MC 服务端（如 /stop、op），
 // 也可直接输入 wow 指令（如 lan host、server status）。此处定义「允许 / 禁用」清单，
@@ -443,6 +454,14 @@ class ServerManager {
         this._mode = 'wow';
         this._stopLanWatch();
 
+        // 菜单期间摘掉「Ctrl+C = 停服」：菜单自己的键盘处理会问「确定要退出吗」，
+        // 但 raw 模式只在 TUI 里生效，停在「按回车键返回」这种行输入提示上时，
+        // Ctrl+C 会直冲 process 的 SIGINT——用户只是想退出菜单，服务器却跟着关了。
+        // 退出菜单时（下面 finally 里的路径）再装回去。
+        if (this._sigintHandler) {
+            try { process.removeListener('SIGINT', this._sigintHandler); } catch (e) { /* 忽略 */ }
+        }
+
         const oldRl = this._rl;
         this._rl = null;
         if (oldRl) {
@@ -474,6 +493,12 @@ class ServerManager {
 
         // 从 M 模式返回：重建 readline + 回到 :wow 视图
         if (!restored) await this._backToConsole('wow');
+
+        // 服务端还在跑就把 SIGINT 装回去（菜单里把服务器停了的话，进程已退出，
+        // 再装也没意义，还会让下一次 Ctrl+C 走到 stop() 的空路径上）。
+        if (this._sigintHandler && this.process && !this.process.killed) {
+            try { process.once('SIGINT', this._sigintHandler); } catch (e) { /* 忽略 */ }
+        }
     }
 
     /**
@@ -1218,12 +1243,15 @@ class ServerManager {
             // V3.4.0：服务端输出始终落盘，但只有停留在 Minecraft 控制台时才回显到终端，
             // 否则切到 wow / 陶瓦控制台后会被服务端日志刷屏，切换就失去意义。
             this.process.stdout.on('data', (data) => {
-                if (this._mode === 'mc') process.stdout.write(data);
+                // 回显条件：停在 Minecraft 视图 **且** 终端画面没被 TUI 占用。
+                // 后者兜住「菜单已经画出来、`_mode` 却没切走」的情况——
+                // 那种时候日志会从菜单底下顶出来，把七页界面冲乱。
+                if (this._mode === 'mc' && !tuiOwnsScreen()) process.stdout.write(data);
                 logStream.write(data);
                 this._logMcChunk(data);
             });
             this.process.stderr.on('data', (data) => {
-                if (this._mode === 'mc') process.stderr.write(data);
+                if (this._mode === 'mc' && !tuiOwnsScreen()) process.stderr.write(data);
                 logStream.write(data);
                 this._logMcChunk(data);
             });

@@ -2096,6 +2096,9 @@ async function startRepl(options = {}) {
     // V3.6.2：Web 端的 [WebCLI] / [System] 回显要打到这个终端上。
     // 如果直接 console.log，会把用户正在输入的那一行顶乱，所以先清行再打印，然后重绘提示符。
     const printLine = (line) => {
+        // 菜单正占着画面时不打印：跟踪定时器每 500ms 一批，会从菜单底下顶出来。
+        // 数据没丢——它本来就在 wow-stdout 日志里，退出菜单后照样能看。
+        try { if (load('./tui').isScreenActive()) return; } catch (e) { /* 忽略 */ }
         try {
             readline.clearLine(process.stdout, 0);
             readline.cursorTo(process.stdout, 0);

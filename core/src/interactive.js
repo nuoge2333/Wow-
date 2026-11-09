@@ -521,7 +521,9 @@ async function runTuiMode(options, state) {
     const onKey = async (k) => {
         // 退出确认：只有 Y 走，其余键取消；若按的是数字，顺手当作新输入的开头
         if (pendingConfirmExit) {
-            if (k === 'Y') {
+            // 大小写都认：提示写的是「按 Y 确认」，可 CapsLock / Shift 下敲出来的
+            // 是大写，早先只比 `'Y'` 会让大写 Y 落到切页上（直接跳到 Y 页）。
+            if (String(k).toUpperCase() === 'Y') {
                 finishExit();
                 return;
             }
@@ -612,9 +614,15 @@ async function runTuiMode(options, state) {
         }
     });
 
+    // 画面归 TUI 独占：从第一帧起，服务器日志（MC stdout 回显 / L 模式跟踪）
+    // 一律不许往终端写——否则会从菜单底下顶出来，把七页界面冲乱。
+    tui.markScreenActive(true);
     render();
     await leave;
     kb.close();
+
+    // 画面交还：从这里起日志可以正常回显（开服控制台 / REPL 各有自己的判断）
+    tui.markScreenActive(false);
 
     if (leaving === 'L') {
         // L 模式：彻底交还 stdin，由注入的回调接手。

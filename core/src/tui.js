@@ -738,6 +738,34 @@ function askLine(prompt = '', handlers = {}) {
     });
 }
 
+// ==================== 屏幕占用闸门 ====================
+
+/**
+ * TUI 是否正占着终端画面。
+ *
+ * 为什么需要它：服务器日志有两条会自己往终端写的路——
+ *   1. `server.js` 的 MC stdout 回显（原本按 `_mode === 'mc'` 挡）；
+ *   2. L 模式 REPL 的日志跟踪定时器（每 500ms 打一批）。
+ * 两者都是「按控制台视图」判断的，一旦有别的入口把 TUI 叫起来（比如
+ * `server start` 的控制台里敲 `:wow`），判断就和画面脱节——日志会从
+ * 菜单底下往外顶，把七页界面冲得没法看。
+ *
+ * 所以再加一道与业务无关的闸门：**TUI 画出第一帧到退出为止，任何外部
+ * 日志都不许写终端**。调用方只在两处问它：server.js 的回显、cli.js 的
+ * 跟踪打印。它们被挡住不影响日志落盘，退出后 `:mc` / 菜单 5 照样能看。
+ */
+let screenActive = false;
+
+/** 进 / 出 TUI 时调用（runTuiMode 负责置位与复位） */
+function markScreenActive(on) {
+    screenActive = Boolean(on);
+}
+
+/** 供日志生产者判断：true = 别往终端写，会把菜单冲掉 */
+function isScreenActive() {
+    return screenActive;
+}
+
 module.exports = {
     WIDTH,
     NAV_ITEMS,
@@ -757,5 +785,7 @@ module.exports = {
     drawPage,
     createKeyboard,
     askLine,
+    markScreenActive,
+    isScreenActive,
     getLastRenderHeight: () => lastRenderHeight
 };
