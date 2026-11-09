@@ -171,6 +171,65 @@ process 的 SIGINT——**用户只想退出菜单，服务器却跟着关了**�
 | 退出菜单 → `:mc` | 3 秒内 590 行，回显恢复 |
 | 大写 `Y` 确认退出 | 正常回控制台（改前会跳到 Y 页） |
 
+### 六、顺手修掉的三处线上问题（同批提测）
+
+**1. `/api/files` 带重复 `scheme` 参数 → 404**
+
+浏览器报 `GET /api/files?path=&scheme=1.20.1-Forge&scheme=1.20.1-Forge 404`。
+根因在前端 `web/file.html`：`apiRequest()` 内部已经统一包一次 `withScheme()`，
+而 `loadFiles()` 等三处调用又手动包了一次，URL 里就出现两个 `scheme`。
+Express 遇同名 query 会解析成**数组** `['A','A']`，`String(['A','A'])` 得到 `"A,A"`，
+拿去查方案目录自然 `ENOENT` → 404。
+
+- 前端：三处多余的 `withScheme()` 去掉；`withScheme()` 本身改成**幂等**
+  （已含 `scheme=` 就直接返回），以后谁再包一层也不会出问题；
+- 后端：新增 `pickParam()`，`schemeOf()` 及 `/api/resources`、`/api/props`、
+  `/api/upload` 一律「数组取第一个非空值」，就算前端拼多遍也能正确解析。
+
+实测：`?scheme=A&scheme=A`、三连重复均 `HTTP 200`，方案目录正确。
+
+**2. 实例配置页的配置项只有英文键名 → 加中文翻译**
+
+`server.properties` 里全是 `enforce-secure-profile`、`entity-broadcast-range-percentage`
+这种长键名，页面上原样显示，用户得先去查 wiki 才知道这项是干什么的。
+
+新增 `core/src/props_docs.js`：47 个常用键各配一份**中文名 + 一句中文说明**，
+以及 `gamemode` / `difficulty` / `level-type` 的枚举中文化（`survival → 生存`）。
+`GET /api/props` 把整份字典随响应下发，前端 `props.html` 渲染成
+
+```
+服务器描述          ← 中文名（原来的位置）
+motd                ← 灰色小字，标出 .properties 里真正那一行
+[ A Minecraft Server ]
+```
+
+鼠标悬停出整句说明 + 键名。字典里的值本身仍是英文（写进文件必须英文），
+下拉框显示成 `生存（survival）`。改动的只是显示，**保存逻辑一行未动**。
+
+**3. 仪表盘全是 0%（CPU / 内存 / 运行时长）**
+
+`server.js` 非交互启动分支原先把 `logStream` 直接塞进 `stdio`：
+
+```js
+spawn(cmd.javaPath, args, { stdio: ['pipe', logStream, logStream] })
+```
+
+Node 在 stdio 项是流对象时，会把 `child.stdout` / `child.stderr` 置为 `null`。
+紧随其后的 `this.process.stdout.on('data', ...)` 立刻抛 `TypeError`，
+`_writePid()` 根本走不到 → `.pid` 文件不存在 → `/api/status` 永远 `running:false`
+→ `/api/metrics` 读不到 pid，四个指标全 0。
+
+改为 `stdio: ['pipe','pipe','pipe']` + 手动 `logStream.write(data)`。
+（同一条路径也让 `node core/src/cli.js server start` 在非 TTY 下不再崩。）
+
+实测：`{"running":true,"pid":29603,"cpu":"0.1%","memory":"3.7 MB","uptime":"2m 17s"}`，
+仪表盘页面 CPU / 内存 / 运行时长 / 方案名全部正常显示。
+
+### 七、测试（本轮追加）
+
+- `web_pages.test.js`：主题副本一致性纳入 `props.html`；
+- 全量 **40** 个文件通过，37.4s。
+
 ---
 
 ## [3.7.2-26.45] — 2026-11-08

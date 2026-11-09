@@ -1273,18 +1273,27 @@ class ServerManager {
             };
             process.once('SIGINT', this._sigintHandler);
         } else {
-            // 非交互模式（Web 面板 / Docker）：重定向到 stdout 存档
-            // （同样不写 latest.log —— 那是 Minecraft log4j 自己管理的文件）
-            const logFd = fs.openSync(this.stdoutLogFile, 'w');
-            logStream = fs.createWriteStream('', { fd: logFd, autoClose: true });
+            // 非交互模式（Web 面板 / Docker）：
+            // **不能**把 stdio 直接设成 logStream——那样 Node 会把
+            // `child.stdout` / `child.stderr` 置为 null，下面两个 `.on()`
+            // 立刻抛 TypeError，`_writePid()` 根本走不到。
+            // 结果就是：面板里服务器明明在跑，却永远显示「已停止」，
+            // 仪表盘 CPU / 内存 / 时长全是 0。
+            // 改成 pipe + 自己往文件写：流拿得到（错误扫描照常），落盘也不丢。
+            logStream = fs.createWriteStream(this.stdoutLogFile, { flags: 'w' });
             this.process = spawn(cmd.javaPath, cmd.fullCommand.slice(1), {
                 cwd: this.serverDir,
-                stdio: ['pipe', logStream, logStream],
+                stdio: ['pipe', 'pipe', 'pipe'],
                 detached: false
             });
-            // 非交互模式无终端回显，仍需扫描 MC 输出中的错误计入事件日志
-            this.process.stdout.on('data', (data) => this._logMcChunk(data));
-            this.process.stderr.on('data', (data) => this._logMcChunk(data));
+            this.process.stdout.on('data', (data) => {
+                logStream.write(data);
+                this._logMcChunk(data);
+            });
+            this.process.stderr.on('data', (data) => {
+                logStream.write(data);
+                this._logMcChunk(data);
+            });
         }
 
         this._writePid(this.process.pid);

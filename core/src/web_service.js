@@ -567,6 +567,26 @@ function startWeb(options = {}) {
         res.json({ success: true, note });
     });
 
+    /**
+     * 取 query/body 里的单值参数
+     *
+     * 前端若把同名参数拼了两遍（历史上 file.html 的 withScheme 就重复包裹过一次），
+     * Express 会解析成**数组** `['a','a']`，`String(['a','a'])` 得到 `"a,a"`，
+     * 拿去查方案名必然找不到，于是 /api/files 直接 404。
+     * 这里统一「取第一个非空值」，拼重复了也不会垮。
+     */
+    const pickParam = (v) => {
+        if (Array.isArray(v)) {
+            for (const x of v) {
+                const s = pickParam(x);
+                if (s) return s;
+            }
+            return '';
+        }
+        if (v == null) return '';
+        return String(v).trim();
+    };
+
     // ===== 资源管理 / 实例配置（V3.6.2 新增页面）=====
 
     /**
@@ -583,7 +603,7 @@ function startWeb(options = {}) {
         try {
             const SchemeManager = require('./scheme_manager');
             const sm = new SchemeManager();
-            const wanted = String(req.query.scheme || '').trim();
+            const wanted = pickParam(req.query.scheme);
             const name = wanted || sm.currentScheme || '';
             if (!name) {
                 return res.status(400).json({
@@ -884,7 +904,7 @@ function startWeb(options = {}) {
         try {
             const SchemeManager = require('./scheme_manager');
             const sm = new SchemeManager();
-            const wanted = String(req.query.scheme || '').trim();
+            const wanted = pickParam(req.query.scheme);
             const name = wanted || sm.currentScheme || '';
             if (!name) {
                 return res.status(400).json({
@@ -898,6 +918,9 @@ function startWeb(options = {}) {
             const schemePath = sm._getSchemePath(name);
             const data = ServerProps.readProps(schemePath);
             const meta = sm._loadSchemeMeta(name);
+            // 配置项的中文名 / 说明：字典在后端统一维护，前端直接渲染，
+            // 不必自己再抄一份 —— 键名与翻译只此一处真源。
+            const PropsDocs = require('./props_docs');
             res.json({
                 success: true,
                 scheme: {
@@ -911,6 +934,7 @@ function startWeb(options = {}) {
                 file: data.file,
                 groups: data.groups,
                 others: data.others,
+                docs: PropsDocs.allDocs(),
                 raw: data.raw
             });
         } catch (e) {
@@ -1647,8 +1671,8 @@ function startWeb(options = {}) {
 
     /** 取本次请求的方案参数（query 优先，其次 body） */
     const schemeOf = (req) => {
-        const s = (req.query && req.query.scheme) || (req.body && req.body.scheme) || '';
-        return String(s).trim();
+        const q = pickParam(req.query && req.query.scheme);
+        return q || pickParam(req.body && req.body.scheme);
     };
 
     /** 方案参数 → 方案根目录绝对路径（非法方案名会抛错，由各路由转成 403/404） */
@@ -1749,7 +1773,7 @@ function startWeb(options = {}) {
                 const buf = Buffer.concat(chunks);
                 const parsed = parseMultipart(buf, boundary);
                 const FileManager = require('./file_manager');
-                const scheme = parsed.fields.scheme || req.query.scheme || '';
+                const scheme = pickParam(parsed.fields.scheme) || pickParam(req.query.scheme);
                 const result = await FileManager.saveUploads(
                     parsed.fields.path || '',
                     parsed.files,

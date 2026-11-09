@@ -51,9 +51,18 @@
             align-items: center; margin-bottom: 10px;
         }
         .field label {
-            font-size: 12px; color: #8899aa; font-family: Consolas, monospace;
+            font-size: 12px; color: #8899aa;
             overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
         }
+        /* 中文名（简体 / 繁体） */
+        .field label .lb-name { color: #9fb3c8; }
+        /* 英文键名小注：标识 server.properties 里真正那一行 */
+        .field label .lb-key {
+            display: block; font-size: 10px; color: #4d5f70;
+            font-family: Consolas, monospace; margin-top: 1px;
+            overflow: hidden; text-overflow: ellipsis;
+        }
+        .field label.no-doc .lb-name { font-family: Consolas, monospace; color: #667788; }
         .field input, .field select {
             width: 100%; padding: 6px 9px; border: 1px solid #2a3a5e; border-radius: 5px;
             background: #0f1a2f; color: #eee; font-size: 13px; outline: none;
@@ -109,6 +118,17 @@
 
             let currentScheme = '';
             let original = {};       // 加载时的原始值，用于只提交改动项
+
+            /**
+             * 配置项中文名 / 说明字典（后端 core/src/props_docs.js 下发）
+             * 结构：{ 'motd': { key, label, desc, enum? }, ... }
+             * label / desc 是中文标题与说明，enum 是枚举值的中文名。
+             */
+            let docs = {};
+            /** 取某个键的文档，没有则返回 null */
+            function docOf(key) {
+                return docs && docs[key] ? docs[key] : null;
+            }
 
             // 键的输入类型
             const BOOL_KEYS = new Set([
@@ -185,6 +205,7 @@
 
             function fieldHtml(key, value) {
                 const id = 'f_' + key.replace(/[^a-zA-Z0-9]/g, '_');
+                const doc = docOf(key);
                 let input;
                 if (BOOL_KEYS.has(key)) {
                     input = '<select id="' + id + '" data-key="' + esc(key) + '">' +
@@ -194,15 +215,31 @@
                 } else if (ENUM_KEYS[key]) {
                     const opts = ENUM_KEYS[key].slice();
                     if (value && !opts.includes(value)) opts.unshift(value);
+                    // 枚举值也按当前语言显示中文，值本身仍是英文（写进 .properties 的必须是英文）
+                    const names = (doc && doc.enum) || {};
                     input = '<select id="' + id + '" data-key="' + esc(key) + '">' +
-                        opts.map(o => '<option value="' + esc(o) + '"' + (String(value) === o ? ' selected' : '') + '>' + esc(o) + '</option>').join('') +
+                        opts.map(o => {
+                            const zh = names[o];
+                            const text = zh ? (zh + '（' + o + '）') : o;
+                            return '<option value="' + esc(o) + '"' + (String(value) === o ? ' selected' : '') + '>' + esc(text) + '</option>';
+                        }).join('') +
                         '</select>';
                 } else if (NUMBER_KEYS.has(key)) {
                     input = '<input type="number" id="' + id + '" data-key="' + esc(key) + '" value="' + esc(value) + '" />';
                 } else {
                     input = '<input type="text" id="' + id + '" data-key="' + esc(key) + '" value="' + esc(value) + '" />';
                 }
-                return '<div class="field"><label for="' + id + '" title="' + esc(key) + '">' + esc(key) + '</label>' + input + '</div>';
+                // 标签：中文名在上（没有字典就退回键名），英文键名作为小注，
+                // 鼠标悬停给整句说明 —— 配置项太多，展开写会把页面撑得很长。
+                const name = doc ? doc.label : key;
+                const tip = doc ? (doc.desc + '\n\n键名：' + key) : key;
+                const labelHtml = doc
+                    ? '<label for="' + id + '" title="' + esc(tip) + '">' +
+                        '<span class="lb-name">' + esc(name) + '</span>' +
+                        '<span class="lb-key">' + esc(key) + '</span></label>'
+                    : '<label class="no-doc" for="' + id + '" title="' + esc(tip) + '">' +
+                        '<span class="lb-name">' + esc(key) + '</span></label>';
+                return '<div class="field">' + labelHtml + input + '</div>';
             }
 
             function render(d) {
@@ -271,6 +308,7 @@
                 const q = scheme ? ('?scheme=' + encodeURIComponent(scheme)) : '';
                 try {
                     const d = await api('/api/props' + q);
+                    docs = d.docs || {};
                     currentScheme = d.scheme.name;
                     renderSchemeOptions(d);
                     render(d);

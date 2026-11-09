@@ -407,9 +407,18 @@
                 return parent ? `${parent}/${name}` : name;
             }
 
-            /** 给 URL 追加方案参数（V3.5.19：文件管理器可跨方案浏览） */
+            /**
+             * 给 URL 追加方案参数（V3.5.19：文件管理器可跨方案浏览）
+             *
+             * 幂等：已经带了 scheme= 就不再追加。apiRequest() 内部本来就会统一
+             * 包一次，如果调用处又手动包一次，就会出现
+             * `?path=&scheme=A&scheme=A` —— Express 把同名参数解析成数组，
+             * 后端拿去查方案名得到 "A,A"，直接 404。
+             * 所以这里做双保险：无论调用方包几次，最终 URL 只有一个 scheme。
+             */
             function withScheme(url) {
                 if (!currentScheme) return url;
+                if (/[?&]scheme=/.test(url)) return url;
                 return url + (url.includes('?') ? '&' : '?') + 'scheme=' + encodeURIComponent(currentScheme);
             }
 
@@ -457,7 +466,7 @@
                     // 使用 CLI 命令列出文件：ls -l
                     // 由于命令行输出需要解析，使用自定义API /api/files 更简单
                     // 这里我们使用 /api/files?path=... 获取JSON数据
-                    const data = await apiGet(withScheme(`/api/files?path=${encodeURIComponent(path)}`));
+                    const data = await apiGet(`/api/files?path=${encodeURIComponent(path)}`);
                     fileList = data.files || [];
                     renderFileList(fileList);
                     updatePathBar(path);
@@ -920,7 +929,7 @@
                 editorOverlay.classList.add('active');
 
                 try {
-                    const data = await apiGet(withScheme(`/api/file/read?path=${encodeURIComponent(relPath)}`));
+                    const data = await apiGet(`/api/file/read?path=${encodeURIComponent(relPath)}`);
                     const content = typeof data.content === 'string' ? data.content : '';
                     editorText.value = content;
                     editorState = { open: true, path: relPath, original: content, dirty: false };
@@ -943,7 +952,7 @@
                 editorSaveBtn.disabled = true;
                 editorSaveBtn.textContent = '保存中...';
                 try {
-                    await apiRequest(withScheme('/api/file/write'), 'POST', {
+                    await apiRequest('/api/file/write', 'POST', {
                         path: editorState.path,
                         content: content
                     });
