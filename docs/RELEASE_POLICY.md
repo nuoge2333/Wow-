@@ -100,9 +100,36 @@ git push origin main
 
 ## 五、当前状态
 
-- 已发布的最新版本：`v3.7.2-26.45`（2026-11-08）
+- 已发布的最新版本：`v3.7.3-26.46`（2026-11-09）
 - **下一个版本号尚未确定**，等用户说「发行」时再定
-- 下一周期累积的改动：见 `git log v3.7.2-26.45..HEAD`
+- 下一周期累积的改动：见 `git log v3.7.3-26.46..HEAD`
+
+### 本版发行进度（v3.7.3-26.46，2026-11-09）
+
+| 步骤 | 状态 |
+|------|------|
+| 升版本号（cli.js / package.json / tui.js 注释 / docs/TUI.md） | ✅ `3.7.3-26.46`（`package-lock.json` 被 gitignore，不入库） |
+| CHANGELOG 新增 3.7.3 章节 + 版本表更新 | ✅ 含「一条被证伪的隐患」记录 |
+| 全量回归 40 文件 | ✅ 37.4s 全绿 |
+| 浏览器实测三项 | ✅ `/api/files` 重复 scheme → 200；props 页 19 项中文翻译 100%；仪表盘 CPU/内存/时长正常 |
+| commit + tag | ✅ `d0d5265` / `v3.7.3-26.46` |
+| 双端推送 | ✅ GitHub（`http.version=HTTP/1.1` 绕开 GnuTLS 重置）、Gitee 均成功 |
+| 打包 `wow-v3.7.3-26.46.zip` | ✅ 839,841 B，包内 version 已核对 |
+| GitHub Release + 附件 | ✅ id `439133389`，zip + SHA256SUMS 双附件 |
+| Gitee Release + 附件 | ✅ id `1291385`，zip + SHA256SUMS 双附件 |
+| SHA256SUMS 生成 | ✅ 187 B；GitHub 归档经 gh-proxy / ghfast **两个独立镜像**复算一致 |
+| 端到端下载核对 | ✅ 两端清单字节相同（`f7ca57b0…`）；Gitee zip 与本地打包件同哈希；两端 `latest` 已指向本版 |
+
+### 上一周期已发行（v3.7.3-26.46）
+
+| 内容 | 文档 | 测试 |
+|------|------|------|
+| M 模式画面独占：`tui.markScreenActive()` 闸门 | `docs/TUI.md` | `core/test/tui_screen_gate.test.js`（10 项） |
+| 菜单期间摘掉 Ctrl+C 停服、退出时装回 | `docs/TUI.md` | 同上 |
+| 退出确认 `toUpperCase() === 'Y'` | — | 同上 |
+| `/api/files` 重复 scheme → `withScheme` 幂等 + 后端 `pickParam()` | `docs/CHANGELOG.md` | 实测 `?scheme=A&scheme=A` 三连均 200 |
+| 实例配置页 47 键中文翻译（`props_docs.js`） | `docs/CHANGELOG.md` | 浏览器实测覆盖 100% |
+| 仪表盘指标归零：`stdio` 改 pipe + 手动写 logStream | `docs/CHANGELOG.md` | 实测 `cpu 0.1% / mem 3.7MB / uptime 2m17s` |
 
 ### 本版发行进度（v3.7.2-26.45，2026-11-08）
 
@@ -134,7 +161,7 @@ git push origin main
 `26.40` 是新的干净起点，`40` → `41` → `42` → `43` → `44` → `45` 一路递增下来。
 继续保持**严格十六进制递增**，具体约束：
 
-- 下一个是 `46`，之后 `47` … — 正常十六进制递增，**不要跳过中间值**
+- 下一个是 `47`，之后 `48` … — 正常十六进制递增，**不要跳过中间值**
 - **绝不回绕复用**旧序号。历史上 `26.3a` ~ `26.3f` 因反复回绕被用了 2～3 次，
   导致无法用序号判断版本新旧，详见 `docs/CHANGELOG.md` 文首说明
 - 发版前先 `git tag --list | grep <候选序号>` 确认未被占用
