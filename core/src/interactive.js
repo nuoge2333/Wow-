@@ -288,11 +288,28 @@ function resolveNumber(id, page) {
  * 直接调 dispatchMenu 而不传 rl。
  */
 function createRL() {
-    const readline = require('readline');
-    return readline.createInterface({
-        input: process.stdin,
-        output: process.stdout
-    });
+    // 走单例：兼容模式下这是唯一的消费者，但同一个进程里也可能
+    // 已经有别人持有 stdin（例如从 REPL 里 `m` 回菜单的瞬间）。
+    // 单例负责排队/接管，不再让两处各自 createInterface。
+    const stdinSession = require('./stdin_session');
+    const lease = stdinSession.acquireSync('interactive.menu');
+    const rl = lease.rl;
+    // 调用方按老习惯 `rl.close()` 收尾——这里顺手把租约也还回去，
+    // 否则单例会一直以为 stdin 还有人占着，后续的提问全部排队卡死。
+    const origClose = rl.close.bind(rl);
+    // 让 lease.release() 能拿到「真正的 close」，避免它调到我们这层包装
+    // 造成 release → close → release 的相互递归。
+    rl.__origClose = origClose;
+    let handedBack = false;
+    rl.close = function () {
+        if (!handedBack) {
+            handedBack = true;
+            // 不 await：close() 的调用点遍布同步 finally，等不起
+            lease.release().catch(() => {});
+        }
+        return origClose();
+    };
+    return rl;
 }
 
 /**

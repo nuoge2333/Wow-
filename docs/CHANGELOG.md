@@ -42,6 +42,7 @@
 
 | 版本 | 状态 | 发布时间 |
 |------|------|------|
+| **待发行** | 累积改动：readline 单例（版本号待定） | — |
 | **3.7.3-26.46** | 当前版本（M 模式画面独占 + 三处线上问题） | 2026-11-09 |
 | **3.7.2-26.45** | 上一版本 |2026-11-08|
 | **3.7.1-26.44** | 上一版本 |2026-11-08|
@@ -116,6 +117,112 @@
 | **3.0.0** | 上一版本 |2026-07-23|
 | **2.0.0** | 内部迭代 |2026-02-27|
 | **1.0.0** | 内部迭代 |2026-02-07|
+
+---
+
+## [待发行] — 2026-11-10：readline 收归单例，全局只允许一个消费者
+
+> 候选版本号 `3.7.4-26.47`（序号 47）。按 `docs/RELEASE_POLICY.md` 约定，
+> 版本号、tag、打包与 Release 等用户说「发行」时再定；本段先记录改动与验证结果。
+
+> 起因：REPL、TUI 键盘、开服控制台、各级菜单、命令里的确认框/密码框，
+> 一共十几处各自 `readline.createInterface({ input: process.stdin })`。
+> 两个实例同时活着时，每个字节被两条 `data` 链路各读一遍：输入
+> `badapple` 在屏幕上变成 `bbaaddaappppllee`，REPL 还会把彩蛋名当指令
+> 执行，报「❌ 未知指令: badapple」。创建点太分散，逐个补漏必然再漏。
+
+### 一、新增 `core/src/stdin_session.js`
+
+全项目**唯一**的 readline 创建出口，其余模块一律「租用」lease：
+
+| API | 用途 |
+|-----|------|
+| `claim(name, options)` | 长期持有；被占用时 **FIFO 排队**，不并行创建 |
+| `claimSync(name)` | 启动期用；被占用直接抛错，不静默卡住 |
+| `acquireSync(name)` | 必须同步建好（TUI 键盘）；有残留持有者时先 `teardown` 再接管并告警 |
+| `ask(prompt)` / `confirm(prompt)` | 临时问一行，自动 claim → question → release |
+| `lease.rl / pause / resume / question / enableKeypress / release` | 租约能力 |
+| `stats() / violations() / currentRl()` | 诊断 |
+
+「无论什么情况下都只有一个」靠三层防线，不靠调用方自觉：
+
+1. **唯一出口**：只有本模块 `makeRl()` 调 `createInterface`；静态守卫测试
+   扫描 `core/src/`，出现第二处即失败。`emitKeypressEvents` 也收归
+   `lease.enableKeypress()`。
+2. **运行时不变式**：`liveRl` 记录真实存活实例，`makeRl()` 见到它非 null
+   直接抛错；`release()` / `acquireSync()` 共用幂等 `teardown()`，
+   并用 WeakSet 拦住「迟到 release」把计数减穿。
+3. **全局创建守卫**：模块加载时包装 `readline.createInterface`。任何绕过
+   单例、且以 `process.stdin` 为输入的调用（第三方库、动态 require、
+   以后新加的代码）——已有实例时**抛错拒绝**，否则记录调用栈并告警。
+   非 stdin 的 readline（逐行读文件）不受约束。
+
+### 二、迁移清单
+
+| 模块 | 原做法 | 现在 |
+|------|--------|------|
+| `cli.js` | REPL 自建、`sync login` 回退自建 | `claim('repl')` + `stdinSession.ask()` |
+| `tui.js` | `mkRl()` / `askLine()` 各自 `createInterface` | `acquireSync('tui.keyboard' / 'tui.askLine')` |
+| `interactive.js` | `createRL()` 自建 | `acquireSync('interactive.menu')`，`rl.close()` 顺手还租约 |
+| `server.js` | `_createConsoleRl()` 自建 | `acquireSync('server.console')`，进菜单前归还 |
+| `party/party.js`、`config.js`、`theme_manager.js`、`pack_generator.js`、`plugin_loader.js`、`client_clone.js` | 各自自建 readline 问密码 / 确认 | `stdinSession.ask()` / `confirm()` / `claim()` |
+
+顺手清掉 `server.js`、`party.js`、`plugin_loader.js` 里三处已失效的
+`require('readline')`（只剩静态工具方法在用）。
+
+### 三、两个真实 bug 一并修掉
+
+**1. `install party` 输入被吃两遍（真正复现的双开）**
+
+`party.ask()` 自己建了一个 readline，而 REPL 的 readline 还活着；
+同时 `install party` 没进 `cli.js` 的 `interactiveCmd` 挂起白名单，
+REPL 没有让出 stdin。两者叠加 → `badapple` 被 REPL 当指令。
+现在 party 走 `stdinSession.ask()`（自动排队），白名单补上
+`install\s+party\b`。
+
+**2. 退出 M 菜单时偶发「强制接管」告警**
+
+`runTuiMode` 结束调同步的 `kb.close()`，而 `suspend()` / `close()`
+只 `rl.close()`、没归还租约，单例里 `current` 仍指向 `tui.keyboard`，
+紧接着 `askLine()` / `_backToConsole()` 申请时就报
+「⚠️ stdin 被…占用，…强制接管」。两条路径都改为同步调用
+`lease.release()`（同步前段在第一个 `await` 前完成，足以让出所有权）。
+
+> 更正一条早先的误判：`_backToConsole` 里 `this._rl` 看似没赋值，
+> 实际在 `_createConsoleRl()` 内已完成；5 轮往返实测 `line` / `SIGINT`
+> 监听器恒为 1，**不是 bug**，本次未改动该处。
+
+### 四、关于「TTY 下数到 2 个 data 监听器」
+
+真 TTY 中 `terminal: true` 的 readline 会让 Node 调
+`emitKeypressEvents`，往 stdin 挂一个常驻 `onData` 按键解码器；
+`rl.close()` 不移除它。下一个 `terminal: false` 租约再挂 `ondata`，
+于是 stdin 上短暂出现 2 个 `data` 监听器。
+
+**这不是第二个 readline**：`stats().live` 恒 ≤ 1、`peak` 恒为 1。
+`onData` 只把字节解码成 keypress 事件，TUI 挂起时已卸载自己的
+keypress 监听，不会造成双读。关键是它幂等、不随重建累积——
+实测 28 次重建后仍 ≤ 2。没有去清 Node 私有幂等标记：换来的
+「1 个」依赖内部实现，升级后可能让新 readline 收不到输入。
+
+### 五、测试与实证
+
+- 新增 `core/test/stdin_session.test.js`（**21 项**）：租约语义、
+  并发排队、守卫拒绝绕过、非 stdin 不误伤、`makeRl` 不变式、
+  `acquireSync` 接管幂等、30 轮混合压力 `live/peak ≤ 1`、
+  30 轮 terminal 切换 data 监听器不累积、静态扫描唯一出口；
+- `tui_mode.test.js` / `interactive_menu.test.js` 的断言由「有 N 处
+  createInterface」改为「0 处 + 必须走 `stdinSession.acquireSync`」；
+- 全量 **41** 个文件通过，38.4s；
+- pty 端到端（注入探针采样 `process.stdin` 监听器 + 单例 `stats()`）：
+
+| 场景 | readline 实例峰值 | data 监听器峰值 | 违规/告警 |
+|------|------------------|----------------|-----------|
+| TUI 七页 × 3 轮 × 二级菜单往返（28 次重建）+ 退出 | **1** | 2（Node 常驻解码器） | 0 |
+| REPL → `install party` 输彩蛋名 → 普通指令 → 退出 | **1** | 1 | 0 |
+
+两条流程均无「未知指令」、无强制接管告警、无 TypeError，`badapple`
+完整送达提问框，不再被 REPL 截走。
 
 ---
 

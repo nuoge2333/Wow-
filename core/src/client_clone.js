@@ -101,37 +101,43 @@ function makeSilentIO(answers = {}) {
 
 /** 真实终端交互（仅在 TTY 且用户没给 --yes 时使用） */
 function makeTerminalIO() {
-    const readline = require('readline');
-    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    // 走 stdin_session 而不是自建 readline：本函数在「非 REPL 的独立运行」
+    // 场景下才会被选中，但仍可能有别的消费者（例如插件确认框）在场。
+    // 由单例统一裁决谁先用，比各自 createInterface 安全。
+    const stdinSession = require('./stdin_session');
+    let lease = null;
+    /** 懒申请：真正要提问时才占住 stdin，不提问就不占用 */
+    const ensure = async () => {
+        if (!lease) lease = await stdinSession.claim('client_clone.terminal');
+        return lease;
+    };
     return {
         interactive: true,
-        _rl: rl,
-        ask(question, defaultValue = '') {
-            return new Promise(resolve => {
-                rl.question(question, ans => {
-                    const v = String(ans || '').trim();
-                    resolve(v === '' ? defaultValue : v);
-                });
-            });
+        get _rl() { return lease ? lease.rl : null; },
+        async ask(question, defaultValue = '') {
+            const l = await ensure();
+            const ans = await l.question(question);
+            const v = String(ans || '').trim();
+            return v === '' ? defaultValue : v;
         },
         /** options 为 [{label, value}]，返回选中的 value */
-        choose(question, options, defaultIndex = 0) {
-            return new Promise(resolve => {
-                console.log(question);
-                options.forEach((o, i) => {
-                    const mark = i === defaultIndex ? '（默认）' : '';
-                    console.log(`   ${i + 1}) ${o.label}${mark}`);
-                });
-                rl.question(`请输入编号 (默认: ${defaultIndex + 1}): `, ans => {
-                    const n = parseInt(String(ans).trim(), 10);
-                    if (isNaN(n) || n < 1 || n > options.length) return resolve(options[defaultIndex].value);
-                    resolve(options[n - 1].value);
-                });
+        async choose(question, options, defaultIndex = 0) {
+            console.log(question);
+            options.forEach((o, i) => {
+                const mark = i === defaultIndex ? '（默认）' : '';
+                console.log(`   ${i + 1}) ${o.label}${mark}`);
             });
+            const l = await ensure();
+            const ans = await l.question(`请输入编号 (默认: ${defaultIndex + 1}): `);
+            const n = parseInt(String(ans).trim(), 10);
+            if (isNaN(n) || n < 1 || n > options.length) return options[defaultIndex].value;
+            return options[n - 1].value;
         },
         log(msg) { console.log(msg); },
         warn(msg) { console.warn(msg); },
-        close() { try { rl.close(); } catch (e) {} }
+        async close() {
+            if (lease) { const l = lease; lease = null; await l.release(); }
+        }
     };
 }
 

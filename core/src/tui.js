@@ -22,6 +22,7 @@
  */
 
 const readline = require('readline');
+const stdinSession = require('./stdin_session');
 const pkg = require('../package.json');
 
 // ==================== 常量 ====================
@@ -481,15 +482,28 @@ function createKeyboard(handlers = {}) {
         try { return Boolean(stdin.isTTY); } catch (e) { return false; }
     };
 
-    const mkRl = () => readline.createInterface({
-        input: stdin,
-        output: stdout,
-        terminal: stdinIsTty(),
-        // 不让 readline 自己缓存历史行——TUI 的输入是一键一动作
-        historySize: 0,
-        // TUI 不要「行编辑器」的自动补全 / 历史兜底
-        completer: undefined
-    });
+    // TUI 的 readline 一律通过 stdin_session 取得，不自己 createInterface。
+    //
+    // 原因：TUI 会在「二级菜单返回」这类路径上反复 activate()。每次自建
+    // readline 都会给 stdin 再挂一个消费者，而 readline 内部还会经由
+    // emitKeypressEvents 挂派发器——两个都活着时同一个按键会被处理两遍
+    // （按一次 2 跳两次页、输入 `11`/`33`）。
+    // 交给单例后，「同一时刻只有一个消费者」由单例保证，这里只负责按帧重建。
+    let kbLease = null;
+    const mkRl = () => {
+        if (kbLease) {
+            // 重建前先归还旧的：单例会把 stdin 恢复到干净状态
+            const old = kbLease;
+            kbLease = null;
+            try { old.release(); } catch (e) { /* 忽略 */ }
+        }
+        kbLease = stdinSession.acquireSync('tui.keyboard', {
+            terminal: stdinIsTty(),
+            historySize: 0,
+            completer: undefined
+        });
+        return kbLease.rl;
+    };
 
     const onKeypress = (str, key) => {
         if (suspended || closed) return;
@@ -528,7 +542,10 @@ function createKeyboard(handlers = {}) {
         if (closed) return null;
         rl = mkRl();
         rl.setPrompt('');
-        readline.emitKeypressEvents(stdin, rl);
+        // keypress 派发器属于 readline 生命周期，由单例代管，
+        // 这里不再自己碰 readline 内部（emitKeypressEvents 是唯一例外，
+        // 现在也统一走 lease.enableKeypress()）。
+        if (kbLease) kbLease.enableKeypress();
         const tty = stdinIsTty();
         // 只有真终端才有 raw 模式。非 TTY 下强行 setRawMode 会抛错（已吞），
         // 但更重要的是：**必须把流重新 resume 起来**，否则经过 askLine
@@ -586,6 +603,16 @@ function createKeyboard(handlers = {}) {
             suspended = true;
             const old = rl;
             rl = null;
+            // 归还租约（不能只 close）：suspended 之后紧接着就是二级菜单的
+            // `askLine()`，它会 acquireSync。若这里没还租约，单例会认为
+            // tui.keyboard 还活着并打一条「强制接管」告警。
+            // release() 的同步前段在第一个 await 之前完成，所以这里
+            // 不需要 await 就已经让出所有权。
+            const lease = kbLease;
+            kbLease = null;
+            if (lease) {
+                try { lease.release(); } catch (e) { /* 已归还 */ }
+            }
             if (old) {
                 try { old.close(); } catch (e) { /* 已关闭 */ }
             }
@@ -644,6 +671,20 @@ function createKeyboard(handlers = {}) {
             try { stdin.setRawMode(false); } catch (e) { /* 忽略 */ }
             const old = rl;
             rl = null;
+            // 必须归还**租约**而不是直接 close readline：
+            // close() 是同步的，而退出 TUI 后 server 会立刻
+            // acquireSync('server.console')。若这里只 close 不还租约，
+            // 单例里 current 仍指向 tui.keyboard，下一步就会判定
+            // 「调用方漏了 release」并打一条强制接管告警。
+            // release() 的同步前段（setRawMode(false)、rl=null、
+            // createdCount--、current=null）在第一个 await 之前完成，
+            // 所以同步调用即可让出所有权；后面的事件循环礼让
+            // 由已排定的微任务继续，不影响 console 接管。
+            const lease = kbLease;
+            kbLease = null;
+            if (lease) {
+                try { lease.release(); } catch (e) { /* 已归还 */ }
+            }
             if (old) {
                 try { old.close(); } catch (e) { /* 已关闭 */ }
             }
@@ -680,6 +721,17 @@ function askLine(prompt = '', handlers = {}) {
         const stdin = process.stdin;
         const stdout = process.stdout;
 
+        // 走到这里时，调用方（TUI 键盘）已经把它的 readline 关掉了
+        // （`kb.suspend()` → `activate` 里的 lease.release()），所以 stdin
+        // 此刻没有消费者。仍然走单例而不是自己 createInterface：
+        // 万一有别的路径（例如服务器启动）也在抢 stdin，单例会排队/接管，
+        // 而不是让两方各读一半。
+        const lease = stdinSession.acquireSync('tui.askLine', {
+            terminal: false,
+            historySize: 0
+        });
+        const rl = lease.rl;
+
         // 防御：如果 stdin 还在 raw 模式，先退出来，否则读不到整行
         try { if (stdin.isRaw && stdin.setRawMode) stdin.setRawMode(false); } catch (e) { /* 忽略 */ }
 
@@ -691,17 +743,6 @@ function askLine(prompt = '', handlers = {}) {
         // 现象是「按回车没反应，得再按一次」，因为第二次按的时候流已经
         // 被上一次的残留事件顺带唤醒。
         try { stdin.resume(); } catch (e) { /* 忽略 */ }
-
-        let rl = null;
-        try {
-            rl = readline.createInterface({
-                input: stdin,
-                output: stdout,
-                terminal: false
-            });
-        } catch (e) {
-            return resolve('');
-        }
 
         let settled = false;
         // stdin 被关掉（Ctrl+D / 终端断开 / 父进程收走管道）时，`rl.question`
@@ -715,7 +756,8 @@ function askLine(prompt = '', handlers = {}) {
             // 回显交给终端行模式（terminal:false 下 readline 不自己回显），
             // 用户按的那一下回车没有换行，这里补一个，后续输出才不接到提示符后面。
             try { stdout.write('\n'); } catch (e) { /* 忽略 */ }
-            try { rl.close(); } catch (e) { /* 忽略 */ }
+            // 归还 stdin：单例会 close 掉这个临时 readline 并放行排队者
+            lease.release().catch(() => {});
             resolve(String(v == null ? '' : v));
         };
         try { stdin.once('end', onEnd); } catch (e) { /* 忽略 */ }

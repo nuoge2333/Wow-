@@ -230,10 +230,13 @@ check('编号回显在提示行（输入时不至于看不见自己敲了什么�
 // ─────────────────────────────────────────────
 console.log('\n— 单 readline 与键盘让位 —');
 
-check('tui 只创建一个 readline 工厂（mkRl）', () => {
+check('tui 不再自建 readline，全部经 stdin_session 申请', () => {
     const n = (tuiSrc.match(/readline\.createInterface\(/g) || []).length;
-    // mkRl 里 1 处 + askLine 里 1 处（后者是二級菜单的临时行读取器）
-    assert.strictEqual(n, 2, `createInterface 出现 ${n} 次，预期 2 次（mkRl + askLine）`);
+    // V3.7.4：唯一消费者已下沉到 stdin_session.js，
+    // tui.js 里任何一处 createInterface 都意味着又绕过了单例。
+    assert.strictEqual(n, 0, `tui.js 仍有 ${n} 处自建 readline，应改为 stdinSession.acquireSync`);
+    assert.ok(/stdinSession\.acquireSync\(/.test(tuiSrc),
+        'tui.js 应通过 stdinSession.acquireSync 取得 readline');
 });
 
 check('suspend 先关 rl 再卸监听（否则会多回显一字符）', () => {
@@ -268,10 +271,11 @@ check('askLine 不再挂 close→finish（会误判为空输入）', () => {
         'askLine 仍靠 close 事件收尾');
 });
 
-check('interactive 不自己 createInterface（复用 tui 的）', () => {
-    // createRL 是给「外部裸调 dispatchMenu」留的兜底，允许存在 1 处
+check('interactive 不自己 createInterface（走 stdin_session）', () => {
     const n = (itvSrc.match(/readline\.createInterface\(/g) || []).length;
-    assert.strictEqual(n, 1, `interactive 里有 ${n} 处 createInterface，预期仅 createRL 中 1 处`);
+    assert.strictEqual(n, 0, `interactive 里有 ${n} 处 createInterface，应改为 stdinSession.acquireSync`);
+    assert.ok(/stdinSession\.acquireSync\(/.test(itvSrc),
+        'interactive.createRL 应通过 stdinSession.acquireSync 取得 readline');
 });
 
 check('makeIo 的 enter 是异步的（等 suspend 的 setImmediate）', () => {

@@ -14,6 +14,27 @@ const Installer = require('./installer');
 const ModManager = require('./mod_manager');
 const SchemeManager = require('./scheme_manager');
 const ServerManager = require('./server');
+const stdinSession = require('./stdin_session');
+
+/**
+ * 问一行，优先复用调用方传进来的 readline。
+ *
+ * 不复用就必须保证「唯一消费者」——所以走 stdin_session 的临时租约，
+ * 而不是再 `createInterface` 一个。后者会在 REPL / 菜单已经持有 stdin 时
+ * 造成双读（用户输入 `world` 变成 `wwoorrlldd`）。
+ *
+ * @param {string} prompt
+ * @param {object} [existingRl]
+ * @returns {Promise<string>}
+ */
+async function askOnce(prompt, existingRl) {
+    if (existingRl) {
+        return new Promise(resolve => {
+            existingRl.question(prompt, ans => resolve(String(ans == null ? '' : ans)));
+        });
+    }
+    return stdinSession.ask(prompt);
+}
 
 class PackGenerator {
     constructor() {
@@ -287,23 +308,11 @@ class PackGenerator {
     /**
      * 询问存档选项
      */
-    _askWorldOption(existingRl) {
-        // existingRl 由调用方（交互菜单）复用同一 readline 接口传入，避免重复挂在同一 stdin 导致输入被读两次。
-        const ownRl = !existingRl;
-        const rl = existingRl || require('readline').createInterface({
-            input: process.stdin,
-            output: process.stdout
-        });
-        return new Promise((resolve) => {
-            rl.question('选择存档: (1) 新建 (2) 使用现有存档 (默认: 新建): ', (answer) => {
-                if (ownRl) rl.close();
-                if (answer.trim() === '2') {
-                    resolve('existing');
-                } else {
-                    resolve('new');
-                }
-            });
-        });
+    async _askWorldOption(existingRl) {
+        // existingRl 由调用方（交互菜单 / TUI）传入时直接复用；
+        // 否则走 stdin_session 的临时租约，保证不会与已有消费者并存。
+        const answer = await askOnce('选择存档: (1) 新建 (2) 使用现有存档 (默认: 新建): ', existingRl);
+        return answer.trim() === '2' ? 'existing' : 'new';
     }
 
     /**
@@ -318,27 +327,15 @@ class PackGenerator {
     /**
      * 选择存档
      */
-    _selectWorld(worlds, existingRl) {
-        const ownRl = !existingRl;
-        const rl = existingRl || require('readline').createInterface({
-            input: process.stdin,
-            output: process.stdout
-        });
-        return new Promise((resolve) => {
-            console.log('可用存档:');
-            for (let i = 0; i < worlds.length; i++) {
-                console.log(`  ${i+1}. ${worlds[i]}`);
-            }
-            rl.question('请输入编号 (默认: 1): ', (answer) => {
-                if (ownRl) rl.close();
-                const idx = parseInt(answer) - 1;
-                if (idx >= 0 && idx < worlds.length) {
-                    resolve(worlds[idx]);
-                } else {
-                    resolve(worlds[0]);
-                }
-            });
-        });
+    async _selectWorld(worlds, existingRl) {
+        console.log('可用存档:');
+        for (let i = 0; i < worlds.length; i++) {
+            console.log(`  ${i + 1}. ${worlds[i]}`);
+        }
+        const answer = await askOnce('请输入编号 (默认: 1): ', existingRl);
+        const idx = parseInt(answer) - 1;
+        if (idx >= 0 && idx < worlds.length) return worlds[idx];
+        return worlds[0];
     }
 
     /**
@@ -405,18 +402,8 @@ class PackGenerator {
     /**
      * 询问确认
      */
-    _askConfirm(prompt, existingRl) {
-        const ownRl = !existingRl;
-        const rl = existingRl || require('readline').createInterface({
-            input: process.stdin,
-            output: process.stdout
-        });
-        return new Promise((resolve) => {
-            rl.question(prompt, (answer) => {
-                if (ownRl) rl.close();
-                resolve(answer);
-            });
-        });
+    async _askConfirm(prompt, existingRl) {
+        return askOnce(prompt, existingRl);
     }
 
     /**

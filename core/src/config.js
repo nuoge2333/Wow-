@@ -368,16 +368,15 @@ class ServerProperties {
 
     /**
      * 快速设置常用属性（V3.1 新增）
-     * @param {object} [readlineModule] readline 模块（可选，默认 require('readline')）
+     * @param {object} [readlineModule] （已废弃，保留形参兼容旧调用）
      * @param {object} [existingRl] 复用已有的 readline 接口（避免与主菜单的 readline 重复挂在同一 stdin 上导致输入被读两次）
      */
     async quickSet(readlineModule, existingRl) {
-        const rlModule = readlineModule || require('readline');
+        // 兜底不再自建 readline：走 stdin_session 的临时租约，
+        // 它与任何已有消费者互斥（必要时排队），不会造成双读。
         const ownRl = !existingRl;
-        const rl = existingRl || rlModule.createInterface({
-            input: process.stdin,
-            output: process.stdout
-        });
+        const lease = ownRl ? await require('./stdin_session').claim('config.quickSet') : null;
+        const rl = existingRl || lease.rl;
 
         const question = (prompt) => new Promise(resolve => rl.question(prompt, resolve));
 
@@ -410,7 +409,8 @@ class ServerProperties {
             console.log(`    ✅ ${item.key} = ${value}`);
         }
 
-        if (ownRl) rl.close();
+        if (lease) await lease.release();
+        else if (ownRl) { try { rl.close(); } catch (e) { /* 忽略 */ } }
         console.log('\n✅ server.properties 快速设置完成');
     }
 

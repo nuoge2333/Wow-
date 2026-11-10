@@ -107,21 +107,19 @@ class ThemeManager {
 
     /**
      * 询问确认
+     *
+     * existingRl 由调用方（交互菜单 / TUI）传入时直接复用；
+     * 否则走 stdin_session 的临时租约——它与已有的任何消费者互斥，
+     * 绝不会再造出第二个 readline 抢同一批字节。
      */
-    _askConfirm(prompt, existingRl) {
-        // existingRl 由调用方（交互菜单）复用同一 readline 接口传入，
-        // 避免与主菜单的 readline 同时挂在同一 process.stdin 导致输入被读两次。
-        const ownRl = !existingRl;
-        const rl = existingRl || require('readline').createInterface({
-            input: process.stdin,
-            output: process.stdout
-        });
-        return new Promise((resolve) => {
-            rl.question(prompt, (answer) => {
-                if (ownRl) rl.close();
-                resolve(answer);
+    async _askConfirm(prompt, existingRl) {
+        if (existingRl) {
+            return new Promise((resolve) => {
+                existingRl.question(prompt, (answer) => resolve(answer));
             });
-        });
+        }
+        const stdinSession = require('./stdin_session');
+        return stdinSession.ask(prompt);
     }
 
     /**

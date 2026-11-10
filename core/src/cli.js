@@ -757,7 +757,8 @@ schemeCmd
             console.error(`\n❌ 克隆异常：${e.message}`);
             process.exitCode = 1;
         } finally {
-            if (io.close) io.close();
+            // await：release() 内部要让出一轮事件循环，确保 stdin 交接干净
+            if (io.close) await io.close();
             // 只解除挂起，提示符由 REPL 的 line handler 统一打印一次
             // （这里若调 resume() 会再打一个，终端就出现 `wow> wow>`）
             if (replSession) replSession.unsuspend();
@@ -777,13 +778,13 @@ syncCmd
         if (!syncClient) return;
         let password = options.password;
         if (!password) {
-            // V3.6.2：REPL 里借用它的 readline（单消费者）；独立运行才自建
+            // V3.6.2：REPL 里借用它的 readline（单消费者）；独立运行则走 stdin_session
+            // 临时租约——它同样保证不会与任何已有 readline 并存。
             if (replSession) {
                 password = await new Promise(r => replSession.rl.question('执行端面板密码: ', a => r(a)));
             } else {
-                const readline = require('readline');
-                const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-                password = await new Promise(r => rl.question('执行端面板密码: ', a => { rl.close(); r(a); }));
+                const stdinSession = require('./stdin_session');
+                password = await stdinSession.ask('执行端面板密码: ');
             }
         }
         try {
@@ -2068,12 +2069,20 @@ async function startRepl(options = {}) {
     // rl.close() 之后仍可能有已排队的 'line' 事件被派发（管道输入尤其明显）。
     // 用一个标志挡住它们，否则关闭后的残留输入会被当成 REPL 指令执行。
     let closed = false;
-    const rl = readline.createInterface({ input: process.stdin, output: process.stdout, prompt: 'wow> ' });
+    // stdins：全项目唯一的 stdin 入口。REPL 长期持有它的租约，
+    // 期间任何想提问的代码都会排队，而不是再造一个 readline 抢字节。
+    const stdinSession = require('./stdin_session');
+    const lease = await stdinSession.claim('repl', {
+        terminal: Boolean(process.stdin.isTTY),
+        prompt: 'wow> '
+    });
+    const rl = lease.rl;
     // V3.6.2：交互式命令执行期间置 true —— REPL 丢弃这期间收到的 line，
     // 避免把用户在命令提问处输入的内容当成 wow 指令执行。
     let suspended = false;
     replSession = {
         rl,
+        lease,
         suspended: false,
         suspend() { suspended = true; this.suspended = true; },
         // 只清标记，不打提示符（供命令自己收尾用，提示符由 line handler 负责）
@@ -2248,8 +2257,13 @@ async function startRepl(options = {}) {
         // 两个 readline 同时挂在 stdin 上时，终端回显会重复、方案名会被 REPL
         // 当成指令执行（「❌ 未知指令: asdf」）。这里只负责暂停 REPL 对 line 的处理，
         // 命令结束后恢复提示符。
-        const interactiveCmd = /^(?:scheme\s+(?:clone-client|create)\b|sync\s+login\b)/.test(input);
+        //
+        // V3.7.4：除了硬编码名单，命令也可以调用 `requestExclusiveInput()`
+        // 主动声明「接下来我要独占输入」。名单式判断漏一个就复现 bug
+        // （`install party` 就是这样漏掉的），自声明不会漏。
+        const interactiveCmd = /^(?:scheme\s+(?:clone-client|create)\b|sync\s+login\b|install\s+party\b)/.test(input);
         if (interactiveCmd) suspended = true;
+        exclusiveInputRequested = false;
         try {
             program.exitOverride();
             await program.parseAsync(['node', 'cli.js', ...args]);
@@ -2271,6 +2285,10 @@ async function startRepl(options = {}) {
     rl.on('close', async () => {
         // REPL 已关闭：交互式命令不能再借用这个 readline
         if (replSession && replSession.rl === rl) replSession = null;
+        // 归还 stdin 租约：LEASE 里已经 close 了 rl，这里只负责放行排队者。
+        // 必须 await——release() 内部会让出一轮事件循环，保证下一个消费者
+        // 拿到 stdin 时内核缓冲里没有残留字节。
+        try { await lease.release(); } catch (e) { /* 忽略 */ }
         // V3.6.2：退出 REPL 前收掉日志跟踪的定时器，别让它们吊住进程
         if (followTimer) { clearInterval(followTimer); followTimer = null; }
         if (detectTimer) { clearInterval(detectTimer); detectTimer = null; }

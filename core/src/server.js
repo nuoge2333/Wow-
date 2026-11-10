@@ -9,7 +9,6 @@
 const fs = require('fs-extra');
 const path = require('path');
 const { spawn, exec } = require('child_process');
-const readline = require('readline');
 const utils = require('./utils');
 const config = require('./config');
 const JreManager = require('./jre_manager');
@@ -413,9 +412,22 @@ class ServerManager {
      * V3.6.3：抽成方法是因为 M 模式退出后要**重新建一个**——M 模式的 TUI
      * 会把自己的 readline 关掉再交还 stdin（否则两边抢键盘），回来时这个
      * rl 已经 close，必须重建。集中在这里创建可以保证两处参数完全一致。
+     *
+     * 一律经 stdin_session 申请：开服控制台是**长期**持有 stdin 的一方，
+     * 但进 M 菜单 / 进 TUI 时它必须先交还，否则 TUI 的键盘收不到按键。
      */
     _createConsoleRl() {
-        const rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: true });
+        const stdinSession = require('./stdin_session');
+        // 旧的租约先还掉：这是「重建」语义，不还就会一直占着
+        if (this._consoleLease) {
+            try { this._consoleLease.release(); } catch (e) { /* 忽略 */ }
+            this._consoleLease = null;
+        }
+        const lease = stdinSession.acquireSync('server.console', {
+            terminal: true
+        });
+        const rl = lease.rl;
+        this._consoleLease = lease;
         this._rl = rl;
         rl.on('SIGINT', () => {
             if (this.isRunning()) {
@@ -466,6 +478,12 @@ class ServerManager {
         this._rl = null;
         if (oldRl) {
             try { oldRl.close(); } catch (e) { /* 已关闭 */ }
+        }
+        // 把 stdin 交还单例：TUI 的键盘要用它。不还的话 TUI 申请时
+        // 会看到「server.console 还占着」，按强制接管处理并打告警。
+        if (this._consoleLease) {
+            try { await this._consoleLease.release(); } catch (e) { /* 忽略 */ }
+            this._consoleLease = null;
         }
         await new Promise(r => setImmediate(r));
 

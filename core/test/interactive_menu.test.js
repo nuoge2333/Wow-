@@ -243,7 +243,9 @@ console.log('\n— V3.5.8 启动方式（cli.js）—');
     });
     check('服务器停止后自动退出跟踪，REPL 退出时清理定时器', () => {
         assert.ok(/服务器已停止，已退出日志跟踪/.test(cli), '缺少退出跟踪提示');
-        const m = cli.match(/rl\.on\('close', async \(\) => \{[\s\S]{0,400}?following = false;/);
+        // V3.7.4：close 回调里多了「归还 stdin 租约」那几行，
+        // 窗口从 400 放宽到 900，断言本身（两个定时器都要清）不变。
+        const m = cli.match(/rl\.on\('close', async \(\) => \{[\s\S]{0,900}?following = false;/);
         assert.ok(m && /clearInterval\(followTimer\)/.test(m[0]) && /clearInterval\(detectTimer\)/.test(m[0]),
             'close 回调未清理跟踪定时器');
     });

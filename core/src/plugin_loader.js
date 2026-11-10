@@ -45,7 +45,6 @@
 
 const fs = require('fs-extra');
 const path = require('path');
-const readline = require('readline');
 const utils = require('./utils');
 const trust = require('./plugin_trust');
 const { createContext, CONTEXT_KEYS } = require('./plugin_context');
@@ -140,19 +139,18 @@ function validateManifest(meta) {
 
 /**
  * 交互式确认（只认 TTY）。非 TTY 直接返回 false——绝不替用户做「同意」的决定。
+ *
+ * 走 stdin_session 而不是自建 readline：插件加载虽然发生在启动早期，
+ * 但 `wow plugin trust` 等命令也可能在 REPL 会话中被再次触发，
+ * 那时 stdin 已有人持有，自建就会双读。
+ *
  * @param {string} question
  * @returns {Promise<boolean>}
  */
 function askYesNo(question) {
     if (!process.stdin.isTTY || !process.stdout.isTTY) return Promise.resolve(false);
-    return new Promise((resolve) => {
-        const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-        rl.question(question, (answer) => {
-            rl.close();
-            const a = String(answer || '').trim().toLowerCase();
-            resolve(a === 'y' || a === 'yes' || a === '是');
-        });
-    });
+    const stdinSession = require('./stdin_session');
+    return stdinSession.confirm(question);
 }
 
 /**

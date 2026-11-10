@@ -16,7 +16,6 @@ const path = require('path');
 const axios = require('axios');
 const AdmZip = require('adm-zip');
 const { spawn } = require('child_process');
-const readline = require('readline');
 
 // ==================== EASTER EGG REGISTRY ====================
 // Add new easter eggs here. Each entry describes:
@@ -55,17 +54,23 @@ const EGG_REGISTRY = {
 const PARTY_DIR = path.join(__dirname, '../../party');
 
 // ==================== HELPERS ====================
-function ask(question) {
-    return new Promise((resolve) => {
-        const rl = readline.createInterface({
-            input: process.stdin,
-            output: process.stdout
-        });
-        rl.question(question, (answer) => {
-            rl.close();
-            resolve(answer.trim());
-        });
-    });
+
+/**
+ * 问一行输入。
+ *
+ * 走 stdin_session 而不是自建 readline：本函数会在 REPL（`install party`）
+ * 和 M 菜单里被调用，那是**已经有一个 readline 持有 stdin** 的场合。
+ * 自建的话两个消费者各读一遍，用户输入 `badapple` 会变成
+ * `bbaaddaappppllee`，同时 REPL 把同一行当指令执行，报「未知指令」。
+ * stdin_session 保证同一时刻只有一个消费者，必要时排队。
+ *
+ * @param {string} question
+ * @returns {Promise<string>}
+ */
+async function ask(question) {
+    const stdinSession = require('../stdin_session');
+    const answer = await stdinSession.ask(question);
+    return answer;
 }
 
 function sleep(ms) {
