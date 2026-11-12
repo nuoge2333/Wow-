@@ -138,8 +138,12 @@ console.log('\n[列目录]');
         assert.strictEqual(r.files.find(f => f.name === 'a.txt').type, 'file');
         // 目录应排在文件前
         assert.strictEqual(r.files[0].type, 'dir');
+        // Web 文件管理页按 isDir 契约渲染「打开文件夹」按钮：字段必须存在且为布尔
+        assert.strictEqual(r.files.find(f => f.name === 'sub').isDir, true, '目录 isDir 应为 true');
+        assert.strictEqual(r.files.find(f => f.name === 'a.txt').isDir, false, '文件 isDir 应为 false');
+        for (const f of r.files) assert.strictEqual(typeof f.isDir, 'boolean', `${f.name} 缺 isDir`);
         pass++;
-        console.log('  ✅ 异步 listFiles 结构与排序正确');
+        console.log('  ✅ 异步 listFiles 结构与排序正确（含 isDir 契约）');
     } catch (e) {
         fail++;
         console.log(`  ❌ 异步 listFiles: ${e.message}`);

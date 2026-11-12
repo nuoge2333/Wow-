@@ -46,9 +46,10 @@ check('每页都有 label / title / items', () => {
     }
 });
 
-check('Q 页 6 项 / W 页 9 项 / E 页 7 项 / R 页 8 项 / T 页 7 项 / Y 页 7 项', () => {
+// 执行令阶段 4a：R 页追加第 9 项「我要当房客 Join Room」，由 8 项变 9 项。
+check('Q 页 6 项 / W 页 9 项 / E 页 7 项 / R 页 9 项 / T 页 7 项 / Y 页 7 项', () => {
     const counts = Object.fromEntries(itv.PAGES.map(p => [p.key, p.items.length]));
-    assert.deepStrictEqual(counts, { Q: 6, W: 9, E: 7, R: 8, T: 7, Y: 7 });
+    assert.deepStrictEqual(counts, { Q: 6, W: 9, E: 7, R: 9, T: 7, Y: 7 });
 });
 
 check('每页内编号不重复', () => {
@@ -322,24 +323,30 @@ check('启动服务器前必须交出键盘（服务端要接管 stdin）', () =
     assert.ok(/kb\.resume\(\)/.test(failBranch), '启动失败未 resume 键盘');
 });
 
-check('服务器已在运行时不退 TUI（stop 不接管 stdin）', () => {
+check('服务器已在运行时 Q 页 1 附加回 :mc（不再弹是否停止、不误杀）', () => {
     const m = itvSrc.match(/async function maybeJumpToServer[\s\S]*?\n\}\n/);
     assert.ok(/if \(running\) \{/.test(m[0]), '未区分运行中');
-    // 运行中分支里不应出现 kb.close / kb.suspend（stop 不接管 stdin）
     const runBranch = m[0].slice(m[0].indexOf('if (running) {'), m[0].indexOf('// 未运行'));
-    assert.ok(!/kb\.(close|suspend)\(\)/.test(runBranch), '运行中分支不应交出键盘');
+    assert.ok(!/是否停止服务器/.test(runBranch), '运行中分支不该再问是否停止');
+    assert.ok(/serverManager\.process/.test(runBranch), '未区分本进程是否持有 MC 子进程');
+    assert.ok(/handled: true/.test(runBranch), '本进程持有 MC 时应退出 TUI 回到 :mc');
+    assert.ok(!/serverManager\.stop\(\)/.test(runBranch), '运行中分支绝不能停服');
 });
 
 // ─────────────────────────────────────────────
-console.log('\n— 开服控制台 :wow（约束③）—');
+console.log('\n— 开服控制台五大视图（执行令）—');
 
 check('server.js 有 _enterMenuFromConsole', () => {
     assert.ok(/_enterMenuFromConsole\s*\(/.test(srvSrc), '未找到 _enterMenuFromConsole');
 });
 
-check(':wow / :2 走进菜单而不是切视图', () => {
-    assert.ok(/MODE_ALIASES\[lower\] === 'wow'[\s\S]{0,160}?_enterMenuFromConsole\(\)/.test(srvSrc),
-        'MODE_ALIASES 的 wow 未进菜单');
+check(':m / :wow / :web 经统一安全退场入口分发', () => {
+    const m = srvSrc.match(/_detachConsole\(target\) \{[\s\S]*?\n    \}/);
+    assert.ok(m, '未找到 _detachConsole');
+    assert.ok(/await this\._enterMenuFromConsole\(\)/.test(m[0]), ':m 未进菜单');
+    assert.ok(/await this\._enterReplFromConsole\(\)/.test(m[0]), ':wow 未进长命令视图');
+    assert.ok(/this\._printWebHint\(\)/.test(m[0]), ':web 未打印面板地址');
+    assert.ok(!/this\.stop\(\)/.test(m[0]), '安全退场里绝不能停服');
 });
 
 check(':wowlog 保留日志视图（原来的 :wow 功能）', () => {
@@ -347,25 +354,25 @@ check(':wowlog 保留日志视图（原来的 :wow 功能）', () => {
     assert.ok(/_printConsoleTail\('wow'\)/.test(srvSrc), ':wowlog 未指向 wow 日志');
 });
 
-check('从菜单返回必定落回 :wow', () => {
+check('从菜单返回必定落回 :mc', () => {
     const m = srvSrc.match(/_enterMenuFromConsole\(\) \{[\s\S]*?\n    \}/);
     assert.ok(m, '未找到函数体');
-    assert.ok(/_backToConsole\('wow'\)/.test(m[0]), '返回时未落回 :wow');
+    assert.ok(/_backToConsole\('mc'\)/.test(m[0]), '返回时未落回 :mc');
 });
 
-check('菜单里选 L 也回到 :wow（不是另起 REPL 抢 stdin）', () => {
+check('菜单里选 L 落到 :wow 长命令视图（不另起 REPL 抢 stdin）', () => {
     const m = srvSrc.match(/_enterMenuFromConsole\(\) \{[\s\S]*?\n    \}/);
-    assert.ok(m && /onEnterLongCommand:[\s\S]{0,120}?this\._backToConsole\('wow'\)/.test(m[0]),
-        'onEnterLongCommand 未指向 _backToConsole(wow)');
+    assert.ok(m && /onEnterLongCommand:[\s\S]{0,160}?this\._enterReplFromConsole\(\)/.test(m[0]),
+        'onEnterLongCommand 未指向 _enterReplFromConsole');
 });
 
-check('进菜单期间视图钉在 wow（MC 输出不刷屏）', () => {
+check('进菜单期间视图钉在 menu（MC 输出不刷屏）', () => {
     const m = srvSrc.match(/_enterMenuFromConsole\(\) \{[\s\S]*?\n    \}/);
-    assert.ok(m && /this\._mode = 'wow'/.test(m[0]), '未设置 _mode=wow');
+    assert.ok(m && /this\._mode = 'menu'/.test(m[0]), '未设置 _mode=menu');
 });
 
-check('_backToConsole 会重建 rl（旧的在进菜单时已关）', () => {
-    const m = srvSrc.match(/_backToConsole\(mode = 'wow'\) \{[\s\S]*?\n    \}/);
+check('_backToConsole 会重建 rl（旧的在退场时已关）', () => {
+    const m = srvSrc.match(/_backToConsole\(mode = 'mc'\) \{[\s\S]*?\n    \}/);
     assert.ok(m, '未找到 _backToConsole');
     assert.ok(/_createConsoleRl\(\)/.test(m[0]), '未重建 rl');
     assert.ok(/this\._rl\.closed/.test(m[0]), '未判断 rl 是否已关闭');
@@ -374,9 +381,10 @@ check('_backToConsole 会重建 rl（旧的在进菜单时已关）', () => {
 check('控制台路由抽成 _bindConsoleLine（两处复用同一份判定）', () => {
     assert.ok(/_bindConsoleLine\(rl\)/.test(srvSrc), 'start 未调用 _bindConsoleLine');
     assert.ok(/this\._bindConsoleLine\(rl\)/.test(srvSrc), '_backToConsole 未调用 _bindConsoleLine');
-    // 绑定函数里必须有 :wow 的判定
+    // 绑定函数里必须把视图别名交给统一的安全退场入口
     const m = srvSrc.match(/_bindConsoleLine\(rl\) \{[\s\S]*?\n    \}/);
-    assert.ok(m && /MODE_ALIASES\[lower\] === 'wow'/.test(m[0]), '_bindConsoleLine 未处理 :wow');
+    assert.ok(m && /const target = MODE_ALIASES\[lower\]/.test(m[0]), '_bindConsoleLine 未解析视图别名');
+    assert.ok(m && /await this\._detachConsole\(target\)/.test(m[0]), '_bindConsoleLine 未走安全退场');
 });
 
 check('菜单管理器集合就地构建（不 require cli，避免循环依赖）', () => {
@@ -564,7 +572,7 @@ check('切页 / 进 L / 退出确认 / EOF 都会丢掉半截编号', () => {
     for (const re of branches) assert.ok(re.test(body), `分支未调用 cancelNumber: ${re}`);
     // 退出确认走 askExit，它必须清缓冲
     assert.ok(/const askExit = \(\) => \{\s*\n\s*cancelNumber\(\)/.test(itvSrc), 'askExit 未清编号');
-    assert.ok(/const finishExit = \(\) => \{[\s\S]{0,120}?cancelNumber\(\)/.test(itvSrc), 'finishExit 未清编号');
+    assert.ok(/const finishExit = async \(\) => \{[\s\S]{0,120}?cancelNumber\(\)/.test(itvSrc), 'finishExit 未清编号');
     assert.ok(/onEof: \(\) => \{[\s\S]{0,80}?cancelNumber\(\)/.test(itvSrc), 'EOF 未清编号');
 });
 
@@ -586,7 +594,7 @@ check('maybeJumpToServer 在兼容模式下用调用方的 rl 提问（不再 as
     const body = m[0];
     assert.ok(!/ioAsk\(io, null/.test(body), '仍有 ioAsk(io, null)：兼容模式提问会被静默跳过');
     assert.ok(/ioAsk\(io, rl, '内存分配/.test(body), '内存提问未传 rl');
-    assert.ok(/ioAsk\(io, rl, '是否停止服务器/.test(body), '停止确认未传 rl');
+    assert.ok(!/ioAsk\(io, rl, '是否停止服务器/.test(body), '运行中分支不应再问是否停止');
     // 兼容模式的收尾不能开第二个 readline（askLine 会与 compat 的 rl 抢 stdin）
     assert.ok(/else if \(rl\) \{\s*\n\s*await ask\(rl,/.test(body), '兼容模式仍用 askLine 收尾');
 });
@@ -657,7 +665,7 @@ check('从控制台进菜单不重复打印控制台横幅（restored 标记）'
     const m = srvSrc.match(/_enterMenuFromConsole\(\) \{[\s\S]*?\n    \}/);
     assert.ok(m, '未找到函数体');
     assert.ok(/let restored = false;/.test(m[0]), '缺 restored 标记');
-    assert.ok(/if \(!restored\) await this\._backToConsole\('wow'\)/.test(m[0]), '未用 restored 去重');
+    assert.ok(/if \(!restored\) await this\._backToConsole\('mc'\)/.test(m[0]), '未用 restored 去重');
 });
 
 // ─────────────────────────────────────────────

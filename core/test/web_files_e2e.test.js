@@ -60,6 +60,8 @@ async function req(method, url, body) {
     const origGetConfig = config.getConfig;
     config.getConfig = function (key, def) {
         if (key === 'server.scheme') return TEST_SCHEME;
+        // 该用例专门验证「无 token → 401」，显式打开强制登录
+        if (key === 'web.require_login') return true;
         return origGetConfig.call(this, key, def);
     };
 

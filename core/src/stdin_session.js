@@ -103,6 +103,42 @@ const violationSites = [];
 /** 只有 makeRl() 内部才置 true，守卫据此放行 */
 let insideFactory = false;
 
+// ==================== 可选诊断探针（pty 测试用，默认零影响） ====================
+//
+// WOW_STDIN_ASSERT=1 时，每次创建 / 销毁 readline 都往 stderr 打一行结构化
+// 快照，并在进程退出时补一条 EXIT 汇总。生产环境不设这个变量，连字符串都
+// 不会拼（emitProbe 首行直接 return）。
+//
+// 为什么需要它：pty 测试光看「回显没重复」只能证明输出现象，证明不了
+// 「同一时刻只有一个 readline 实例」。有了探针就能直接断言
+//   peak === 1          （活跃实例历史峰值）
+//   violations === 0    （没有任何代码绕过单例）
+// 把单例保证从现象上升到运行时数据。前缀刻意取得很独特，方便在 pty
+// 合并流里精确抓取，也不会和用户可见输出混淆。
+
+const WOW_STDIN_ASSERT = process.env.WOW_STDIN_ASSERT === '1';
+
+function emitProbe(tag) {
+    if (!WOW_STDIN_ASSERT) return;
+    try {
+        const s = stats();
+        process.stderr.write(
+            `[WOW_PROBE] ${tag} live=${s.live} peak=${s.peak} ` +
+            `violations=${s.violations} total=${s.totalCreated} ` +
+            `data=${s.stdinDataListeners} owner=${s.owner || '-'}\n`
+        );
+    } catch (e) { /* 探针绝不能影响主流程 */ }
+}
+
+let probeExitInstalled = false;
+function installProbeExit() {
+    if (!WOW_STDIN_ASSERT || probeExitInstalled) return;
+    probeExitInstalled = true;
+    // 只在正常退出时触发；SIGKILL 强杀不会走这里，但每次 CREATE / TEARDOWN
+    // 都已实时打过，pty 侧靠累计快照一样能断言 peak / violations。
+    process.on('exit', () => emitProbe('EXIT'));
+}
+
 // ==================== 第三层：全局创建守卫 ====================
 
 const nativeCreateInterface = readline.createInterface;
@@ -183,6 +219,7 @@ function makeRl(options = {}) {
     createdCount++;
     totalCreated++;
     if (createdCount > peakCount) peakCount = createdCount;
+    emitProbe('CREATE:' + (options.__owner || '?'));
     return rl;
 }
 
@@ -205,6 +242,7 @@ function teardown() {
         if (typeof old.__origClose === 'function') old.__origClose();
         else old.close();
     } catch (e) { /* 已关闭 */ }
+    emitProbe('TEARDOWN');
 }
 
 /**
@@ -247,18 +285,32 @@ function claimSync(name, options = {}) {
  * 若此刻已被别人持有，**不报错、不排队**，而是：
  *   1. 关掉旧持有者的 readline（它已经不该再读了）；
  *   2. 标记旧租约已失效，防止它稍后再 release 把新租约的计数减掉；
- *   3. 打一条告警，把现场写进日志，方便定位是谁忘了 release。
+ *   3. 除「设计内交接」外打一条告警，方便定位是谁忘了 release。
  *
  * 为什么不用排队：TUI 是画面的唯一主宰，进 TUI 时 REPL / 命令的提问
  * 都应当已经结束。如果还有残留持有者，说明调用方漏了 release——
  * 此时排队会直接卡死画面，而接管 + 告警能把问题暴露出来。
  * 接管走的是同一个 teardown()，所以 liveRl 始终 ≤ 1。
+ *
+ * ## expectedOwners：设计内的控制权交接
+ *
+ * 有一类接管**不是**漏 release：在 `wow L` 的 REPL 里敲 `server start`，
+ * 开服控制台必须立刻拿到 stdin，而 REPL 的 `rl.on('close')` 已经专门用
+ * `lease.released` 判断静默让出（绝不 process.exit，否则 MC 变孤儿）。
+ * 这是架构上必然的一次交接，每次开服都刷「调用方可能漏了 release」是误报。
+ *
+ * 调用方用 `expectedOwners: ['repl']` 显式声明「这个前任是设计内让位」，
+ * 本次接管就不打告警；**未声明的占用者仍然告警**，所以对真正漏 release
+ * 的诊断能力一点没丢。声明是按「前任名字」精确匹配，不是全局静音。
  */
 function acquireSync(name, options = {}) {
     if (current) {
         const stale = current;
         const owner = stale.name;
-        console.warn(`⚠️ stdin 被「${owner}」占用，${name} 强制接管（调用方可能漏了 release）`);
+        const expected = options.expectedOwners || [];
+        if (!expected.includes(owner)) {
+            console.warn(`⚠️ stdin 被「${owner}」占用，${name} 强制接管（调用方可能漏了 release）`);
+        }
         try {
             if (process.stdin.isRaw) process.stdin.setRawMode(false);
         } catch (e) { /* 忽略 */ }
@@ -430,6 +482,9 @@ function stats() {
 function violations() {
     return violationSites.slice();
 }
+
+// 模块加载完成后注册 EXIT 汇总探针（WOW_STDIN_ASSERT 未开启时是空操作）。
+installProbeExit();
 
 module.exports = {
     claim,

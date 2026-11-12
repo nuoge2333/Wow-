@@ -42,7 +42,7 @@
 
 | 版本 | 状态 | 发布时间 |
 |------|------|------|
-| **待发行** | 累积改动：readline 单例（版本号待定） | — |
+| **待发行** | 累积改动：readline 单例 + 3.7.0 视图重构执行令（版本号待定） | — |
 | **3.7.3-26.46** | 当前版本（M 模式画面独占 + 三处线上问题） | 2026-11-09 |
 | **3.7.2-26.45** | 上一版本 |2026-11-08|
 | **3.7.1-26.44** | 上一版本 |2026-11-08|
@@ -117,6 +117,77 @@
 | **3.0.0** | 上一版本 |2026-07-23|
 | **2.0.0** | 内部迭代 |2026-02-27|
 | **1.0.0** | 内部迭代 |2026-02-07|
+
+---
+
+## [待发行] — 2026-11-12：3.7.0 视图重构与功能补丁执行令
+
+> 承接《尚书省第 3.7.0 视图重构与功能补丁执行令》。与 11-10 的 readline
+> 单例改动合并累积在**同一个待发行版本**下，版本号 / tag / Release 等
+> 用户说「发行」时再定（见 `docs/RELEASE_POLICY.md`）。
+> 本轮不升版本号、不打 tag、不建 Release。
+
+### 一、新增两个配置项
+
+| 配置 | 默认 | 语义 |
+|------|------|------|
+| `web.require_login` | `false` | `false` = 打开面板与调用接口都无需登录；`true` = 必须验证身份。面板监听 `0.0.0.0` / 非回环地址 / 开了内网穿透时，**忽略 false 强制登录**（公网兜底）。 |
+| `log.disabled` | `false` | wow 自身日志不写入硬盘（终端与内存照常可见）；Minecraft 自己写的 `latest.log` 保留；每次正常关服把方案 `logs/` 清到只剩 `latest.log`。 |
+
+- `web.require_login` 用 `app.use()` **包装层**实现，不改 `authMiddleware` 函数体；新增 `GET /api/auth/mode`，前端 `web/js/auth_guard.js` 的 `wowAuthGuard()` 据此决定是否跳登录页，四页接入后 `false` 时完全免登录。
+- `log.disabled` 收口到新增的 `core/src/log_sink.js`：wow 主日志、`wow-console.log`、`wow-stdout.log`、`analysis_report.txt`、`cloudflared.log`、`.lan-api.log` 全部走同一闸门，disabled 时**一个文件都不产生**；`keepLatestOnly()` 关服清理不会误删 `latest.log`。
+
+### 二、五大视图状态机（P0）
+
+废弃旧 `:mc / :wow / :lan` 三视图，改为 `shell / menu(:m) / wow(:wow) / mc(:mc) / web(:web)`：
+
+- 新增 `core/src/view_state.js` 作为单一事实源，**只存状态、绝不创建 readline**。
+- 删除 `server start` 内的 `:lan` 视图，`SWITCH_ALIASES` 里不留任何 lan 别名（陶瓦功能仍在 `:m` 的 R 页）。
+- Web 面板触发启服：`:m` **不切视图**，只把顶部状态栏刷成「🟢 已启动」；`:wow` 自动切 `:mc` 实时日志。
+- `:mc` 的单次 `Ctrl+C` / `:wow` / `:m` 都是**安全退场**：只归还 stdin 租约、断开日志流，服务端继续跑，绝不 `stop()`；再次 `:mc` 可随时回来。
+- `:wow` 长命令视图在 `server start` 上下文内置（`server.repl` 租约），不另起 REPL 抢 stdin。
+
+### 三、防呆：强关终端不留僵尸
+
+- 新增 `core/src/shutdown.js`：登记本进程持有的 MC 子进程，`SIGTERM` / `SIGHUP` / `exit` 三级兜底优雅停服（`stop` 指令 → SIGTERM → SIGKILL）；单次 `Ctrl+C` 不注册（那是 detach）。
+- 两处 `spawn`（交互 / 非交互）都登记；补齐非交互分支原本完全没有信号处理器的缺口。
+- 所有 `process.exit(0)` 前先 `await requestStop()`，且 `hasOwnedChild()` 保证 Web 面板启动的服务端不被 REPL 的 `exit` 误杀。
+
+### 四、功能修复与页面重写
+
+| 项 | 改动 |
+|----|------|
+| Web 文件管理打不开文件夹 | 根因是后端 `listFiles()` 返回 `type`，前端全篇读 `file.isDir`。后端补 `isDir` 字段恢复契约，前端零改动。 |
+| `:m` 的 R 页「我要当房客」 | 不再只是提示，基于 `GET /state/guessing?room=&player=` 实现**真正加入房间**（`terracotta.joinRoom()` + `waitGuestOk()`），二进制不支持时降级提示且不崩。R 页由 8 项扩到 9 项。 |
+| `set.html` 真·推倒重写 | 1514 行 → 817 行，内联 CSS 抽成 `web/css/set.css`；首屏干净配置表单 + JVM 预览，`<details>` 折叠高级区；改模板 500ms 后由 `/api/config/preview-jvm`（后端 `Jvm.buildJvmArgs()`）返回命令，**前端零 JVM 拼接**。 |
+
+### 五、readline 单例补强
+
+- `stdin_session.js` 新增默认关闭的 `WOW_STDIN_ASSERT=1` 探针：每次创建 / 销毁 readline 把 `stats().peak / live / violations` 打到 stderr，让「只有一个 readline」从输出现象上升到运行时数据。
+- `acquireSync()` 新增 `expectedOwners`：**设计内的控制权交接**（`wow L` 的 REPL 里敲 `server start`，stdin 交给开服控制台）不再刷「调用方可能漏了 release」误报；未声明的占用者仍告警，对真漏 release 的诊断能力不丢。
+
+### 六、pty 实测回归基建
+
+新增 `core/test/pty_views.py` + `core/test/pty_views.test.js`：纯标准库 `pty.fork()` 驱动真实 TTY，用临时目录的 fake-java + dummy 方案走**真实 `server start` 主路径**，零生产代码测试钩子、零污染。
+
+| 场景 | 覆盖 |
+|------|------|
+| A | `shell → :wow → :m → :wow → exit`，菜单往返 + `badapple` / `server status` 双写哨兵 |
+| B | `shell → :wow → :mc → :wow → :mc → Ctrl+C 安全退场 → :wow → :mc`，fake MC 全程持续 tick（没被误杀） |
+| C | 强关终端 `SIGTERM` → MC 优雅退出，PID 无残留、无僵尸 |
+| D | Web 端触发启服心跳 → `:wow` 自动切 `:mc`（`:m` 不切页由静态断言锁定） |
+
+- 每个场景断言探针 `peak<=1`、`violations==0`，且无 `sseerrvveerr` / `bbaaddaappppllee` 双写。
+- 双层超时天花板（`spawnSync` 120s + SIGKILL、python `signal.alarm(100)`），保证 `test/run.js`（无 timeout）不会被拖死；`finally` 里 killpg / waitpid / rmtree / 补杀漏网 fake-java。
+- 另新增 `view_state.test.js`（状态机 + 全仓租约配对）、`server_start_path.test.js`（`start()` 主路径源码形状）、`log_sink.test.js`、`auth_mode.test.js`、`set_page.test.js`、`shutdown.test.js`、`terracotta_guest.test.js`。
+
+### 七、验证结果
+
+- `npm test`：**49 个测试文件全绿**（72.5s）。
+- `WOW_PTY_STRICT=1 node test/pty_views.test.js`：13 项全过，4 个 pty 场景 `ok=4 fail=0`。
+- `diff -rq web themes/default`：逐字节一致（含新增 `css/set.css` / `js/auth_guard.js`）。
+- `grep -rn "CONSOLE_MODES.lan\|_startLanWatch\|isLoginVerifyEnabled" core/src`：均无残留。
+- pty 四场景已覆盖核心流转矩阵与「强关终端不留僵尸」红线，`peak=1 / violations=0` 全程成立。
 
 ---
 

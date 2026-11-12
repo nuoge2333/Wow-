@@ -73,7 +73,18 @@ function hms(d) {
 // ────────────────────────── 日志器本体 ──────────────────────────
 
 class WowLogger {
-    constructor() {
+    /**
+     * @param {object} [opts]
+     * @param {boolean} [opts.memoryOnly] true = 不写任何日志文件，只留内存环形缓冲
+     * @param {boolean} [opts.lazyMemory] true = 首次写日志时才从 config 读 log.disabled
+     *   （单例专用：避免模块加载期就产生文件 / 读配置的副作用；测试自建实例
+     *    不传此参数，行为与重构前逐字节一致）
+     */
+    constructor(opts = {}) {
+        this.memoryOnly = Boolean(opts.memoryOnly);
+        this._lazyMemory = Boolean(opts.lazyMemory);
+        this._memory = [];
+        this._memoryMax = 2000;
         // 日志目录：Wow/logs/（core 的上一级）
         this.logDir = utils.resolvePath('../logs');
         // 会话标识：取 PID，仅用于「会话开始/结束」标记里区分进程
@@ -95,7 +106,20 @@ class WowLogger {
     _ensureInit() {
         if (this._initDone) return;
         this._initDone = true;
-        try { fs.ensureDirSync(this.logDir); } catch (e) { /* 忽略 */ }
+        // 惰性解析 log.disabled：只有单例带 lazyMemory，且只在第一次真正
+        // 写日志时才读配置。默认 false 时下面的落盘路径完全不变。
+        if (this._lazyMemory) {
+            this._lazyMemory = false;
+            try {
+                // 统一经 log_sink 判定；惰性 require 保持「首次写日志才读配置」
+                if (!require('./log_sink').shouldPersist()) {
+                    this.memoryOnly = true;
+                }
+            } catch (e) { /* 配置不可用时保持落盘 */ }
+        }
+        if (!this.memoryOnly) {
+            try { fs.ensureDirSync(this.logDir); } catch (e) { /* 忽略 */ }
+        }
 
         // 采集运行环境信息（仅首次）
         const sysOs = (() => {
@@ -145,6 +169,7 @@ class WowLogger {
 
     // 仅当当天文件尚不存在时才写入文件头
     _writeHeaderIfNew() {
+        if (this.memoryOnly) return;   // 内存模式不产生文件头
         try {
             if (!this.activePath || fs.existsSync(this.activePath)) return;
             let version = '';
@@ -185,8 +210,29 @@ class WowLogger {
     }
 
     _appendRaw(text) {
+        if (this.memoryOnly) { this._pushMemory(String(text)); return; }
         try { fs.appendFileSync(this.activePath, text, 'utf8'); } catch (e) { /* 忽略写入失败 */ }
     }
+
+    /** 写进内存环形缓冲（按行存，recent(n) 直接取最后 n 行） */
+    _pushMemory(text) {
+        if (!text) return;
+        for (const line of String(text).split('\n')) {
+            if (line) this._memory.push(line);
+        }
+        if (this._memory.length > this._memoryMax) {
+            this._memory.splice(0, this._memory.length - this._memoryMax);
+        }
+    }
+
+    /** 最近 n 行日志（内存模式下供 :wowlog 使用；落盘模式返回空数组） */
+    recent(n = 10) {
+        const k = Math.max(0, Math.floor(n) || 0);
+        return this._memory.slice(-k);
+    }
+
+    /** 当前是否处于「不落盘」模式 */
+    isMemoryOnly() { return this.memoryOnly; }
 
     // 进程退出时收尾本会话。注意：SIGTERM/SIGKILL 不会触发 exit 钩子，
     // 这两种情况下不会写「会话结束」——正文行都是实时落盘的，不影响数据完整，
@@ -262,6 +308,10 @@ class WowLogger {
                 Buffer.from('…[已截断]\n', 'utf8')
             ]);
         }
+        if (this.memoryOnly) {
+            this._pushMemory(buf.toString('utf8'));
+            return;
+        }
         try {
             fs.appendFileSync(this.activePath, buf);
         } catch (e) { /* 忽略写入失败 */ }
@@ -307,8 +357,11 @@ class WowLogger {
     getLogDir() { return this.logDir; }
 }
 
-// 单例（所有模块 require 同一份）
-const logger = new WowLogger();
+// 单例（所有模块 require 同一份）。
+// lazyMemory：第一次真正写日志时才读 log.disabled，避免模块加载期就产生
+// 配置文件或日志文件的副作用。测试里 `new WowLogger()` 不传参，
+// 行为与重构前逐字节一致（log_daily_file.test.js 依赖这一点）。
+const logger = new WowLogger({ lazyMemory: true });
 
 // ────────────────────────── 全局异常兜底 ──────────────────────────
 // 未捕获异常 / 未处理 Promise 拒绝：记入 ERRO 并标记崩溃。

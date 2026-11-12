@@ -58,6 +58,35 @@ function isExposedHost(host) {
     return true;
 }
 
+/** startWeb() 实际绑定的地址（options.host 可能覆盖配置，公网判断要以此为准） */
+let activeHost = null;
+
+/**
+ * web.require_login —— 当前是否需要身份验证。
+ *
+ * - `true`  : 静态页 + 所有 /api/* 都走 authMiddleware（旧行为）。
+ * - `false` : 完全免登录，本机自用最方便。
+ * - **但对外暴露时忽略 false 强制 true**：绑定地址非回环，或本进程正在跑
+ *   cloudflared 隧道，都不能让面板裸奔。
+ *
+ * 这里只判断「要不要校验」，绝不改 authMiddleware 的函数体——那层是既有
+ * 安全测试逐行锁住的，统一包装在 app.use() 处最稳妥。
+ */
+function requireLogin() {
+    let flag = false;
+    try { flag = config.getConfig('web.require_login', false) === true; }
+    catch (e) { return true; }   // 配置读不到时按「需要登录」处理更安全
+    if (flag) return true;
+    try {
+        const cfgHost = config.getConfig('web.host', '127.0.0.1');
+        // activeHost 是本次实际绑定；配置项写了对外地址时也一律强制
+        // （用户可能只是临时用 --host 覆盖，配置本身仍指向公网）。
+        if (isExposedHost(activeHost || cfgHost) || isExposedHost(cfgHost)) return true;
+    } catch (e) { return true; }
+    if (tunnelHandle) return true;   // 隧道已建立 = 面板映射到公网
+    return false;
+}
+
 /**
  * V3.5.24：公网隧道的前置闸门——「隧道等于暴露，必须配 token」。
  *
@@ -269,7 +298,7 @@ function authMiddleware(req, res, next) {
         // 白名单路径（无需认证）
         // 注：/api/download 允许通过 ?token= 认证（浏览器 window.open 无法带 Authorization 头），
         //     故在中间件层放行，由路由内部完成校验。
-        const publicPaths = ['/api/auth/request-code', '/api/auth/login', '/api/auth/verify', '/api/download'];
+        const publicPaths = ['/api/auth/request-code', '/api/auth/login', '/api/auth/verify', '/api/auth/mode', '/api/download'];
         if (publicPaths.includes(req.path)) {
             return next();
         }
@@ -310,6 +339,8 @@ function startWeb(options = {}) {
     if (!host && options.public) host = '0.0.0.0';
     if (!host) host = config.getConfig('web.host', '127.0.0.1');
     host = String(host).trim() || '127.0.0.1';
+    // 公网自动强制登录：以实际绑定地址为准（options.host 会覆盖配置）
+    activeHost = host;
 
     const theme = config.getConfig('web.theme', 'default');
 
@@ -385,12 +416,25 @@ function startWeb(options = {}) {
     app.use(express.json({ limit: '4mb' }));
 
     // 认证中间件（保护 /api/* 路由）
-    app.use(authMiddleware);
+    // web.require_login=false 时完全放行；true 或对外暴露 / 隧道时走既有 JWT 校验。
+    // 用包装层而不是改 authMiddleware 函数体，既有安全断言一行不动。
+    app.use((req, res, next) => {
+        if (!requireLogin()) return next();
+        return authMiddleware(req, res, next);
+    });
 
     // ===== 方案同步端点（V3.5.25，继承 JWT 认证） =====
     require('./sync_server').registerSyncRoutes(app);
 
     // ===== 认证 API =====
+
+    /**
+     * 查询当前是否需要登录。前端 wowAuthGuard() 用它决定是否跳登录页，
+     * 免登录模式下也要能取到，故列入 publicPaths 永远公开。
+     */
+    app.get('/api/auth/mode', (req, res) => {
+        res.json({ require_login: requireLogin() });
+    });
 
     /**
      * 请求验证码
@@ -1709,17 +1753,21 @@ function startWeb(options = {}) {
      * 说明：浏览器 window.open 无法附带 Authorization 头，故同时接受 ?token= 查询参数。
      */
     app.get('/api/download', (req, res) => {
-        // 允许通过 query token 认证（仅用于本接口的下载场景）
-        if (!req.user && req.query.token) {
-            try {
-                const secret = getJwtSecret();
-                req.user = jwt.verify(String(req.query.token), secret);
-            } catch (e) {
-                return res.status(401).json({ error: 'Token 无效或已过期' });
+        // web.require_login=false 时完全免登录，下载也不再要求 token。
+        // true（或对外暴露被强制）时沿用原有的 Bearer / query token 校验。
+        if (requireLogin()) {
+            // 允许通过 query token 认证（仅用于本接口的下载场景）
+            if (!req.user && req.query.token) {
+                try {
+                    const secret = getJwtSecret();
+                    req.user = jwt.verify(String(req.query.token), secret);
+                } catch (e) {
+                    return res.status(401).json({ error: 'Token 无效或已过期' });
+                }
             }
-        }
-        if (!req.user) {
-            return res.status(401).json({ error: '未登录' });
+            if (!req.user) {
+                return res.status(401).json({ error: '未登录' });
+            }
         }
 
         try {
@@ -2458,8 +2506,18 @@ async function startTunnelForLocal(port) {
         }
     };
     process.once('exit', cleanup);
-    process.once('SIGINT', () => { cleanup(); process.exit(0); });
-    process.once('SIGTERM', () => { cleanup(); process.exit(0); });
+    // 先让本进程持有的 MC 优雅退出，别抢在异步 stop 之前 process.exit(0)。
+    // hasOwnedChild() 保证面板只是「托管」别人的服务端时不会误杀。
+    const onStopSignal = async () => {
+        cleanup();
+        try {
+            const shutdown = require('./shutdown');
+            if (shutdown.hasOwnedChild()) await shutdown.requestStop('web:signal');
+        } catch (e) { /* 忽略 */ }
+        process.exit(0);
+    };
+    process.once('SIGINT', onStopSignal);
+    process.once('SIGTERM', onStopSignal);
 
     return t;
 }
@@ -2930,6 +2988,8 @@ module.exports = {
     startTunnelForLocal,
     stopTunnelHandle,
     isExposedHost,
+    // web.require_login 判定（测试 / 预检用）
+    requireLogin,
     // V3.5.24：隧道认证闸门（测试与预检用）
     checkTunnelAuth,
     TUNNEL_AUTH_ERR,

@@ -37,7 +37,7 @@
  *   GET  /state/scanning[?room=<code>&player=<p>&public_nodes=...]
  *                              -> 开始「当房主 / 开房」（room 留空=自动生成）
  *   GET  /state/guesting?room=<code>&player=<p>
- *                              -> 加入房间（3.3.0 房主端未实现）
+ *                              -> 加入房间（房客端；wow 3.7.0 起支持 joinRoom）
  *   GET  /panic?peaceful=true  -> 优雅退出陶瓦进程
  *   GET  /log                  -> 下载陶瓦日志
  *   /                         -> 陶瓦自带 Web UI
@@ -63,6 +63,7 @@ const net = require('net');
 
 const utils = require('./utils');
 const config = require('./config');
+const logSink = require('./log_sink');
 const { LanBeacon } = require('./lan_beacon');
 
 // 运行时状态文件（端口 / pid / 房间号 / 二进制路径等），跨进程共享
@@ -385,6 +386,11 @@ function locateBinary(dir, asset) {
 function appendApiLog(entry) {
     try {
         const line = JSON.stringify(Object.assign({ t: new Date().toISOString() }, entry));
+        // log.disabled=true：wow 不产生任何硬盘日志，只进内存环形缓冲。
+        if (!logSink.shouldPersist()) {
+            logSink.pushMemory('lan-api', line);
+            return;
+        }
         fs.appendFileSync(API_LOG_FILE, line + '\n', 'utf8');
         // 简易裁剪：超过上限的 1.5 倍时重写为最后 API_LOG_MAX_LINES 行
         const stat = fs.statSync(API_LOG_FILE);
@@ -403,8 +409,12 @@ function appendApiLog(entry) {
  */
 function readApiLog(n = 10) {
     try {
-        if (!fs.existsSync(API_LOG_FILE)) return [];
-        const lines = fs.readFileSync(API_LOG_FILE, 'utf8').split('\n').filter(Boolean);
+        // log.disabled=true：改读内存环形缓冲（与 appendApiLog 对应）
+        const lines = logSink.shouldPersist()
+            ? (fs.existsSync(API_LOG_FILE)
+                ? fs.readFileSync(API_LOG_FILE, 'utf8').split('\n').filter(Boolean)
+                : [])
+            : logSink.recent('lan-api', n);
         return lines.slice(-n).map(l => {
             try { return JSON.parse(l); } catch (e) { return { t: '', raw: l }; }
         });
@@ -491,6 +501,46 @@ async function apiScanning(port, roomCode) {
     if (roomCode && roomCode.trim()) params.room = roomCode.trim();
     const r = await apiClient(port).get('/state/scanning', { params });
     return r.data;
+}
+
+/**
+ * 加入房间（我要当房客）：GET /state/guesting?room=<code>&player=<p>
+ *
+ * 与开房相对：房客不需要本机有 Minecraft 服务端在跑，也不发局域网广播，
+ * 陶瓦会自行连到房间号对应的公共节点 / 房主。房间号与玩家名都是必填。
+ * @returns {Promise<object|string>} 陶瓦状态机响应
+ */
+async function apiGuesting(port, roomCode, player) {
+    const params = {
+        room: String(roomCode || '').trim(),
+        player: String(player || '').trim()
+    };
+    const r = await apiClient(port).get('/state/guesting', { params });
+    return r.data;
+}
+
+/**
+ * 判定「当前陶瓦二进制不支持 guesting」的运行时信号。
+ * 老版本（3.3.x 前后）没有 /state/guesting 路由，会返回 404 / 405，
+ * 或返回一个非 guest-* 的未知状态；这里统一识别，交给 joinRoom 降级。
+ */
+function isGuestingUnsupported(err, state) {
+    if (err) {
+        const status = err && err.response ? err.response.status : null;
+        if (status === 404 || status === 405) return true;
+        const msg = String((err && err.message) || '');
+        if (/404|not\s*found|unknown\s*(state|route)|unsupported/i.test(msg)) return true;
+    }
+    // 少数实现不报错，但把状态机留在 waiting（说明指令被静默忽略）
+    if (state && typeof state.state === 'string' && state.state === 'waiting') return true;
+    return false;
+}
+
+/** 从 /meta 响应里提取可读版本串，供不支持时的升级提示使用 */
+function metaVersion(meta) {
+    if (!meta) return '未知';
+    if (typeof meta === 'string') return meta;
+    return String(meta.version || meta.ver || meta.app_version || meta.tag || '未知');
 }
 
 /**
@@ -817,6 +867,55 @@ async function waitHostOk(port, mcPort = getServerPort(), timeoutMs = 60000, bea
     throw new Error(`等待开房完成超时（最后状态: ${st}）。${extra}`);
 }
 
+/**
+ * 等待房客加入完成（guest-connecting → guest-starting → guest-ok）。
+ *
+ * 与 waitHostOk 的关键区别：房客侧**没有** host-scanning 阶段，也就不需要
+ * LanBeacon 代发广播、不需要 getServerPort() 读本机端口、更不做
+ * isPortListening 自检——房客的连通性完全由陶瓦连公共节点 / 房主决定。
+ * 因此这里刻意保持精简，不引入任何本机 MC 服务端相关的依赖。
+ *
+ * @param {number} port      陶瓦本地 API 端口
+ * @param {number} timeoutMs 总超时
+ * @returns {Promise<object>} 到达 guest-ok 时的状态对象
+ */
+async function waitGuestOk(port, timeoutMs = 60000) {
+    const started = Date.now();
+    const deadline = started + timeoutMs;
+    let last = null;
+    let lastPrinted = '';
+    let lastPrintAt = 0;
+
+    while (Date.now() < deadline) {
+        try {
+            const s = await apiState(port);
+            last = s;
+            if (s && s.state === 'guest-ok') return s;
+            if (s && s.state === 'exception') {
+                throw new Error(
+                    `加入房间失败（陶瓦异常 type=${s.type}）。请确认房间号正确、房主仍在线，且网络可访问陶瓦公共节点。`
+                );
+            }
+            const elapsed = Math.round((Date.now() - started) / 1000);
+            const cur = s && s.state ? s.state : '未知';
+            if (cur !== lastPrinted || Date.now() - lastPrintAt >= 3000) {
+                console.log(`   ⏳ 陶瓦状态: ${cur}（已等待 ${elapsed}s）`);
+                lastPrinted = cur;
+                lastPrintAt = Date.now();
+            }
+        } catch (e) {
+            if (e.message && e.message.startsWith('加入房间失败')) throw e;
+            // 网络抖动：继续轮询，不因单次请求失败退出
+        }
+        await sleep(500);
+    }
+
+    const st = last ? last.state : '未知';
+    throw new Error(
+        `等待加入房间完成超时（最后状态: ${st}）。请确认房间号正确、房主在线，且网络可访问陶瓦公共节点。`
+    );
+}
+
 // ==================== 对外业务接口 ====================
 
 /**
@@ -831,6 +930,15 @@ async function waitHostOk(port, mcPort = getServerPort(), timeoutMs = 60000, bea
  * @returns {Promise<{roomCode:string, port:number}|null>} 放弃开服时返回 null
  */
 async function hostRoom(opts = {}) {
+    // 房主 / 房客互斥：同一个陶瓦守护进程不能既 guest-ok 又 host-ok。
+    // 若当前已作为房客加入房间，先复位状态机再开房，避免静默失败。
+    const cur = readState();
+    if (cur && cur.mode === 'guest' && cur.running && isAlive(cur.pid)) {
+        console.log('ℹ️ 检测到当前处于「房客」模式，先复位陶瓦状态机再开房…');
+        const curPort = cur.port || await startDaemon();
+        await apiIde(curPort);
+        writeState({ mode: 'host' });
+    }
     const port = await startDaemon();
     let mcPort = getServerPort();
     console.log(`\n🏠 正在开房（陶瓦将扫描本机 ${mcPort} 端口的 Minecraft 服务端并连接公共节点）...`);
@@ -890,7 +998,7 @@ async function hostRoom(opts = {}) {
         await apiIde(port);
         await apiScanning(port, opts.roomCode || config.getConfig('lan.room_code', ''));
         const roomCode = await waitHostOk(port, mcPort, 60000, beacon);
-        writeState({ roomCode, running: true });
+        writeState({ roomCode, running: true, mode: 'host' });
         console.log(`\n✅ 开房成功！房间号: ${roomCode}`);
         console.log(`   把房间号发给好友，对方在 PCL / HMCL / BakaXL / FCL 中选择「加入陶瓦房间」并输入该房间号即可联机。`);
         console.log(`   ${TERRA_COPYRIGHT}`);
@@ -902,6 +1010,106 @@ async function hostRoom(opts = {}) {
         // 陶瓦拿到端口后即进入 host-starting 并释放 scanner，广播不再需要；
         // 失败时也必须停止，避免残留 socket 与定时器。
         beacon.stop();
+    }
+}
+
+/**
+ * 加入房间（我要当房客 / Join Room）。
+ *
+ * 编排：确保二进制 → 启动守护 → 读 /meta 版本 → 房主冲突守卫 →
+ *       apiIde 复位为 waiting → apiGuesting 发起加入 → waitGuestOk 等待
+ *       guest-ok → writeState({mode:'guest'}) → 打印结果。
+ *
+ * 与 hostRoom 的三点根本区别：
+ *   1) 不读 server-port、不做 isPortListening 自检、不启 LanBeacon——
+ *      房客侧根本没有「本机 MC 服务端」这个概念；
+ *   2) 房间号与玩家名必填，由调用方（R 页第 9 项）通过 ioAsk 收集；
+ *   3) 二进制不支持 guesting 时**运行时探测降级**：给出可执行的升级 /
+ *      启动器替代方案并回显房间号，不崩溃、不连真二进制做测试。
+ *
+ * @param {object} opts
+ * @param {string} opts.roomCode 房间号（必填）
+ * @param {string} opts.player   玩家名（必填）
+ * @param {number} [opts.timeoutMs=60000] 等待 guest-ok 的超时
+ * @returns {Promise<{roomCode:string, player:string, port:number}|null>}
+ *          降级 / 放弃时返回 null（不抛错）
+ */
+async function joinRoom(opts = {}) {
+    const roomCode = String(opts.roomCode || '').trim();
+    const player = String(opts.player || '').trim();
+    if (!roomCode) {
+        console.log('\n🚫 房间号不能为空，已取消加入。');
+        return null;
+    }
+    if (!player) {
+        console.log('\n🚫 玩家名不能为空，已取消加入。');
+        return null;
+    }
+
+    console.log(`\n🔗 正在加入陶瓦房间 ${roomCode}（玩家 ${player}）...`);
+    console.log(`   ${TERRA_COPYRIGHT}`);
+    console.log('   房客侧无需本机运行 Minecraft 服务端，陶瓦会自动连接公共节点 / 房主。\n');
+
+    const port = await startDaemon();
+
+    // 运行时探测：先取版本，供「不支持」时给出升级提示。
+    let meta = null;
+    try { meta = await apiMeta(port); } catch (e) { meta = null; }
+
+    // 房主 / 房客互斥：若当前是房主且仍在跑，先复位，避免 guesting 被静默忽略。
+    const cur = readState();
+    if (cur && cur.mode === 'host' && cur.running && isAlive(cur.pid)) {
+        console.log('ℹ️ 检测到当前处于「房主」模式，先复位陶瓦状态机再加入…');
+        await apiIde(port);
+    } else {
+        // 常规路径也复位：陶瓦 set_guesting 在非 waiting 状态下会静默忽略。
+        await apiIde(port);
+    }
+
+    // 发起加入；老版本二进制没有该路由，会 404 / 405 或把状态留在 waiting。
+    let stateAfterCall = null;
+    try {
+        stateAfterCall = await apiGuesting(port, roomCode, player);
+    } catch (e) {
+        if (isGuestingUnsupported(e, stateAfterCall)) {
+            console.log('\n⚠️ 当前陶瓦二进制不支持「加入房间」接口（/state/guesting）。');
+            console.log(`   检测到的陶瓦版本: ${metaVersion(meta)}`);
+            console.log('\n   有两种方式继续加入：');
+            console.log(`   1) 在 wow.yaml 中升级 lan.version 到支持房客的版本（当前 ${metaVersion(meta)}），再重试；`);
+            console.log(`   2) 直接在 PCL / HMCL / BakaXL / FCL 启动器中选择「加入陶瓦房间」，输入房间号 ${roomCode}。`);
+            console.log(`\n   📋 房间号: ${roomCode}    玩家名: ${player}`);
+            console.log('   已保留房间号供你在启动器中使用。');
+            await stopDaemon();
+            return null;
+        }
+        throw e;
+    }
+
+    // 有些实现返回 200 但状态留在 waiting（指令被忽略），同样视为不支持。
+    if (isGuestingUnsupported(null, stateAfterCall)) {
+        console.log('\n⚠️ 当前陶瓦二进制未响应「加入房间」指令（状态仍为 waiting）。');
+        console.log(`   检测到的陶瓦版本: ${metaVersion(meta)}`);
+        console.log(`   请在 PCL / HMCL / BakaXL / FCL 启动器中选择「加入陶瓦房间」并输入房间号 ${roomCode}，`);
+        console.log('   或在 wow.yaml 中升级 lan.version 后重试。');
+        console.log(`\n   📋 房间号: ${roomCode}    玩家名: ${player}`);
+        await stopDaemon();
+        return null;
+    }
+
+    try {
+        const s = await waitGuestOk(port, opts.timeoutMs || 60000);
+        writeState({ mode: 'guest', roomCode, player, running: true });
+        const joined = extractRoomCode(s) || roomCode;
+        console.log(`\n✅ 加入成功！房间号: ${joined}   玩家: ${player}`);
+        console.log('   现在启动 Minecraft 客户端，在「多人游戏」中加入房主的服务器即可联机。');
+        console.log(`   ${TERRA_COPYRIGHT}`);
+        // 联机网络已建立，若 Web 面板在跑，提示可用虚拟局域网 IP 访问。
+        await printWebAccessHintIfNeeded();
+        return { roomCode: joined, player, port };
+    } catch (e) {
+        console.error(`\n❌ 加入房间失败: ${e.message}`);
+        console.log(`   📋 房间号: ${roomCode}    玩家名: ${player}（可直接在启动器中使用）`);
+        return null;
     }
 }
 
@@ -955,6 +1163,10 @@ async function getStatus() {
     try { meta = await apiMeta(st.port); } catch (e) {}
     return {
         running: true,
+        // host = 我要当房主 / guest = 我要当房客；老状态文件没有该字段时
+        // 依据是否有房间号推断，保持向后兼容。
+        mode: st.mode || (st.roomCode ? 'host' : null),
+        player: st.player || null,
         roomCode: st.roomCode || extractRoomCode(state) || null,
         port: st.port,
         pid: st.pid,
@@ -992,6 +1204,12 @@ module.exports = {
     startDaemon,
     stopDaemon,
     hostRoom,
+    // 3.7.0：我要当房客 / Join Room（真加入房间）
+    joinRoom,
+    apiGuesting,
+    waitGuestOk,
+    isGuestingUnsupported,
+    metaVersion,
     autoHost,
     stopHost,
     getStatus,

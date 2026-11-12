@@ -210,6 +210,9 @@ async function listFiles(relPath, rootAbs) {
         return {
             name: ent.name,
             type: ent.isDirectory() ? 'dir' : 'file',
+            // Web 文件管理页按 isDir 契约渲染「打开文件夹」按钮与图标，
+            // 这里显式补回该字段；type 保留供排序与旧调用方使用。
+            isDir: ent.isDirectory(),
             size,
             mtime,
             path: r.rel ? `${r.rel}/${ent.name}` : ent.name

@@ -388,6 +388,56 @@ function dataListeners() {
     });
 
     console.log('');
+    console.log('[6] 设计内交接（expectedOwners）不误报、真漏 release 仍告警');
+
+    await checkAsync('expectedOwners：REPL -> 开服控制台的交接不打「强制接管」告警', async () => {
+        stdinSession._reset();
+        const origWarn = console.warn;
+        const warns = [];
+        console.warn = (...a) => { warns.push(a.join(' ')); };
+        try {
+            stdinSession.claimSync('repl', { terminal: false });
+            const b = stdinSession.acquireSync('server.console', {
+                terminal: false,
+                expectedOwners: ['repl']
+            });
+            assert.strictEqual(stdinSession.stats().live, 1, '交接后仍只允许一个 readline');
+            await b.release();
+        } finally {
+            console.warn = origWarn;
+            stdinSession._reset();
+        }
+        assert.ok(!warns.some(w => w.includes('强制接管')),
+            '已声明预期前任，却仍刷「调用方可能漏了 release」误报');
+    });
+
+    await checkAsync('未声明 expectedOwners 的接管仍然告警（诊断能力不丢）', async () => {
+        stdinSession._reset();
+        const origWarn = console.warn;
+        const warns = [];
+        console.warn = (...a) => { warns.push(a.join(' ')); };
+        try {
+            stdinSession.claimSync('some-owner', { terminal: false });
+            const b = stdinSession.acquireSync('tui.keyboard', { terminal: false });
+            await b.release();
+        } finally {
+            console.warn = origWarn;
+            stdinSession._reset();
+        }
+        assert.ok(warns.some(w => w.includes('强制接管')),
+            '真·疑似漏 release 的接管必须保留告警');
+    });
+
+    check('server.js 的 _createConsoleRl 声明 expectedOwners: [\'repl\']', () => {
+        const fs = require('fs');
+        const srv = fs.readFileSync(path.join(SRC, 'server.js'), 'utf8');
+        const i = srv.indexOf('_createConsoleRl()');
+        const body = srv.slice(i, i + 700);
+        assert.ok(/expectedOwners:\s*\['repl'\]/.test(body),
+            '开服控制台未声明 REPL 为预期前任');
+    });
+
+    console.log('');
     console.log('='.repeat(50));
     if (fail === 0) {
         console.log(`✅ 全部通过：${pass} 项`);

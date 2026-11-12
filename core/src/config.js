@@ -8,7 +8,8 @@ const fs = require('fs-extra');
 const yaml = require('js-yaml');
 const path = require('path');
 
-const CONFIG_FILE = path.join(__dirname, '../wow.yaml');
+// WOW_CONFIG_FILE 供 pty 回归用例在临时目录里隔出一份配置，默认仍是 core/wow.yaml
+const CONFIG_FILE = process.env.WOW_CONFIG_FILE || path.join(__dirname, '../wow.yaml');
 
 const DEFAULT_CONFIG = {
     language: 'zh_CN',
@@ -63,6 +64,10 @@ const DEFAULT_CONFIG = {
         port: 8080,
         host: '127.0.0.1',
         auth_token: null,
+        // false = 静态页与所有 /api/* 都无需 token（本机自用最方便）；
+        // true  = 恢复强制登录。注意：监听地址对外暴露或开了内网穿透时，
+        // web_service.js 会忽略 false 强制要求登录（见 requireLogin()）。
+        require_login: false,
         run_startup: true,
         theme: 'default',
         dev_mode: false,        // V3.5.3：为 true 时未配 SMTP 仍回显登录验证码（仅开发用）
@@ -114,6 +119,12 @@ const DEFAULT_CONFIG = {
         quiet: false
     },
     verbose: false,
+    // wow 自身日志的落盘开关。true = wow 进程不产生任何保存在硬盘中的
+    // 日志文件（终端/内存照常可见）；MC 服务端自己写的 latest.log 不受影响，
+    // 且每次正常关服会把方案 logs/ 清到只剩 latest.log。
+    log: {
+        disabled: false
+    },
     // pool 相关路径（相对于 core/）
     pool: {
         dir: 'pool',
@@ -134,7 +145,8 @@ const DEFAULT_CONFIG = {
     // 联机 / 内网穿透（陶瓦 Terracotta）配置 V3.3.0
     // 陶瓦(Terracotta) 基于 EasyTier，为 Minecraft: Java Edition 提供内网/局域网穿透联机。
     // 项目: https://github.com/burningtnt/Terracotta  国内镜像: https://gitee.com/burningtnt/Terracotta/releases
-    // 3.3.0 仅实现「房主端 / 我要当房主」，加入端由 PCL/HMCL/BakaXL/FCL 等启动器内置支持。
+    // 3.7.0 起同时支持「房主端（开房）」与「房客端（joinRoom 真加入房间）」；
+    // 若陶瓦二进制版本过旧不支持 /state/guesting，会自动降级并提示用 PCL/HMCL/BakaXL/FCL 启动器加入。
     lan: {
         auto_room: false,          // 服务器启动时自动开房（非交互/后台场景推荐）
         room_code: '',             // 固定房间号（留空 = 由陶瓦自动生成）；好友在启动器输入此号即可加入

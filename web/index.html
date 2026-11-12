@@ -24,36 +24,13 @@
 
     <!-- 全局 JavaScript -->
     <script src="/js/main.js"></script>
+    <script src="/js/auth_guard.js"></script>
     <script>
         (function() {
             // 等待 DOM 加载完成
-            document.addEventListener('DOMContentLoaded', function() {
-                // 登录状态检查（由后端提供 /api/auth/verify）
-                const token = sessionStorage.getItem('wow_token');
-                if (!token) {
-                    // 未登录，跳转到登录页
-                    window.location.href = '/login.html';
-                    return;
-                }
-
-                // 验证 token 是否有效
-                fetch('/api/auth/verify', {
-                    headers: {
-                        'Authorization': 'Bearer ' + token
-                    }
-                })
-                .then(res => res.json())
-                .then(data => {
-                    if (!data.valid) {
-                        // token 无效，清除并跳转登录
-                        sessionStorage.removeItem('wow_token');
-                        window.location.href = '/login.html';
-                    }
-                })
-                .catch(() => {
-                    // 网络错误，尝试跳转登录
-                    window.location.href = '/login.html';
-                });
+            document.addEventListener('DOMContentLoaded', async function() {
+                // 登录闸门：web.require_login=false 时完全免登录
+                if (!(await wowAuthGuard())) return;
 
                 // 监听来自 left.html 的菜单切换消息
                 window.addEventListener('message', function(event) {

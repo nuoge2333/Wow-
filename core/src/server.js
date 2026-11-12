@@ -17,6 +17,8 @@ const axios = require('axios');
 const Jvm = require('./jvm_args');
 // V3.5.0：事件日志
 const { logger } = require('./log');
+// 执行令 log.disabled：全仓 wow 日志落盘总闸门（唯一判定入口）
+const logSink = require('./log_sink');
 
 /**
  * TUI 是否正占着终端画面（见 tui.markScreenActive）。
@@ -145,24 +147,30 @@ function classifyConsoleInput(rawLine) {
     return { action: 'deny', reason: '该指令在开服控制台中不可用（可能需修改运行中的方案文件），请另开终端执行' };
 }
 
-// ==================== V3.4.0 控制台视图（wow / Minecraft / 陶瓦）====================
-// 开服控制台不再是「一个终端混着三种东西」，而是三个可切换的控制台视图：
-//   mc  —— Minecraft 服务端控制台：输入转发给服务端，显示服务端日志
-//   wow —— wow 指令控制台：输入作为 wow 指令执行，显示 wow 指令输出
-//   lan —— 陶瓦联机控制台：显示陶瓦 HTTP API 的返回，只接受 lan 子命令
-// 切换后会清屏并显示该控制台的最后 10 条日志，避免三种输出互相干扰。
+// ==================== 开服控制台视图（五大视图重构后）====================
+// 旧的三视图 mc / wow / lan 已废弃。现在终端里只有 **一个** 开服控制台
+// —— `:mc` 实时日志；输入 `:m` 进菜单、`:wow` 回长命令 REPL、`:web` 看面板地址。
+// 后三者都是「安全退场」（detach）：只归还 stdin 租约，绝不停服务器。
+//
+// `this._mode` 现在只剩两个取值，专门控制 MC stdout 是否回显：
+//   'mc'   = 停在实时日志，回显；
+//   'menu' = 进 :m 菜单期间，钉住不回显（避免日志把 TUI 画面顶乱）。
+// 「当前处于五大视图里的哪一个」由 view_state.js 统一记录，不在这里。
+// 陶瓦联机控制台（旧 :lan）已删除，陶瓦功能仍在 :m 的 R 页与 `lan` 子命令里。
 
 const CONSOLE_MODES = {
-    mc: { key: 'mc', name: 'Minecraft 服务端控制台', icon: '🎮', switchCmd: ':mc' },
-    wow: { key: 'wow', name: 'wow 指令控制台', icon: '🧩', switchCmd: ':wow' },
-    lan: { key: 'lan', name: '陶瓦联机控制台', icon: '🏠', switchCmd: ':lan' }
+    mc: { key: 'mc', name: 'Minecraft 实时日志', icon: '🎮', switchCmd: ':mc' },
+    wow: { key: 'wow', name: ':wow 长命令 REPL', icon: '🧩', switchCmd: ':wow' },
+    menu: { key: 'menu', name: ':m 菜单', icon: '📋', switchCmd: ':m' },
+    web: { key: 'web', name: ':web Web 面板', icon: '🌐', switchCmd: ':web' }
 };
 
-// 切换指令别名 → 模式
+// 切换指令别名 → 目标。**注意：旧的 :lan / :terracotta / :3 / :陶瓦 全部删除。**
 const MODE_ALIASES = {
     ':mc': 'mc', ':minecraft': 'mc', ':1': 'mc', ':服务端': 'mc',
-    ':wow': 'wow', ':2': 'wow',
-    ':lan': 'lan', ':terracotta': 'lan', ':taowa': 'lan', ':3': 'lan', ':陶瓦': 'lan'
+    ':wow': 'wow', ':2': 'wow', ':长命令': 'wow',
+    ':m': 'menu', ':menu': 'menu', ':菜单': 'menu',
+    ':web': 'web'
 };
 
 // 切换后显示的日志条数（用户需求：最后十条）
@@ -205,11 +213,36 @@ function tailLines(file, n = CONSOLE_TAIL_LINES, maxBytes = 256 * 1024) {
 }
 
 /**
+ * log.disabled=true 时替代 fs.createWriteStream 的内存垫片。
+ *
+ * 接口与 WriteStream 兼容（write / end），但**不产生任何硬盘文件**：
+ * wow 自身不再往方案 logs/ 写 wow-stdout.log，MC 自己写的 latest.log 保留。
+ * 内容进内存环形缓冲，供 :log / startFollow 之外的地方按需读取。
+ */
+function MemoryWriteStream(owner) {
+    return {
+        write(data) {
+            try {
+                if (!owner._mcLogMemory) owner._mcLogMemory = [];
+                for (const line of data.toString('utf8').split(/\r?\n/)) {
+                    if (line.trim()) owner._mcLogMemory.push(line);
+                }
+                if (owner._mcLogMemory.length > 2000) {
+                    owner._mcLogMemory.splice(0, owner._mcLogMemory.length - 2000);
+                }
+            } catch (e) { /* 忽略 */ }
+            return true;
+        },
+        end() { /* 没有文件需要关闭 */ }
+    };
+}
+
+/**
  * 以子进程方式执行一条 wow 指令。
  * V3.4.0：输出改为管道并「tee」——既实时打到终端，也追加到 wow 控制台日志，
  * 以便切换回 wow 控制台时能显示最后 10 条 wow 日志。
  * @param {string[]} args    wow 子命令参数
- * @param {string} [logFile] wow 控制台日志文件（可选）
+ * @param {string} [logFile] wow 控制台日志文件（可选；log.disabled 时传 null）
  */
 function runWowSubcommand(args, logFile) {
     return new Promise((resolve, reject) => {
@@ -255,21 +288,89 @@ class ServerManager {
         this.jreManager = new JreManager();
         this.config = config;
         this.authlibJar = null;
-        // V3.4.0 控制台视图：'mc' | 'wow' | 'lan'，默认停在 Minecraft 服务端控制台
+        // 控制台视图：'mc' = 实时日志（MC stdout 回显）；'menu' = 进 :m 菜单
+        // 期间把回显钉住，避免日志把 TUI 画面顶乱。
+        // 五大视图的「当前在哪」由 view_state.js 统一记录，这里只管回显。
         this._mode = 'mc';
-        this._lanTimer = null;
-        this._lanLastSig = '';
+        this._consoleLease = null;
+        this._detachResolve = null;
+        this._detaching = false;
         this._ensureAuthlibJar();
     }
 
-    // ==================== V3.4.0 控制台视图切换 ====================
+    // ==================== 五大视图下的开服控制台 ====================
+    //
+    // `server start` 的交互终端里只有 **一个** 实体视图：`:mc` 实时日志。
+    // 输入 `:m` 进菜单、`:wow` 回长命令、`:web` 看面板地址，都是「安全退场」
+    // （detach）：只归还 stdin 租约，绝不停服务器；`start()` 仍阻塞在 MC
+    // 进程上，父进程存活、MC 不成孤儿。
+    //
+    // `this._mode` 只控制 MC stdout 是否回显 / 输入如何路由：
+    //   'mc'   = :mc 实时日志（回显，输入转发给 MC）
+    //   'wow'  = :wow 长命令（不回显，输入按 wow 只读指令执行）
+    //   'menu' = :m 菜单期间（不回显，TUI 独占画面）
+    // 「当前处于五大视图里的哪一个」由 view_state.js 统一记录，不在这里。
+    // 旧的三视图 mc / wow / lan 已废弃，陶瓦联机控制台（:lan）整体删除；
+    // 陶瓦功能本体仍在 :m 的 R 页与 `lan` 子命令里。
 
-    /** 向 wow 控制台日志追加一行（失败静默） */
+    /**
+     * 选择 MC stdout 的落盘目标。
+     * log.disabled=true → 内存垫片（wow 不落盘）；否则沿用 wow-stdout.log。
+     * 注意：`logStream.write(data);` 两行必须保持原样（回归测试锁定）。
+     */
+    _makeLogStream() {
+        // 统一走 log_sink：disabled 时返回内存垫片，绝不产生 wow-stdout.log
+        if (!logSink.shouldPersist()) return MemoryWriteStream(this);
+        return fs.createWriteStream(this.stdoutLogFile, { flags: 'w' });
+    }
+
+    /**
+     * 登记本进程持有的 MC 子进程，交给 shutdown.js 统一兜底。
+     * 两处 spawn 之后都要调；SIGINT 不在此注册（那是 detach，不是停服）。
+     */
+    _registerShutdown() {
+        try {
+            require('./shutdown').registerMcChild(this.process, {
+                stop: () => this.stop(),
+                cleanup: () => {
+                    try { this._removePid(); } catch (e) { /* 忽略 */ }
+                }
+            });
+        } catch (e) { /* 兜底模块不可用时不影响开服主路径 */ }
+    }
+
+    /**
+     * log.disabled=true 时，正常关服后把方案 logs/ 清到只剩 latest.log。
+     * 只在 stop() 的正常停服成功分支调用——崩溃退出要保留现场。
+     */
+    _cleanLogsOnStop() {
+        try {
+            // 只在 log.disabled=true 且正常关服时执行；崩溃退出保留现场。
+            if (logSink.shouldPersist()) return;
+            logSink.keepLatestOnly(path.dirname(this.logFile));
+        } catch (e) { /* 清理是收尾动作，失败不抛给调用方 */ }
+    }
+
+    /**
+     * 向 wow 控制台日志追加一行（失败静默）。
+     * log.disabled=true：wow 自身日志不落盘，只留内存环形缓冲（终端照常可见）。
+     */
     _appendWowLog(text) {
+        if (!logSink.shouldPersist()) {
+            if (!this._wowLogMemory) this._wowLogMemory = [];
+            this._wowLogMemory.push(String(text).replace(/\n$/, ''));
+            if (this._wowLogMemory.length > 2000) this._wowLogMemory.shift();
+            return;
+        }
         try {
             fs.ensureDirSync(path.dirname(this.wowLogFile));
             fs.appendFileSync(this.wowLogFile, text.endsWith('\n') ? text : text + '\n', 'utf8');
         } catch (e) {}
+    }
+
+    /** wow 指令日志的落盘目标；log.disabled=true 时返回 null（不产生文件） */
+    _wowLogTarget() {
+        return logSink.shouldPersist() ? this.wowLogFile : null;
     }
 
     /**
@@ -292,22 +393,16 @@ class ServerManager {
     }
 
     /**
-     * 处理一行「非元指令」的控制台输入（MC 指令转发 / wow 子命令 / 陶瓦指令）。
+     * 处理一行「非元指令」的控制台输入（MC 指令转发 / wow 只读子命令）。
      *
-     * 从 start() 的 rl.on('line') 里抽出来，`_bindConsoleLine` 也调它，
-     * 保证「首次进入控制台」与「从 M 模式返回后」两条路径的行为完全一致。
+     * 从 start() 的 rl.on('line') 里抽出来，`_bindConsoleLine` 与 :wow 长命令
+     * 视图都调它，保证两条路径的指令分类完全一致。
      *
      * @param {string} line 已 trim 的输入
      * @param {import('readline').Interface} rl 当前控制台的 readline
      */
     async _handleConsoleLine(line, rl) {
-        // ── 陶瓦控制台：允许省略 lan 前缀（host / status / stop）──
-        let effective = line;
-        if (this._mode === 'lan' && /^(host|status|stop)(\s|$)/i.test(line)) {
-            effective = 'lan ' + line;
-        }
-
-        const d = classifyConsoleInput(effective);
+        const d = classifyConsoleInput(line);
 
         if (d.action === 'deny') {
             console.log(`⛔ ${d.reason}`);
@@ -316,7 +411,7 @@ class ServerManager {
         }
 
         if (d.action === 'mc') {
-            // Minecraft 指令：只能在 Minecraft 控制台执行
+            // Minecraft 指令：只能在 :mc 实时日志视图执行
             if (this._mode !== 'mc') {
                 this._printUnsupported(line, 'mc');
                 return;
@@ -327,21 +422,15 @@ class ServerManager {
             return;
         }
 
-        // d.action === 'run'：wow 指令
-        const isLanCmd = d.args[0] === 'lan';
+        // d.action === 'run'：wow 只读指令，在 :wow 长命令视图执行
         if (this._mode === 'mc') {
-            this._printUnsupported(line, isLanCmd ? 'lan' : 'wow');
-            return;
-        }
-        if (this._mode === 'lan' && !isLanCmd) {
             this._printUnsupported(line, 'wow');
             return;
         }
 
         try { rl.pause(); } catch (e) { /* 已关闭 */ }
         try {
-            // wow 控制台的输出记入 wow 日志；陶瓦指令的 API 返回已由 terracotta 落盘
-            const logTarget = this._mode === 'wow' ? this.wowLogFile : null;
+            const logTarget = this._wowLogTarget();
             if (logTarget) this._appendWowLog(`$ wow ${d.args.join(' ')}`);
             await runWowSubcommand(d.args, logTarget);
         } catch (e) {
@@ -357,11 +446,9 @@ class ServerManager {
      *
      * 与 cli.js 的 buildMenuOptions() 是同一份清单，但这里不能 require cli
      * （循环依赖：cli → server → cli）。所以就地建一遍，且**每个都包 try/catch**
-     * ——某个模块坏了只让对应菜单项降级，不能让「控制台里打 :wow」整个崩掉。
+     * ——某个模块坏了只让对应菜单项降级，不能让「控制台里打 :m」整个崩掉。
      *
-     * 注意 ServerManager 直接复用 `this`：这样才能看到「正在运行的服务器」状态，
-     * 新建一个实例会去读 pid 文件，虽然结果一样但多一次 IO，而且启动/停止的
-     * 事件流也对不上。
+     * 注意 ServerManager 直接复用 `this`：这样才能看到「正在运行的服务器」状态。
      */
     _menuOptions() {
         const opt = {
@@ -388,33 +475,27 @@ class ServerManager {
         return opt;
     }
 
-    /** 打印当前控制台的标题栏与操作提示 */
+    /** 打印 :mc 控制台的标题栏与操作提示 */
     _printConsoleBanner(mode) {
-        const m = CONSOLE_MODES[mode];
-        // V3.6.3：:wow 已改为「进 M 模式」，它的「日志视图」单独给了 :wowlog
+        const m = CONSOLE_MODES[mode] || CONSOLE_MODES.mc;
         const others = Object.keys(CONSOLE_MODES)
             .filter(k => k !== mode)
-            .map(k => (k === 'wow'
-                ? `${CONSOLE_MODES[k].switchCmd} → 进入 M 模式菜单`
-                : `${CONSOLE_MODES[k].switchCmd} → ${CONSOLE_MODES[k].name}`))
+            .map(k => `${CONSOLE_MODES[k].switchCmd} → ${CONSOLE_MODES[k].name}`)
             .join('　');
         console.log('═'.repeat(64));
         console.log(`  ${m.icon} ${m.name}`);
         console.log('─'.repeat(64));
         console.log(`  切换: ${others}`);
-        console.log(`  其他: :wowlog 查看 wow 指令日志　:log 重新显示日志　:help 查看帮助`);
+        console.log('  其他: :wowlog 查看 wow 指令日志　:log 重新显示日志　:help 查看帮助');
         console.log('═'.repeat(64));
     }
 
     /**
      * 创建开服控制台的 readline。
      *
-     * V3.6.3：抽成方法是因为 M 模式退出后要**重新建一个**——M 模式的 TUI
-     * 会把自己的 readline 关掉再交还 stdin（否则两边抢键盘），回来时这个
-     * rl 已经 close，必须重建。集中在这里创建可以保证两处参数完全一致。
-     *
      * 一律经 stdin_session 申请：开服控制台是**长期**持有 stdin 的一方，
-     * 但进 M 菜单 / 进 TUI 时它必须先交还，否则 TUI 的键盘收不到按键。
+     * 但进 :m 菜单 / :wow 长命令时它必须先交还，否则对方收不到按键。
+     * 单次 Ctrl+C 在这里是「安全退场」，绝不停服务器。
      */
     _createConsoleRl() {
         const stdinSession = require('./stdin_session');
@@ -424,80 +505,134 @@ class ServerManager {
             this._consoleLease = null;
         }
         const lease = stdinSession.acquireSync('server.console', {
-            terminal: true
+            terminal: true,
+            // `wow L` / `wow web start` 的 REPL 里敲 `server start` 时，
+            // stdin 从 repl 交到开服控制台是设计内交接：cli.js 的 close
+            // 回调已按 lease.released 静默让出（不 exit、不误杀 MC）。
+            // 声明成预期前任，避免每次开服刷一条「可能漏了 release」误报。
+            expectedOwners: ['repl']
         });
         const rl = lease.rl;
         this._consoleLease = lease;
         this._rl = rl;
         rl.on('SIGINT', () => {
-            if (this.isRunning()) {
-                console.log('\n⏹ 收到中断信号，正在停止服务器...');
-                this.stop();
-            }
+            // 单次 Ctrl+C = detach 到 :wow，服务继续运行
+            console.log('\n↩ 已退出实时日志流（服务端仍在运行，输入 :mc 可随时回来）。');
+            this._detachConsole('wow').catch(() => {});
         });
         return rl;
     }
 
-    /** 启动时的控制台引导提示（与 _printConsoleBanner 分开：这里只讲一次） */
-    _printConsoleIntro() {
-        console.log('💡 开服控制台（V3.6.3 起 :wow 进入 M 模式菜单，Ctrl+C 退出菜单回到本控制台）：');
-        console.log(`   ${CONSOLE_MODES.mc.switchCmd} ${CONSOLE_MODES.mc.icon} ${CONSOLE_MODES.mc.name}（当前）　` +
-            `${CONSOLE_MODES.wow.switchCmd} ${CONSOLE_MODES.wow.icon} M 模式菜单　` +
-            `${CONSOLE_MODES.lan.switchCmd} ${CONSOLE_MODES.lan.icon} ${CONSOLE_MODES.lan.name}`);
-        console.log('   输入 :help 查看帮助。⛔ 会修改运行中方案文件的危险指令仍不可用。');
-    }
-
     /**
-     * V3.6.3（609 指令约束③）：从开服控制台进入 M 模式。
-     *
-     * 时序要点：
-     *   1. 先 `rl.close()` —— TUI 需要独占 stdin，两个 readline 同时挂着会把
-     *      每个按键读两遍；
-     *   2. 让出一轮事件循环再进 TUI —— rl.close() 释放 stdin 是异步的，
-     *      在 close 回调里同步新建 readline 会让两个接口短暂并存；
-     *   3. TUI 返回后重建控制台 readline，并把视图切回 `:wow`
-     *      （约束③：进 L 模式回来必须落在 `:wow`，退出 TUI 同理）。
-     *
-     * 期间服务端 stdout 仍在写 logStream，只是不回显——`_mode` 保持 'wow'
-     * 的话 MC 输出会被 `if (this._mode === 'mc')` 挡掉，正好不刷屏。
+     * 关掉控制台 readline 并归还 stdin 租约（所有 detach 的统一前半段）。
+     * 幂等：重复调用只会直接返回。
      */
-    async _enterMenuFromConsole() {
-        // 进菜单期间把视图钉在 wow：MC 输出不回显，避免把 TUI 画面顶乱
-        this._mode = 'wow';
-        this._stopLanWatch();
-
-        // 菜单期间摘掉「Ctrl+C = 停服」：菜单自己的键盘处理会问「确定要退出吗」，
-        // 但 raw 模式只在 TUI 里生效，停在「按回车键返回」这种行输入提示上时，
-        // Ctrl+C 会直冲 process 的 SIGINT——用户只是想退出菜单，服务器却跟着关了。
-        // 退出菜单时（下面 finally 里的路径）再装回去。
-        if (this._sigintHandler) {
-            try { process.removeListener('SIGINT', this._sigintHandler); } catch (e) { /* 忽略 */ }
-        }
-
+    async _releaseConsoleRl() {
         const oldRl = this._rl;
         this._rl = null;
         if (oldRl) {
             try { oldRl.close(); } catch (e) { /* 已关闭 */ }
         }
-        // 把 stdin 交还单例：TUI 的键盘要用它。不还的话 TUI 申请时
-        // 会看到「server.console 还占着」，按强制接管处理并打告警。
-        if (this._consoleLease) {
-            try { await this._consoleLease.release(); } catch (e) { /* 忽略 */ }
-            this._consoleLease = null;
+        const lease = this._consoleLease;
+        this._consoleLease = null;
+        if (lease) {
+            try { await lease.release(); } catch (e) { /* 忽略 */ }
         }
+    }
+
+    /** 启动时的控制台引导提示（与 _printConsoleBanner 分开：这里只讲一次） */
+    _printConsoleIntro() {
+        console.log('💡 开服控制台（五大视图：:mc 实时日志 / :m 菜单 / :wow 长命令 / :web 面板）：');
+        console.log(`   当前 ${CONSOLE_MODES.mc.switchCmd} ${CONSOLE_MODES.mc.icon} ${CONSOLE_MODES.mc.name}　` +
+            `${CONSOLE_MODES.menu.switchCmd} ${CONSOLE_MODES.menu.icon} 菜单　` +
+            `${CONSOLE_MODES.wow.switchCmd} ${CONSOLE_MODES.wow.icon} 长命令　` +
+            `${CONSOLE_MODES.web.switchCmd} ${CONSOLE_MODES.web.icon} 面板地址`);
+        console.log('   :wow / :m / 单次 Ctrl+C 安全退出日志流（服务端继续运行）；:help 查看帮助。');
+    }
+
+    /**
+     * :mc 安全退场。只断开日志流、归还 stdin 租约，**绝不停服务器**。
+     *
+     * @param {'mc'|'wow'|'menu'|'web'} target 目标视图
+     */
+    async _detachConsole(target) {
+        if (this._detaching) return;
+        const viewState = require('./view_state');
+        if (target === 'mc') {
+            await this._switchConsole('mc');
+            return;
+        }
+        if (target === 'web') {
+            // :web 是浏览器视图：只打印面板地址，不改变当前视图、不造第二个 stdin 消费者
+            this._printWebHint();
+            return;
+        }
+
+        this._detaching = true;
+        try {
+            // 1. 停 MC stdout 回显（数据仍写 logStream）
+            this._mode = 'menu';
+            // 2. 摘掉「Ctrl+C = 停服」处理器，交给退场视图自己的键盘
+            if (this._sigintHandler) {
+                try { process.removeListener('SIGINT', this._sigintHandler); } catch (e) { /* 忽略 */ }
+            }
+            // 3. 关控制台 readline + 归还 stdin 租约
+            await this._releaseConsoleRl();
+            await new Promise(r => setImmediate(r));
+
+            if (target === 'menu') {
+                viewState.set(viewState.VIEW.MENU, 'mc:detach:m');
+                await this._enterMenuFromConsole();
+            } else {
+                viewState.set(viewState.VIEW.WOW, 'mc:detach:wow');
+                await this._enterReplFromConsole();
+            }
+        } finally {
+            this._detaching = false;
+        }
+    }
+
+    /**
+     * 从开服控制台进入 :m 菜单。
+     *
+     * 时序要点：
+     *   1. 先 `rl.close()` —— TUI 需要独占 stdin，两个 readline 同时挂着会把
+     *      每个按键读两遍；
+     *   2. 让出一轮事件循环再进 TUI —— rl.close() 释放 stdin 是异步的；
+     *   3. TUI 返回后重建控制台 readline，并把视图切回 `:mc`。
+     *
+     * 期间服务端 stdout 仍在写 logStream，只是不回显——`_mode` 不是 'mc'
+     * 的话 MC 输出会被 `if (this._mode === 'mc')` 挡掉，正好不刷屏。
+     */
+    async _enterMenuFromConsole() {
+        // 进菜单期间把回显钉住：MC 输出不回显，避免把 TUI 画面顶乱
+        this._mode = 'menu';
+
+        // 菜单期间摘掉「Ctrl+C = 停服」：菜单自己的键盘处理会问「确定要退出吗」，
+        // 但停在「按回车键返回」这种行输入提示上时，Ctrl+C 会直冲 process 的
+        // SIGINT——用户只是想退出菜单，服务器却跟着关了。退出菜单时再装回去。
+        if (this._sigintHandler) {
+            try { process.removeListener('SIGINT', this._sigintHandler); } catch (e) { /* 忽略 */ }
+        }
+
+        await this._releaseConsoleRl();
         await new Promise(r => setImmediate(r));
 
-        // 选 L 时 onEnterLongCommand 已经把控制台接回来了（并且打了一次横幅），
-        // 标记一下，避免下面的 _backToConsole 再打一遍同样的画面。
+        // 选 L 时 onEnterLongCommand 已经把控制台接回来了，标记一下，
+        // 避免下面的 _backToConsole 再打一遍同样的画面。
         let restored = false;
         try {
             const interactive = require('./interactive');
             await interactive.showMainMenu({
                 ...this._menuOptions(),
-                // 关键：M 模式里选「进入 L 模式」时，必须回到本控制台的 :wow 视图，
-                // 而不是退到另一个 REPL（那会与这里的 stdin 抢占）。
+                // 关键：M 模式里选「进入 L 模式」时，必须落在本进程内置的
+                // :wow 长命令视图，而不是另起一个 REPL 抢 stdin。
                 onEnterLongCommand: async () => {
-                    await this._backToConsole('wow');
+                    await this._enterReplFromConsole();
+                    restored = true;
+                },
+                startRepl: async () => {
+                    await this._enterReplFromConsole();
                     restored = true;
                 },
                 // 关键：菜单里的「0 退出 / Ctrl+C 确认」只能退出菜单，
@@ -509,25 +644,108 @@ class ServerManager {
             logger.erro(`开服控制台内启动菜单失败: ${e.message}`);
         }
 
-        // 从 M 模式返回：重建 readline + 回到 :wow 视图
-        if (!restored) await this._backToConsole('wow');
+        // 从 M 模式返回：重建 readline + 回到 :mc
+        if (!restored) await this._backToConsole('mc');
 
         // 服务端还在跑就把 SIGINT 装回去（菜单里把服务器停了的话，进程已退出，
-        // 再装也没意义，还会让下一次 Ctrl+C 走到 stop() 的空路径上）。
+        // 再装也没意义，还会让下一次 Ctrl+C 走到空路径上）。
         if (this._sigintHandler && this.process && !this.process.killed) {
             try { process.once('SIGINT', this._sigintHandler); } catch (e) { /* 忽略 */ }
         }
     }
 
     /**
+     * :wow 长命令视图（`server start` 上下文内）。
+     *
+     * 不另起 cli.js 的 startRepl（那边顶层 IIFE 会重新 parse argv），而是在
+     * 本进程内用 stdin_session 租一个 readline，逐行执行 wow 只读子命令。
+     * 输入 `:mc` / `m` / `exit` 随时回 :mc，服务端全程不受影响。
+     */
+    async _enterReplFromConsole() {
+        const stdinSession = require('./stdin_session');
+        const viewState = require('./view_state');
+        viewState.set(viewState.VIEW.WOW, 'mc:enter:wow');
+        this._mode = 'wow';
+        console.log('═'.repeat(64));
+        console.log('  🧩 :wow 长命令（服务端仍在运行，输入 :mc 回实时日志）');
+        console.log('─'.repeat(64));
+        console.log('  可直接输入 wow 只读指令（如 server status、scheme list、logs analyze）。');
+        console.log('  :mc / :m / m / exit 返回；:help 查看帮助。单次 Ctrl+C 不会停止服务器。');
+        console.log('═'.repeat(64));
+
+        const lease = await stdinSession.claim('server.repl', {
+            terminal: Boolean(process.stdin.isTTY),
+            prompt: 'wow> '
+        });
+        this._replLease = lease;
+        const rl = lease.rl;
+        await new Promise((resolve) => {
+            let done = false;
+            const finish = async () => {
+                if (done) return;
+                done = true;
+                try { rl.close(); } catch (e) { /* 忽略 */ }
+                try { await lease.release(); } catch (e) { /* 忽略 */ }
+                resolve();
+            };
+            rl.on('line', async (raw) => {
+                if (done) return;
+                const line = (raw || '').trim();
+                if (!line) { rl.prompt(); return; }
+                const lower = line.toLowerCase();
+                if (lower === ':mc' || lower === ':1' || lower === ':minecraft' || lower === ':服务端' ||
+                    lower === 'exit' || lower === 'quit' || lower === ':m' || lower === ':menu' ||
+                    lower === 'm' || lower === ':wow') {
+                    await finish();
+                    return;
+                }
+                if (lower === ':help' || lower === ':h' || lower === ':?') {
+                    this._printConsoleHelp();
+                    rl.prompt();
+                    return;
+                }
+                const d = classifyConsoleInput(line);
+                if (d.action === 'deny') {
+                    console.log(`⛔ ${d.reason}`);
+                } else if (d.action === 'mc') {
+                    console.log('⛔ :wow 长命令视图不转发 MC 指令，请输入 :mc 回实时日志。');
+                } else {
+                    try { rl.pause(); } catch (e) { /* 忽略 */ }
+                    try { await runWowSubcommand(d.args, this._wowLogTarget()); }
+                    catch (e) { console.error(`[wow] 指令执行失败: ${e.message}`); }
+                    try { rl.resume(); } catch (e) { /* 忽略 */ }
+                }
+                if (!done) rl.prompt();
+            });
+            rl.on('SIGINT', () => {
+                // 单次 Ctrl+C：安全退回 :mc，绝不停服务器
+                console.log('\n↩ 已离开 :wow 长命令（服务端仍在运行）。');
+                finish().catch(() => {});
+            });
+            rl.on('close', () => { if (!done) finish().catch(() => {}); });
+            rl.prompt();
+        });
+        this._replLease = null;
+
+        // 回到 :mc：重建 console 租约，装回 SIGINT
+        if (this.process && !this.process.killed) {
+            await this._backToConsole('mc');
+            if (this._sigintHandler) {
+                try { process.once('SIGINT', this._sigintHandler); } catch (e) { /* 忽略 */ }
+            }
+        }
+        viewState.set(viewState.VIEW.MC, 'wow:back:mc');
+    }
+
+    /**
      * 回到控制台：重建 readline 并切到指定视图。
      *
-     * 与 `_switchConsole` 的区别：这里会**先重建 rl**，因为从 M 模式 / L 模式
+     * 与 `_switchConsole` 的区别：这里会**先重建 rl**，因为从 :m / :wow
      * 回来时旧 rl 已经关掉了。`_switchConsole` 只管画面不管 rl。
      *
-     * @param {'mc'|'wow'|'lan'} [mode='wow'] 要落回的视图
+     * @param {'mc'} [mode='mc'] 要落回的视图（五大视图里只有 :mc 有实体页面）
      */
-    async _backToConsole(mode = 'wow') {
+    async _backToConsole(mode = 'mc') {
         if (!this.process) return;   // 服务端已退出，不需要控制台了
         if (!this._rl || this._rl.closed) {
             const rl = this._createConsoleRl();
@@ -542,7 +760,7 @@ class ServerManager {
      * 把「一行输入 → 控制台路由」的处理器绑到 rl 上。
      *
      * 抽出来的原因：start() 与 _backToConsole() 都要绑，两边逻辑必须完全一致
-     * （尤其是 :wow / :wowlog / 三视图切换 的顺序判定）。
+     * （尤其是 :m / :wow / :web / :mc 的判定顺序）。
      */
     _bindConsoleLine(rl) {
         rl.on('line', async (raw) => {
@@ -551,13 +769,10 @@ class ServerManager {
             if (!line) return;
             const lower = line.toLowerCase();
 
-            if (MODE_ALIASES[lower] === 'wow') {
-                // 已经在控制台里，直接进菜单
-                await this._enterMenuFromConsole();
-                return;
-            }
-            if (MODE_ALIASES[lower]) {
-                await this._switchConsole(MODE_ALIASES[lower]);
+            const target = MODE_ALIASES[lower];
+            if (target) {
+                // :m / :wow / :mc / :web 全部交给统一的安全退场入口
+                await this._detachConsole(target);
                 return;
             }
             if (lower === ':wowlog' || lower === ':wowlogs') {
@@ -565,7 +780,7 @@ class ServerManager {
                 return;
             }
             if (lower === ':log' || lower === ':logs') {
-                await this._printConsoleTail(this._mode);
+                await this._printConsoleTail('mc');
                 return;
             }
             if (lower === ':help' || lower === ':h' || lower === ':?') {
@@ -579,43 +794,17 @@ class ServerManager {
     /**
      * 显示当前控制台最近 CONSOLE_TAIL_LINES 条日志。
      * - mc  : Minecraft 服务端 latest.log
-     * - wow : wow 指令控制台日志
-     * - lan : 陶瓦 HTTP API 的返回流水（用户需求：陶瓦显示 HTTP API 返回）
+     * - wow : wow 指令控制台日志（log.disabled 时读内存环形缓冲）
      */
     async _printConsoleTail(mode) {
         console.log(`  ── 最近 ${CONSOLE_TAIL_LINES} 条日志 ──`);
-        if (mode === 'lan') {
-            let entries = [];
-            try {
-                const Terracotta = require('./terracotta');
-                entries = Terracotta.readApiLog(CONSOLE_TAIL_LINES);
-                if (entries.length === 0) {
-                    // 还没有任何 API 流水：若陶瓦在运行就实时查一次，让用户立刻看到返回
-                    if (Terracotta.isRunning()) {
-                        await Terracotta.getStatus().catch(() => null);
-                        entries = Terracotta.readApiLog(CONSOLE_TAIL_LINES);
-                    }
-                }
-            } catch (e) {
-                console.log(`  （读取陶瓦 API 流水失败: ${e.message}）`);
-            }
-            if (entries.length === 0) {
-                console.log('  （暂无陶瓦 HTTP API 记录。陶瓦未启动时可输入 host 开房）');
-            } else {
-                for (const e of entries) {
-                    const t = (e.t || '').replace('T', ' ').slice(0, 19);
-                    const body = e.error
-                        ? `ERROR ${e.error}`
-                        : (typeof e.body === 'object' ? JSON.stringify(e.body) : String(e.body === undefined ? '' : e.body));
-                    console.log(`  [${t}] ${e.method || 'GET'} ${e.url || ''} → ${e.status === null || e.status === undefined ? '-' : e.status} ${body}`);
-                }
-            }
-            console.log('─'.repeat(64));
-            return;
-        }
-
         const file = mode === 'wow' ? this.wowLogFile : this.logFile;
-        const lines = tailLines(file, CONSOLE_TAIL_LINES);
+        let lines;
+        if (mode === 'wow' && this._wowLogMemory && this._wowLogMemory.length) {
+            lines = this._wowLogMemory.slice(-CONSOLE_TAIL_LINES);
+        } else {
+            lines = tailLines(file, CONSOLE_TAIL_LINES);
+        }
         if (lines.length === 0) {
             console.log(mode === 'wow'
                 ? '  （暂无 wow 指令日志。可输入 server status、scheme list 等指令）'
@@ -628,102 +817,65 @@ class ServerManager {
 
     /**
      * 切换控制台视图：清屏 → 标题栏 → 最后 10 条日志。
-     * 陶瓦视图会启动一个轻量轮询，把状态变化实时显示为 HTTP API 返回。
+     * 五大视图里只有 `:mc` 在终端渲染实体页面；`:m` / `:wow` / `:web`
+     * 由 `_detachConsole()` 处理，这里对它们直接忽略（防御性兜底）。
      */
     async _switchConsole(mode) {
-        if (!CONSOLE_MODES[mode]) return;
-        const prev = this._mode;
-        this._mode = mode;
-        this._stopLanWatch();
-
+        if (mode !== 'mc') return;
+        this._mode = 'mc';
         try {
             require('./interactive').clearScreen();
         } catch (e) {
             process.stdout.write('\x1Bc');
         }
-        this._printConsoleBanner(mode);
-        await this._printConsoleTail(mode);
-
-        if (mode === 'mc') {
-            console.log('  输入 Minecraft 指令（如 op Steve、say hi、stop）直接发送给服务端。');
-        } else if (mode === 'wow') {
-            console.log('  输入 wow 指令（如 server status、scheme list、logs analyze）。');
-        } else {
-            console.log('  输入 host 开房 / status 查看房间 / stop 关房（等价于 lan host|status|stop）。');
-            this._startLanWatch();
-        }
-        if (prev !== mode) {
-            const label = CONSOLE_MODES[mode].name;
-            if (mode === 'wow') this._appendWowLog(`[wow] 已切换到${label}`);
-        }
+        this._printConsoleBanner('mc');
+        await this._printConsoleTail('mc');
+        console.log('  输入 Minecraft 指令（如 op Steve、say hi、stop）直接发送给服务端。');
+        console.log('  :m 进菜单　:wow 长命令　:web 面板地址　单次 Ctrl+C 安全退出（不停服）。');
     }
 
-    /** 陶瓦视图：轮询陶瓦状态，仅在状态变化时输出一行 HTTP API 返回 */
-    _startLanWatch() {
-        this._stopLanWatch();
-        const tick = async () => {
-            if (this._mode !== 'lan') return;
-            try {
-                const Terracotta = require('./terracotta');
-                if (!Terracotta.isRunning()) return;
-                const s = await Terracotta.getStatus();
-                const sig = `${s.state}|${s.roomCode}`;
-                if (sig !== this._lanLastSig) {
-                    this._lanLastSig = sig;
-                    const ts = new Date().toISOString().replace('T', ' ').slice(0, 19);
-                    console.log(`  [${ts}] GET /state → 200 ${JSON.stringify({ state: s.state, room: s.roomCode || null })}`);
-                }
-            } catch (e) {
-                // 陶瓦未运行 / 端口失效：静默
-            }
-        };
-        this._lanTimer = setInterval(tick, 5000);
-        if (this._lanTimer.unref) this._lanTimer.unref();
-        tick();
-    }
-
-    /** 停止陶瓦视图轮询 */
-    _stopLanWatch() {
-        if (this._lanTimer) {
-            clearInterval(this._lanTimer);
-            this._lanTimer = null;
+    /** :web 只打印面板地址，不切视图、不造第二个 stdin 消费者 */
+    _printWebHint() {
+        try {
+            const host = config.getConfig('web.host', '127.0.0.1');
+            const port = config.getConfig('web.port', 8080);
+            const shown = (host === '0.0.0.0' || host === '::') ? '127.0.0.1' : host;
+            console.log(`\n🌐 Web 面板：http://${shown}:${port}/`);
+            console.log('   :web 是浏览器视图，终端仍停在 :mc 实时日志（服务端继续运行）。\n');
+        } catch (e) {
+            console.log('\n🌐 Web 面板：请用 `wow web status` 查看地址。\n');
         }
-        this._lanLastSig = '';
     }
 
     /** 打印「当前控制台不支持该指令」的提示，并引导切换 */
     _printUnsupported(line, targetMode) {
-        const cur = CONSOLE_MODES[this._mode];
-        const tgt = CONSOLE_MODES[targetMode];
+        const cur = CONSOLE_MODES[this._mode] || CONSOLE_MODES.mc;
+        const tgt = CONSOLE_MODES[targetMode] || CONSOLE_MODES.mc;
         const msg = [
             `⛔ 不支持：「${line}」不属于${cur.icon} ${cur.name}。`,
-            `   它是${tgt.icon} ${tgt.name}的指令，请先输入 ${tgt.switchCmd} 切换到该控制台，再执行。`
+            `   它是${tgt.icon} ${tgt.name}的指令，请先输入 ${tgt.switchCmd} 切换，再执行。`
         ].join('\n');
         console.log(msg);
         if (this._mode === 'wow') this._appendWowLog(msg);
     }
 
-    /** 打印控制台帮助 */
+    /** 打印控制台帮助（五大视图） */
     _printConsoleHelp() {
         console.log('');
-        console.log('📖 开服控制台帮助（V3.6.3 起 :wow 进入 M 模式菜单）');
-        console.log('   切换控制台（切换后会清屏并显示该控制台最后 10 条日志）：');
+        console.log('📖 开服控制台帮助（五大视图：shell / :m / :wow / :mc / :web）');
+        console.log('   当前停在 :mc 实时日志，切换指令（安全退场，绝不停服务器）：');
         for (const k of Object.keys(CONSOLE_MODES)) {
             const m = CONSOLE_MODES[k];
-            const mark = k === this._mode ? '← 当前' : '';
-            if (k === 'wow') {
-                console.log(`     ${m.switchCmd.padEnd(6)} 🧩 进入 M 模式菜单（七页 TUI，Ctrl+C 退出菜单）`);
-                continue;
-            }
-            console.log(`     ${m.switchCmd.padEnd(6)} ${m.icon} ${m.name} ${mark}`);
+            const mark = k === 'mc' ? '← 当前' : '';
+            console.log(`     ${m.switchCmd.padEnd(10)} ${m.icon} ${m.name} ${mark}`);
         }
         console.log('   :wowlog     查看 wow 指令控制台最后 10 条日志');
-        console.log('   :log        重新显示当前控制台最后 10 条日志');
+        console.log('   :log        重新显示 :mc 最后 10 条服务端日志');
         console.log('   :help       显示本帮助');
-        console.log('   说明：每个控制台只接受自己的指令，输入其他控制台的指令会提示切换。');
-        console.log('        陶瓦控制台显示的是陶瓦本地 HTTP API 的返回内容。');
-        console.log('        M 模式里可切页面 Q/W/E/R/T/Y、数字执行功能、L 进长命令模式；');
-        console.log('        从 M 模式返回时总是落在 :wow（约束：进 L 模式回来也必须是 :wow）。');
+        console.log('   说明：:m 是数字菜单（Q/W/E/R/T/Y 切页、L 进长命令）；');
+        console.log('         :wow 是长命令视图，可直接输入 wow 只读指令；');
+        console.log('         :web 只打印面板地址；单次 Ctrl+C 与 :wow / :m 都是安全退场，');
+        console.log('         服务端继续运行，随时输入 :mc 或 :m 的 Q 页 1 附加回来。');
         console.log('');
     }
 
@@ -1255,13 +1407,17 @@ class ServerManager {
                 stdio: ['pipe', 'pipe', 'pipe'],
                 detached: false
             });
+            // 强关终端（SIGTERM / SIGHUP / 关 pty）时优雅停服，不留僵尸。
+            // 单次 Ctrl+C 是 detach，不走这里。
+            this._registerShutdown();
 
-            // 写入独立的 stdout 存档（不写 latest.log，避免与 MC 的 log4j 双写）
-            logStream = fs.createWriteStream(this.stdoutLogFile, { flags: 'w' });
-            // V3.4.0：服务端输出始终落盘，但只有停留在 Minecraft 控制台时才回显到终端，
-            // 否则切到 wow / 陶瓦控制台后会被服务端日志刷屏，切换就失去意义。
+            // 写入独立的 stdout 存档（不写 latest.log，避免与 MC 的 log4j 双写）。
+            // log.disabled=true 时换成内存垫片：wow 不产生任何硬盘日志。
+            logStream = this._makeLogStream();
+            // V3.4.0：服务端输出始终落盘，但只有停留在 :mc 时才回显到终端，
+            // 否则切到 :m / :wow 后会被服务端日志刷屏，切换就失去意义。
             this.process.stdout.on('data', (data) => {
-                // 回显条件：停在 Minecraft 视图 **且** 终端画面没被 TUI 占用。
+                // 回显条件：停在 :mc **且** 终端画面没被 TUI 占用。
                 // 后者兜住「菜单已经画出来、`_mode` 却没切走」的情况——
                 // 那种时候日志会从菜单底下顶出来，把七页界面冲乱。
                 if (this._mode === 'mc' && !tuiOwnsScreen()) process.stdout.write(data);
@@ -1277,17 +1433,20 @@ class ServerManager {
             // 接管 stdin：readline 读取用户输入，按当前控制台视图路由
             const rl = this._createConsoleRl();
             this._mode = 'mc';
+            try {
+                require('./view_state').set(require('./view_state').VIEW.MC, 'server:start');
+            } catch (e) { /* 状态模块不可用时不影响开服 */ }
             this._printConsoleIntro();
 
-            // V3.6.3：路由逻辑抽到 _bindConsoleLine，_backToConsole() 重建 rl 时
-            // 复用同一份判定（:wow 进菜单 / :wowlog 看日志 / 三视图切换 / 指令分发）。
+            // 路由逻辑抽到 _bindConsoleLine，_backToConsole() 重建 rl 时
+            // 复用同一份判定（:m / :wow / :web / :mc 安全退场 / 指令分发）。
             this._bindConsoleLine(rl);
 
-
-            // 捕获 Ctrl+C，优先向服务器发送 stop 命令优雅关闭
+            // 单次 Ctrl+C = 安全退场到 :wow（服务继续运行），绝不 stop()。
+            // 真正关闭终端由 shutdown.js 的 SIGTERM / SIGHUP 兜底优雅停服。
             this._sigintHandler = () => {
-                console.log('\n⏹ 收到中断信号，正在停止服务器...');
-                this.stop();
+                console.log('\n↩ 已退出实时日志流（服务端仍在运行，输入 :mc 可随时回来）。');
+                this._detachConsole('wow').catch(() => {});
             };
             process.once('SIGINT', this._sigintHandler);
         } else {
@@ -1298,12 +1457,15 @@ class ServerManager {
             // 结果就是：面板里服务器明明在跑，却永远显示「已停止」，
             // 仪表盘 CPU / 内存 / 时长全是 0。
             // 改成 pipe + 自己往文件写：流拿得到（错误扫描照常），落盘也不丢。
-            logStream = fs.createWriteStream(this.stdoutLogFile, { flags: 'w' });
+            logStream = this._makeLogStream();
             this.process = spawn(cmd.javaPath, cmd.fullCommand.slice(1), {
                 cwd: this.serverDir,
                 stdio: ['pipe', 'pipe', 'pipe'],
                 detached: false
             });
+            // 补齐非交互分支原本完全没有信号处理器的缺口：
+            // Web /api/exec 拉起的子进程被杀时，MC 不能再变孤儿。
+            this._registerShutdown();
             this.process.stdout.on('data', (data) => {
                 logStream.write(data);
                 this._logMcChunk(data);
@@ -1340,7 +1502,15 @@ class ServerManager {
                 try { this._rl.close(); } catch (e) {}
                 this._rl = null;
             }
-            this._stopLanWatch();
+            // 归还可能因强关终端而残留的 stdin 租约（不建新实例）
+            if (this._consoleLease) {
+                try { this._consoleLease.release(); } catch (e) { /* 忽略 */ }
+                this._consoleLease = null;
+            }
+            try {
+                require('./shutdown').clear();
+                require('./view_state').set(require('./view_state').VIEW.SHELL, 'mc:exit');
+            } catch (e) { /* 忽略 */ }
             // V3.5.19：进程没了，中继与心跳一并收掉，避免面板误判「还能发指令」
             this._stopConsoleRelay();
             if (logStream) logStream.end();
@@ -1518,66 +1688,74 @@ class ServerManager {
      * - 超时后降级为 SIGKILL
      */
     async stop(timeout = 30000) {
-        // V3.3.0 关闭联机房间（陶瓦），与服务器停止同步
-        _stopLanIfRunning();
+        // 幂等：SIGTERM / SIGHUP 兜底与菜单里的显式 stop 可能同时到达
+        if (this._stopping) return;
+        this._stopping = true;
+        try {
+            // V3.3.0 关闭联机房间（陶瓦），与服务器停止同步
+            _stopLanIfRunning();
 
-        if (!this.isRunning()) {
-            console.log('服务器未运行');
-            logger.info('停止服务器：服务器未运行');
-            return;
-        }
-
-        const pid = this._readPid();
-
-        // 优先尝试通过 stdin 发送 stop 命令
-        console.log('正在停止服务器...');
-        logger.impt('正在停止服务器（发送 stop 指令）...');
-        const sent = this.sendCommand('stop');
-        if (sent) {
-            console.log('已发送 stop 命令，等待服务器保存并退出...');
-            const startTime = Date.now();
-            while (this.isRunning() && (Date.now() - startTime) < timeout) {
-                await new Promise(resolve => setTimeout(resolve, 500));
+            if (!this.isRunning()) {
+                console.log('服务器未运行');
+                logger.info('停止服务器：服务器未运行');
+                return;
             }
 
-            if (this.isRunning()) {
-                console.warn('服务器未在超时时间内退出，使用强制终止');
-                this.kill();
-            } else {
-                console.log('✅ 服务器已正常停止');
-            }
-            return;
-        }
+            const pid = this._readPid();
 
-        // 跨进程：无法通过 stdin，使用 SIGTERM（Minecraft 会优雅退出）
-        if (pid && this._isProcessAlive(pid)) {
-            console.log('跨进程模式：发送 SIGTERM 信号...');
-            try {
-                process.kill(pid, 'SIGTERM');
-                console.log('等待服务器保存并退出...');
-
+            // 优先尝试通过 stdin 发送 stop 命令
+            console.log('正在停止服务器...');
+            logger.impt('正在停止服务器（发送 stop 指令）...');
+            const sent = this.sendCommand('stop');
+            if (sent) {
+                console.log('已发送 stop 命令，等待服务器保存并退出...');
                 const startTime = Date.now();
-                while (this._isProcessAlive(pid) && (Date.now() - startTime) < timeout) {
+                while (this.isRunning() && (Date.now() - startTime) < timeout) {
                     await new Promise(resolve => setTimeout(resolve, 500));
                 }
 
-                if (this._isProcessAlive(pid)) {
-                    console.warn('服务器未响应 SIGTERM，使用强制终止');
-                    process.kill(pid, 'SIGKILL');
-                    await new Promise(resolve => setTimeout(resolve, 1000));
+                if (this.isRunning()) {
+                    console.warn('服务器未在超时时间内退出，使用强制终止');
+                    this.kill();
+                } else {
+                    console.log('✅ 服务器已正常停止');
                 }
-
-                if (!this._isProcessAlive(pid)) {
-                    this._removePid();
-                    console.log('✅ 服务器已停止');
-                }
-            } catch (e) {
-                console.warn('进程已不存在');
-                this._removePid();
+                return;
             }
+
+            // 跨进程：无法通过 stdin，使用 SIGTERM（Minecraft 会优雅退出）
+            if (pid && this._isProcessAlive(pid)) {
+                console.log('跨进程模式：发送 SIGTERM 信号...');
+                try {
+                    process.kill(pid, 'SIGTERM');
+                    console.log('等待服务器保存并退出...');
+
+                    const startTime = Date.now();
+                    while (this._isProcessAlive(pid) && (Date.now() - startTime) < timeout) {
+                        await new Promise(resolve => setTimeout(resolve, 500));
+                    }
+
+                    if (this._isProcessAlive(pid)) {
+                        console.warn('服务器未响应 SIGTERM，使用强制终止');
+                        process.kill(pid, 'SIGKILL');
+                        await new Promise(resolve => setTimeout(resolve, 1000));
+                    }
+
+                    if (!this._isProcessAlive(pid)) {
+                        this._removePid();
+                        console.log('✅ 服务器已停止');
+                    }
+                } catch (e) {
+                    console.warn('进程已不存在');
+                    this._removePid();
+                }
+            }
+        } finally {
+            this._stopping = false;
+            // log.disabled=true：正常关服后方案 logs/ 只留 latest.log
+            this._cleanLogsOnStop();
         }
     }
-
     /**
      * 强制终止服务器
      */

@@ -633,6 +633,22 @@ schemeCmd
  * 正确做法是把 REPL 已有的 readline 借给它用（单消费者），并在提问期间
  * 暂停 REPL 对 line 的处理（suspended），结束后恢复提示符。
  */
+// ==================== 五大视图状态 ====================
+//
+// view_state.js 是「当前在哪个视图」的单一事实源。CLI 只负责在入口处
+// 打标记，绝不创建 readline（那归 stdin_session 管）。模块不可用或状态
+// 非法时静默忽略，不能影响任何一条命令的正常执行。
+function setView(name, reason = '') {
+    try {
+        const vs = require('./view_state');
+        if (vs.VIEW[name]) vs.set(vs.VIEW[name], reason);
+    } catch (e) { /* 状态模块不可用时忽略 */ }
+}
+
+function currentView() {
+    try { return require('./view_state').current(); } catch (e) { return null; }
+}
+
 let replSession = null;
 
 /** 用 REPL 的 readline 构造一个交互句柄（不新建 readline） */
@@ -1834,6 +1850,7 @@ async function enterMainMenu(source = '无参数启动') {
         return false;
     }
     logger()?.impt(`进入数字选择菜单（${source}）`);
+    setView('MENU', source);
     try {
         await interactive.showMainMenu(buildMenuOptions());
         return true;
@@ -2064,6 +2081,8 @@ program.hook('postAction', () => {
 // 注意：函数声明提升，上方 L 命令的 action 可直接调用。
 async function startRepl(options = {}) {
     const readline = require('readline');
+    // 执行令流转矩阵：`wow L` / `wow web start` 都进入 :wow 长命令视图
+    setView('WOW', options.webMode ? 'web start' : 'wow L');
     // V3.6.1：输入 m 时置 true，close 回调据此走「回菜单」而不是「退出」
     let toMenu = false;
     // rl.close() 之后仍可能有已排队的 'line' 事件被派发（管道输入尤其明显）。
@@ -2152,10 +2171,21 @@ async function startRepl(options = {}) {
         const ServerManager = load('./server');
         if (!ServerManager) return;
         let logFile;
-        try { logFile = new ServerManager().stdoutLogFile; } catch (e) { return; }
+        let noPersist = false;
+        try {
+            const sm = new ServerManager();
+            // log.disabled=true：wow 不再写 wow-stdout.log，改跟 MC 自己写的
+            // latest.log（允许保留）；保留 stdoutLogFile 这个 token 供回归断言。
+            noPersist = config.getConfig('log.disabled', false) === true;
+            logFile = noPersist ? sm.logFile : sm.stdoutLogFile;
+        } catch (e) { return; }
         following = true;
-        // 日志每次启动都以 flags:'w' 重写，从头读
+        // 日志每次启动都以 flags:'w' 重写，从头读。
+        // latest.log 是累积文件，只从当前末尾往后跟，避免把历史刷一屏。
         followOffset = 0;
+        if (noPersist) {
+            try { followOffset = fs.statSync(logFile).size; } catch (e) { followOffset = 0; }
+        }
         printLine(notice);
         printLine('   💡 继续输入 wow 指令不受影响；服务器停止后自动退出跟踪。');
         followTimer = setInterval(() => {
@@ -2198,7 +2228,17 @@ async function startRepl(options = {}) {
         // 本终端自己敲的 start/restart 已由开服控制台接管；服务器停了要把标记放开
         if (ownServerOp && !alive) ownServerOp = false;
         if (wasRelayAlive === false && alive && !following && !ownServerOp) {
-            startFollow('📋 检测到服务器已由 Web 面板启动，进入日志跟踪（实时回显 MC 输出）：');
+            // 执行令流转矩阵：:m 视图里 Web 触发启服**不切换视图**，
+            // 只刷新顶部状态栏（由 interactive 的菜单侧定时器负责重绘）。
+            // :wow 视图才自动切 :mc（startFollow 内部 setView）。
+            const vs = (() => { try { return require('./view_state'); } catch (e) { return null; } })();
+            if (vs && currentView() === vs.VIEW.MENU) {
+                printLine('🟢 服务器已由 Web 面板启动（:m 视图保持不变，状态栏已更新）');
+            } else {
+                // :wow 视图：自动切至 :mc 实时日志（执行令流转矩阵 2）
+                setView('MC', 'web:started:from-wow');
+                startFollow('📋 检测到服务器已由 Web 面板启动，自动切至 :mc 实时日志：');
+            }
         }
         wasRelayAlive = alive;
     }, 1500);
@@ -2223,6 +2263,7 @@ async function startRepl(options = {}) {
         // 同时挂在同一个 process.stdin 上（那会把按键读两遍）。
         if (input === 'm' || input === 'M') {
             toMenu = true;
+            setView('MENU', 'repl:m');
             closed = true;
             rl.close();
             return;
@@ -2283,6 +2324,14 @@ async function startRepl(options = {}) {
     });
     rl.on('SIGINT', () => { closed = true; rl.close(); });
     rl.on('close', async () => {
+        // 被开服控制台的 acquireSync('server.console') 强制接管时，本租约
+        // 已被标记 retired：stdin 交给了控制台，而 MC 还在跑。此时绝不能
+        // process.exit(0)，否则服务端立刻变孤儿。只静默让出。
+        if (lease.released) {
+            closed = true;
+            if (replSession && replSession.rl === rl) replSession = null;
+            return;
+        }
         // REPL 已关闭：交互式命令不能再借用这个 readline
         if (replSession && replSession.rl === rl) replSession = null;
         // 归还 stdin 租约：LEASE 里已经 close 了 rl，这里只负责放行排队者。
@@ -2303,6 +2352,7 @@ async function startRepl(options = {}) {
             const ok = await enterMainMenu('从 L 模式返回');
             if (!ok) {
                 console.log('菜单不可用，已退出。');
+                await _requestStopBeforeExit();
                 process.exit(0);
             }
             return;
@@ -2313,8 +2363,20 @@ async function startRepl(options = {}) {
             try { options.onExit(); } catch (e) { /* 忽略 */ }
         }
         console.log('再见~');
+        await _requestStopBeforeExit();
         process.exit(0);
     });
+}
+
+/**
+ * REPL / CLI 退出前的统一收尾：只在**本进程确实持有** MC 子进程时优雅停服。
+ * hasOwnedChild() 保证 Web 面板或别的终端启动的服务端不会被 REPL 的 exit 误杀。
+ */
+async function _requestStopBeforeExit() {
+    try {
+        const shutdown = require('./shutdown');
+        if (shutdown.hasOwnedChild()) await shutdown.requestStop('cli:exit');
+    } catch (e) { /* 兜底模块不可用时不影响退出 */ }
 }
 
 // ==================== V3.5.21：加载外部插件 ====================

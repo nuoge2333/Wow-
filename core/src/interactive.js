@@ -167,7 +167,8 @@ const PAGES = [
             { id: '5', legacy: ['7'], label: '下载镜像 / 超时 / 重试', hint: () => 'BMCLAPI 等' },
             { id: '6', legacy: ['121'], label: '服务器端口与外网可见性', hint: () => 'server-port' },
             { id: '7', legacy: ['122'], label: '查看本机网络信息', hint: () => '内网 IP / 端口' },
-            { id: '8', legacy: ['123'], label: 'Web 面板启动 / 停止', hint: () => '浏览器管理' }
+            { id: '8', legacy: ['123'], label: 'Web 面板启动 / 停止', hint: () => '浏览器管理' },
+            { id: '9', legacy: ['144'], label: '我要当房客 Join Room (陶瓦)', hint: () => '输房间号加入' }
         ]
     },
     {
@@ -516,7 +517,7 @@ async function runTuiMode(options, state) {
      * 服务端连同控制台一起弄没。调用方传了 `returnOnExit` 就只离开 TUI 循环，
      * 由 server 的 `_enterMenuFromConsole()` 把画面还给 `:wow` 控制台。
      */
-    const finishExit = () => {
+    const finishExit = async () => {
         cancelNumber();
         pendingConfirmExit = false;
         if (options.returnOnExit) {
@@ -525,6 +526,13 @@ async function runTuiMode(options, state) {
             return;
         }
         kb.close();
+        // 执行令：任意视图主动退出前，本进程持有的 MC 必须优雅退出，
+        // 不能靠 exit 钩子直接 SIGKILL 抢跑、更不能把服务端留成孤儿。
+        // hasOwnedChild() 为假（纯菜单 / 服务端由别的进程托管）时是 no-op。
+        try {
+            const shutdown = require('./shutdown');
+            if (shutdown.hasOwnedChild()) await shutdown.requestStop('tui:exit');
+        } catch (e) { /* 兜底模块不可用时不影响退出 */ }
         process.exit(0);
     };
 
@@ -635,8 +643,30 @@ async function runTuiMode(options, state) {
     // 一律不许往终端写——否则会从菜单底下顶出来，把七页界面冲乱。
     tui.markScreenActive(true);
     render();
+
+    // 执行令流转矩阵 2：Web 面板在别处触发启动服务端时，:m 视图**不切换**，
+    // 只把顶部状态栏刷新成「🟢 已启动」。StatusBar.collect() 本来就采集
+    // 运行中状态，这里只在「已停止 → 已启动」跳变时失效缓存并重绘一次。
+    // 用户正在输编号时不打断，避免把半截编号吞掉。
+    let webWatch = null;
+    let wasRunning = null;
+    const watchSm = options.serverManager;
+    if (watchSm && typeof watchSm.isRunning === 'function') {
+        webWatch = setInterval(() => {
+            let running = false;
+            try { running = Boolean(watchSm.isRunning()); } catch (e) { return; }
+            if (wasRunning === false && running && !numBuf) {
+                status.invalidate();
+                render('🟢 已启动（Web 面板触发；:m 视图保持不变）');
+            }
+            wasRunning = running;
+        }, 1500);
+        if (webWatch.unref) webWatch.unref();
+    }
+
     await leave;
     kb.close();
+    if (webWatch) { clearInterval(webWatch); webWatch = null; }
 
     // 画面交还：从这里起日志可以正常回显（开服控制台 / REPL 各有自己的判断）
     tui.markScreenActive(false);
@@ -846,31 +876,31 @@ async function maybeJumpToServer(options, kb, status, rl = null) {
     try { running = serverManager.isRunning(); } catch (e) { running = false; }
 
     if (running) {
-        // 已在运行：问是否停止。停止不接管 stdin，原地处理即可。
-        const io = makeIo(kb);
-        if (io) await io.enter();
-        console.log('\n服务器已在运行中。');
-        const choice = await ioAsk(io, rl, '是否停止服务器? (y/N): ');
-        let stopped = false;
-        if (String(choice).trim().toLowerCase() === 'y') {
-            try {
-                await serverManager.stop();
-                stopped = true;
-            } catch (e) {
-                console.error(`❌ 停止失败: ${e.message}`);
-            }
+        // 服务端已在运行：Q 页 1 = 附加回 :mc 实时日志（执行令流转矩阵 3），
+        // 不再弹旧的停止询问把用户困在菜单里，也绝不误杀服务端。
+        console.log('\n🟢 服务端已在运行，正在切到 :mc 实时日志…');
+        // 交出 TUI 键盘：:mc 控制台要独占 stdin（suspend 可逆，close 不可逆）
+        if (kb) await kb.suspend();
+
+        if (serverManager.process) {
+            // 本进程持有 MC（从开服控制台的 :m 进来）：返回 handled 让 TUI
+            // 主循环退出，由 server.js 的 _backToConsole() 重建 console 租约
+            // 回到 :mc。绝不能在这里调 stop()。
+            if (status) status.invalidate();
+            return { handled: true, message: null };
         }
-        if (status) status.invalidate();
-        // TUI：按回车回到界面；兼容模式：用调用方自己的 rl 提问，
-        // 不能再开 askLine（那会和 compat 的 rl 抢同一个 stdin，回显两遍）
-        if (io) {
+
+        // 本进程不持有 MC（独立菜单 / Web 面板启动）：不能抢占别人的 stdin，
+        // 也不该造第二个 readline。原地提示后留在菜单，服务继续跑。
+        console.log('   该服务端由其它进程托管，本终端无法接管它的 stdin。');
+        console.log('   请使用 Web 面板 / 原终端的 :mc 视图，或 `wow logs tail` 查看实时日志。');
+        if (kb) {
             await tui.askLine('\n按回车键返回...');
-            io.leave();
+            await kb.resume();
         } else if (rl) {
             await ask(rl, '\n按回车键返回...');
-        } else if (stopped) {
-            await tui.askLine('\n按回车键返回...');
         }
+        if (status) status.invalidate();
         return { handled: false, message: null };
     }
 
@@ -1031,6 +1061,7 @@ async function dispatchMenuItem(id, options, rl, ctx, io, opts = {}) {
         case '141': return dispatchMenu('14', options, rl, { sub: '1' }, io);
         case '142': return dispatchMenu('14', options, rl, { sub: '2' }, io);
         case '143': return dispatchMenu('14', options, rl, { sub: '3' }, io);
+        case '144': return dispatchMenu('14', options, rl, { sub: '4' }, io);   // 我要当房客
         case '121': return dispatchMenu('5', options, rl, { sub: '2' }, io);
         case '122': return lanNetInfo(io, rl);
         case '123': return dispatchMenu('5', options, rl, { sub: '1' }, io);
@@ -1229,6 +1260,30 @@ async function cleanLogs(io, rl) {
         return false;
     }
 
+    // log.disabled=true：执行令要求方案 logs/ 只保留最新 latest.log，
+    // 忽略「保留 N 天」，删掉其余所有条目（含子目录）。MC 自己写的
+    // latest.log 保留，关服时的 _cleanLogsOnStop() 也是同一套语义。
+    let logSink = null;
+    try { logSink = require('./log_sink'); } catch (e) { /* 兜底：按原按天清理 */ }
+    if (logSink && !logSink.shouldPersist()) {
+        let entries = [];
+        try { entries = fs.readdirSync(logDir); } catch (e) { entries = []; }
+        const victims = entries.filter(f => f !== 'latest.log');
+        if (!victims.length) {
+            console.log('✅ logs/ 已经只剩 latest.log，无需清理。');
+            return false;
+        }
+        console.log(`\n[log.disabled] 将删除 ${victims.length} 个条目，只保留 latest.log：`);
+        victims.slice(0, 10).forEach(f => console.log(`   ${f}`));
+        if (victims.length > 10) console.log(`   … 还有 ${victims.length - 10} 个`);
+        const ok = (await ioAsk(io, rl, '\n确定删除? (y/N): ')).trim().toLowerCase();
+        if (ok !== 'y') { console.log('已取消。'); return false; }
+        const removed = logSink.keepLatestOnly(logDir);
+        console.log(`✅ 已删除 ${removed} 个条目，logs/ 现只保留 latest.log`);
+        logger.impt(`清理旧日志：log.disabled 模式删除 ${removed} 个条目`);
+        return false;
+    }
+
     const keep = parseInt((await ioAsk(io, rl, '保留最近几天的日志? (默认 7): ')).trim(), 10) || 7;
     const cutoff = Date.now() - keep * 24 * 3600 * 1000;
 
@@ -1238,6 +1293,7 @@ async function cleanLogs(io, rl) {
     const victims = [];
     let totalBytes = 0;
     for (const f of files) {
+        if (f === 'latest.log') continue;   // MC 当前日志，绝不当旧日志清掉
         if (!/\.(log|log\.gz|txt|gz)$/i.test(f)) continue;
         const full = path.join(logDir, f);
         let st;
@@ -1939,8 +1995,9 @@ async function dispatchMenu(choice, options, rl, preset = null, io = null) {
                 console.log('  1. 我要当房主（开房）');
                 console.log('  2. 查看房间号 / 状态');
                 console.log('  3. 关房（停止陶瓦）');
+                console.log('  4. 我要当房客（输入房间号加入）');
                 console.log('  0. 返回');
-                const sub = await subOf('\n请选择 (0-3): ');
+                const sub = await subOf('\n请选择 (0-4): ');
                 try {
                     if (sub === '1') {
                         console.log('提示：开房前请先启动 Minecraft 服务端（菜单 1），陶瓦会自动扫描本机服务端端口。');
@@ -1951,8 +2008,10 @@ async function dispatchMenu(choice, options, rl, preset = null, io = null) {
                             console.log('当前未开房（陶瓦未运行）。选择 1 开房。');
                         } else {
                             console.log(`运行状态:  🟢 运行中`);
+                            console.log(`角色:      ${s.mode === 'guest' ? '房客（Join Room）' : '房主（开房）'}`);
                             console.log(`本地 API:  127.0.0.1:${s.port}`);
                             console.log(`房间号:    ${s.roomCode || '(生成中)'}`);
+                            if (s.player) console.log(`玩家名:    ${s.player}`);
                             console.log(`状态机:    ${s.state || '未知'}`);
                             if (s.roomCode) {
                                 console.log(`\n把房间号发给好友，对方在 PCL / HMCL / BakaXL / FCL 中选择「加入陶瓦房间」并输入该房间号即可联机。`);
@@ -1960,6 +2019,20 @@ async function dispatchMenu(choice, options, rl, preset = null, io = null) {
                         }
                     } else if (sub === '3') {
                         await Terracotta.stopHost();
+                    } else if (sub === '4') {
+                        // 房客：房间号 + 玩家名都通过 ioAsk（TUI 下走挂起键盘的安全
+                        // 提问通道），绝不另开 readline，避免 stdin 双消费者。
+                        const roomCode = String(await ioAsk(io, rl, '\n请输入房间号 (由房主提供): ') || '').trim();
+                        if (!roomCode) {
+                            console.log('未输入房间号，已取消。');
+                        } else {
+                            const playerName = String(await ioAsk(io, rl, '请输入你的玩家名 (Minecraft ID): ') || '').trim();
+                            if (!playerName) {
+                                console.log('未输入玩家名，已取消。');
+                            } else {
+                                await Terracotta.joinRoom({ roomCode, player: playerName });
+                            }
+                        }
                     }
                 } catch (e) {
                     console.error(`❌ 操作失败: ${e.message}`);

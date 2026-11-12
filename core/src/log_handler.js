@@ -31,8 +31,13 @@ class LogHandler {
         console.log('按 Ctrl+C 退出');
 
         const tail = spawn('tail', ['-f', this.logFile], { stdio: 'inherit' });
-        process.on('SIGINT', () => {
+        process.on('SIGINT', async () => {
             tail.kill();
+            // 若本进程恰好持有 MC 子进程，先优雅停服再退出
+            try {
+                const shutdown = require('./shutdown');
+                if (shutdown.hasOwnedChild()) await shutdown.requestStop('logs:tail');
+            } catch (e) { /* 忽略 */ }
             process.exit(0);
         });
     }
@@ -127,10 +132,15 @@ ${recentLines}
             console.log(analysis);
             console.log('='.repeat(60));
 
-            // 可选：保存报告
-            const reportPath = path.join(this.serverDir, 'logs', 'analysis_report.txt');
-            fs.writeFileSync(reportPath, `[${new Date().toISOString()}]\n${analysis}`, 'utf8');
-            console.log(`\n✅ 报告已保存: ${reportPath}`);
+            // 可选：保存报告。log.disabled=true 时 wow 不产生任何硬盘日志，
+            // 报告只在终端展示，不写 analysis_report.txt（统一走 log_sink 判定）。
+            if (!require('./log_sink').shouldPersist()) {
+                console.log('\n✅ 报告已生成（log.disabled=true：未写入硬盘）');
+            } else {
+                const reportPath = path.join(this.serverDir, 'logs', 'analysis_report.txt');
+                fs.writeFileSync(reportPath, `[${new Date().toISOString()}]\n${analysis}`, 'utf8');
+                console.log(`\n✅ 报告已保存: ${reportPath}`);
+            }
 
         } catch (e) {
             console.error(`❌ AI 分析失败: ${e.message}`);

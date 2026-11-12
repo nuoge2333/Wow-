@@ -24,6 +24,7 @@ const fs = require('fs-extra');
 const path = require('path');
 const { spawn } = require('child_process');
 const axios = require('axios');
+const logSink = require('./log_sink');
 
 // 二进制与日志落地目录（core/tunnel）
 const TUNNEL_DIR = path.join(__dirname, '../tunnel');
@@ -328,11 +329,15 @@ async function startTunnel(targetUrl, options = {}) {
     const binPath = await ensureBinary({ quiet });
 
     const logFile = path.join(TUNNEL_DIR, 'cloudflared.log');
+    // log.disabled=true 时 openStream 返回内存垫片，绝不产生 cloudflared.log；
+    // 仍保留 logFile 字段作为返回契约（调用方只用于展示）。
     let logStream = null;
     try {
-        fs.ensureDirSync(TUNNEL_DIR);
-        logStream = fs.createWriteStream(logFile, { flags: 'w' });
+        logStream = logSink.openStream(logFile, 'tunnel');
     } catch (e) { /* 日志写不了不致命 */ }
+    const logHint = logSink.shouldPersist()
+        ? `日志: ${logFile}`
+        : '日志: 未落盘（log.disabled=true，输出见上方回显）';
 
     const args = ['tunnel', '--no-autoupdate', '--url', targetUrl];
 
@@ -418,7 +423,7 @@ async function startTunnel(targetUrl, options = {}) {
         throw new Error(
             `cloudflared 启动后立即退出（退出码 ${exitInfo.code}${exitInfo.signal ? '，信号 ' + exitInfo.signal : ''}）。\n` +
             `── cloudflared 输出 ──\n${tail || '(无输出)'}\n` +
-            `日志: ${logFile}`
+            `${logHint}`
         );
     }
 
@@ -429,7 +434,7 @@ async function startTunnel(targetUrl, options = {}) {
             `等待 Cloudflare 分配域名超时（${Math.round(timeoutMs / 1000)}s）。\n` +
             `常见原因：网络无法访问 Cloudflare 边缘节点 / 被防火墙拦截。\n` +
             `── cloudflared 输出 ──\n${tail || '(无输出)'}\n` +
-            `日志: ${logFile}`
+            `${logHint}`
         );
     }
 

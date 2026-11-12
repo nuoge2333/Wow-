@@ -38,6 +38,11 @@ const SCHEMA = [
         key: 'verbose', type: 'boolean', group: '基础', label: '详细日志',
         desc: '开启后 CLI 会输出更多调试信息，排查问题时有用，平时建议关闭。'
     },
+    {
+        key: 'log.disabled', type: 'boolean', group: '基础', label: 'wow 日志不落盘',
+        desc: '开启后 wow 自身不再把日志写入硬盘（终端与内存里照常可见）；Minecraft 服务端自己写的 latest.log 保留，且每次正常关服会把方案 logs/ 清到只剩 latest.log。',
+        advanced: true
+    },
 
     // ==================== 服务器 ====================
     {
@@ -149,6 +154,11 @@ const SCHEMA = [
             { value: '127.0.0.1', label: '仅本机（推荐）' },
             { value: '0.0.0.0', label: '所有网卡（对外暴露）' }
         ],
+        danger: true
+    },
+    {
+        key: 'web.require_login', type: 'boolean', group: 'Web 面板', label: '强制登录',
+        desc: '关闭 = 打开面板与调用接口都无需登录（适合只在本机用）；开启 = 必须验证身份。⚠️ 面板监听 0.0.0.0 或开了内网穿透时，无论这里怎么设都会强制要求登录。',
         danger: true
     },
     {

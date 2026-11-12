@@ -5,605 +5,98 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>设置 - wow</title>
     <link rel="stylesheet" href="/css/main.css">
-    <style>
-        .settings-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 20px;
-        }
-        .settings-section {
-            background: #141e2b;
-            border-radius: 8px;
-            padding: 20px;
-            border: 1px solid #1a2332;
-        }
-        .settings-section.full {
-            grid-column: 1 / -1;
-        }
-        .settings-section .title {
-            font-size: 16px;
-            font-weight: 600;
-            color: #ccd;
-            margin-bottom: 16px;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-        .settings-section .title .badge {
-            font-size: 12px;
-            font-weight: 400;
-            color: #667788;
-            background: #0f1a2f;
-            padding: 0 10px;
-            border-radius: 4px;
-        }
-
-        .config-group {
-            margin-bottom: 14px;
-        }
-        .config-group label {
-            display: block;
-            font-size: 13px;
-            color: #8899aa;
-            margin-bottom: 4px;
-        }
-        .config-group .key-hint {
-            font-size: 12px;
-            color: #556677;
-            font-family: monospace;
-        }
-        .config-group input,
-        .config-group select,
-        .config-group textarea {
-            width: 100%;
-            padding: 8px 12px;
-            background: #0f1a2f;
-            border: 1px solid #1a2332;
-            border-radius: 6px;
-            color: #ccd;
-            font-size: 14px;
-            box-sizing: border-box;
-            outline: none;
-            font-family: inherit;
-        }
-        .config-group input:focus,
-        .config-group select:focus,
-        .config-group textarea:focus {
-            border-color: #4CAF50;
-        }
-        .config-group textarea {
-            min-height: 60px;
-            resize: vertical;
-            font-family: 'Consolas', monospace;
-            font-size: 13px;
-        }
-
-        .btn-row {
-            display: flex;
-            gap: 8px;
-            flex-wrap: wrap;
-            margin-top: 12px;
-        }
-        .btn {
-            padding: 8px 20px;
-            border: none;
-            border-radius: 6px;
-            font-size: 13px;
-            cursor: pointer;
-            transition: background 0.2s;
-            color: white;
-        }
-        .btn-primary { background: #2196F3; }
-        .btn-primary:hover { background: #1976D2; }
-        .btn-success { background: #4CAF50; }
-        .btn-success:hover { background: #388E3C; }
-        .btn-danger { background: #f44336; }
-        .btn-danger:hover { background: #d32f2f; }
-        .btn-warning { background: #ff9800; }
-        .btn-warning:hover { background: #f57c00; }
-        .btn-secondary { background: #37474f; color: #ccd; }
-        .btn-secondary:hover { background: #455a64; }
-        .btn:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-        }
-
-        .plugin-item, .theme-item {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 8px 12px;
-            background: #0f1a2f;
-            border-radius: 6px;
-            margin-bottom: 6px;
-        }
-        .plugin-item .info, .theme-item .info {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            flex-wrap: wrap;
-        }
-        .plugin-item .info .name, .theme-item .info .name {
-            color: #ccd;
-            font-weight: 500;
-        }
-        .plugin-item .info .meta, .theme-item .info .meta {
-            color: #667788;
-            font-size: 12px;
-        }
-        .plugin-item .actions, .theme-item .actions {
-            display: flex;
-            gap: 6px;
-        }
-        .plugin-item .actions .btn-sm, .theme-item .actions .btn-sm {
-            padding: 3px 12px;
-            border: none;
-            border-radius: 4px;
-            font-size: 12px;
-            cursor: pointer;
-            color: white;
-            transition: background 0.2s;
-        }
-        .btn-sm.active { background: #4CAF50; }
-        .btn-sm.active:hover { background: #388E3C; }
-        .btn-sm.inactive { background: #37474f; color: #ccd; }
-        .btn-sm.inactive:hover { background: #455a64; }
-        .btn-sm.danger { background: #f44336; }
-        .btn-sm.danger:hover { background: #d32f2f; }
-        .btn-sm.info { background: #2196F3; }
-        .btn-sm.info:hover { background: #1976D2; }
-
-        .empty-state {
-            padding: 20px;
-            text-align: center;
-            color: #667788;
-            font-size: 14px;
-        }
-
-        .toast {
-            position: fixed;
-            bottom: 30px;
-            right: 30px;
-            background: #16213e;
-            border-left: 4px solid #4CAF50;
-            padding: 12px 20px;
-            border-radius: 6px;
-            color: #ccd;
-            font-size: 14px;
-            box-shadow: 0 4px 16px rgba(0,0,0,0.4);
-            z-index: 2000;
-            opacity: 0;
-            transform: translateY(20px);
-            transition: all 0.3s ease;
-            pointer-events: none;
-        }
-        .toast.show {
-            opacity: 1;
-            transform: translateY(0);
-            pointer-events: auto;
-        }
-        .toast.error { border-left-color: #f44336; }
-        .toast.success { border-left-color: #4CAF50; }
-        .toast.warning { border-left-color: #ff9800; }
-
-        .modal-overlay {
-            display: none;
-            position: fixed;
-            top: 0; left: 0; right: 0; bottom: 0;
-            background: rgba(0,0,0,0.7);
-            z-index: 1000;
-            justify-content: center;
-            align-items: center;
-        }
-        .modal-overlay.active { display: flex; }
-        .modal {
-            background: #16213e;
-            border-radius: 12px;
-            padding: 28px 32px;
-            max-height: 80vh;
-            overflow-y: auto;
-            color: #ccd;
-            box-shadow: 0 8px 32px rgba(0,0,0,0.6);
-        }
-        .modal h3 {
-            margin-top: 0;
-            margin-bottom: 16px;
-            color: #eee;
-            font-weight: 400;
-        }
-        .modal .form-group {
-            margin-bottom: 14px;
-        }
-        .modal .form-group label {
-            display: block;
-            font-size: 13px;
-            color: #8899aa;
-            margin-bottom: 4px;
-        }
-        .modal .form-group input,
-        .modal .form-group textarea {
-            width: 100%;
-            padding: 8px 12px;
-            background: #0f1a2f;
-            border: 1px solid #1a2332;
-            border-radius: 6px;
-            color: #ccd;
-            font-size: 14px;
-            box-sizing: border-box;
-            outline: none;
-        }
-        .modal .form-group input:focus,
-        .modal .form-group textarea:focus {
-            border-color: #4CAF50;
-        }
-        .modal .btn-row {
-            display: flex;
-            gap: 10px;
-            justify-content: flex-end;
-            margin-top: 20px;
-        }
-        .modal .btn-row .btn {
-            padding: 8px 24px;
-            border: none;
-            border-radius: 6px;
-            font-size: 14px;
-            cursor: pointer;
-            transition: background 0.2s;
-        }
-        .btn-modal-confirm { background: #4CAF50; color: white; }
-        .btn-modal-confirm:hover { background: #43a047; }
-        .btn-modal-cancel { background: #37474f; color: #ccd; }
-        .btn-modal-cancel:hover { background: #455a64; }
-
-        .tab-bar {
-            display: flex;
-            gap: 4px;
-            margin-bottom: 16px;
-            background: #0f1a2f;
-            border-radius: 6px;
-            padding: 4px;
-            overflow-x: auto;
-        }
-        .tab-bar .tab-btn {
-            padding: 6px 16px;
-            border: none;
-            background: transparent;
-            color: #8899aa;
-            font-size: 13px;
-            cursor: pointer;
-            border-radius: 4px;
-            transition: all 0.2s;
-            white-space: nowrap;
-        }
-        .tab-bar .tab-btn:hover {
-            color: #ccd;
-            background: #1a2332;
-        }
-        .tab-bar .tab-btn.active {
-            background: #4CAF50;
-            color: white;
-        }
-        .tab-content {
-            display: none;
-            animation: fadeIn 0.2s ease;
-        }
-        .tab-content.active { display: block; }
-        @keyframes fadeIn {
-            from { opacity: 0.5; transform: translateY(4px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-
-        .filter-input {
-            width: 100%;
-            padding: 6px 12px;
-            background: #0f1a2f;
-            border: 1px solid #1a2332;
-            border-radius: 4px;
-            color: #ccd;
-            font-size: 13px;
-            outline: none;
-            margin-bottom: 12px;
-        }
-        .filter-input:focus {
-            border-color: #4CAF50;
-        }
-
-        /* ===== 配置表单（V3.5.19） ===== */
-        .cfg-mode-switch {
-            float: right;
-            display: inline-flex;
-            gap: 0;
-            border: 1px solid #22334d;
-            border-radius: 5px;
-            overflow: hidden;
-        }
-        .cfg-mode-switch .mode-btn {
-            background: transparent;
-            border: none;
-            color: #7d8ea3;
-            font-size: 12px;
-            padding: 4px 12px;
-            cursor: pointer;
-            font-family: inherit;
-        }
-        .cfg-mode-switch .mode-btn.active {
-            background: #1b3a2b;
-            color: #66bb6a;
-        }
-        .cfg-mode-switch .mode-btn:hover:not(.active) {
-            background: #17253a;
-            color: #aab;
-        }
-
-        .cfg-group-title {
-            margin: 18px 0 8px;
-            padding-bottom: 6px;
-            border-bottom: 1px solid #1b2b44;
-            color: #8fa6c0;
-            font-size: 13px;
-            letter-spacing: .5px;
-        }
-        .cfg-group-title:first-child { margin-top: 0; }
-
-        .cfg-row {
-            display: flex;
-            align-items: flex-start;
-            gap: 14px;
-            padding: 10px 12px;
-            border-radius: 6px;
-            margin-bottom: 2px;
-        }
-        .cfg-row:hover { background: #101c30; }
-        .cfg-row.danger-row { border-left: 2px solid #b3403a; }
-        .cfg-row.is-dirty { background: #12251c; }
-
-        .cfg-row .cfg-label {
-            flex: 0 0 190px;
-            min-width: 0;
-            padding-top: 6px;
-        }
-        .cfg-row .cfg-label .name {
-            color: #ccd;
-            font-size: 13px;
-        }
-        .cfg-row .cfg-label .key {
-            color: #4a5c72;
-            font-size: 11px;
-            font-family: ui-monospace, Menlo, Consolas, monospace;
-            word-break: break-all;
-        }
-        .cfg-row .cfg-control {
-            flex: 1;
-            min-width: 0;
-        }
-        .cfg-row .cfg-desc {
-            margin-top: 5px;
-            color: #62768c;
-            font-size: 12px;
-            line-height: 1.55;
-        }
-        .cfg-row .cfg-desc .warn {
-            color: #d9853f;
-        }
-
-        .cfg-input, .cfg-select, .cfg-textarea {
-            width: 100%;
-            box-sizing: border-box;
-            background: #0d1727;
-            border: 1px solid #22334d;
-            border-radius: 4px;
-            color: #ccd;
-            padding: 7px 10px;
-            font-size: 13px;
-            font-family: inherit;
-            outline: none;
-        }
-        .cfg-input:focus, .cfg-select:focus, .cfg-textarea:focus { border-color: #4CAF50; }
-        .cfg-textarea {
-            min-height: 62px;
-            resize: vertical;
-            font-family: ui-monospace, Menlo, Consolas, monospace;
-            font-size: 12px;
-        }
-        .cfg-select { cursor: pointer; }
-
-        /* Switch 开关 */
-        .cfg-switch {
-            position: relative;
-            display: inline-block;
-            width: 44px;
-            height: 24px;
-            margin-top: 4px;
-            flex: 0 0 auto;
-        }
-        .cfg-switch input { opacity: 0; width: 0; height: 0; }
-        .cfg-switch .track {
-            position: absolute;
-            inset: 0;
-            background: #24384f;
-            border-radius: 12px;
-            transition: .2s;
-            cursor: pointer;
-        }
-        .cfg-switch .track::before {
-            content: "";
-            position: absolute;
-            width: 18px;
-            height: 18px;
-            left: 3px;
-            top: 3px;
-            background: #8fa6c0;
-            border-radius: 50%;
-            transition: .2s;
-        }
-        .cfg-switch input:checked + .track { background: #2e7d32; }
-        .cfg-switch input:checked + .track::before {
-            transform: translateX(20px);
-            background: #fff;
-        }
-        .cfg-switch .state-text {
-            margin-left: 54px;
-            font-size: 12px;
-            color: #7d8ea3;
-            line-height: 24px;
-            white-space: nowrap;
-        }
-
-        .cfg-advanced-toggle {
-            margin: 14px 0 4px;
-            color: #5f7288;
-            font-size: 12px;
-        }
-        .cfg-details {
-            margin-top: 16px;
-            border-top: 1px dashed #1b2b44;
-            padding-top: 10px;
-        }
-        .cfg-details > summary {
-            cursor: pointer;
-            color: #62768c;
-            font-size: 13px;
-            outline: none;
-            list-style: none;
-        }
-        .cfg-details > summary::-webkit-details-marker { display: none; }
-        .cfg-details > summary::before { content: "▸ "; }
-        .cfg-details[open] > summary::before { content: "▾ "; }
-
-        .cfg-toolbar {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            margin-top: 14px;
-            padding-top: 12px;
-            border-top: 1px solid #1b2b44;
-        }
-        .cfg-toolbar .dirty-hint {
-            color: #d9853f;
-            font-size: 12px;
-            flex: 1;
-        }
-
-        @media (max-width: 900px) {
-            .settings-grid {
-                grid-template-columns: 1fr;
-            }
-            .settings-section.full {
-                grid-column: 1;
-            }
-            .cfg-row { flex-direction: column; gap: 6px; }
-            .cfg-row .cfg-label { flex: none; width: 100%; padding-top: 0; }
-        }
-    </style>
+    <link rel="stylesheet" href="/css/set.css">
 </head>
 <body>
-    <div id="set-page">
-        <h2 style="color:#ccd;font-weight:400;margin-bottom:20px;">⚙️ 设置</h2>
+<div id="set-page">
+    <h2>⚙️ 设置</h2>
+    <p class="set-sub">
+        按分组编辑 wow.yaml，改动会实时预览最终启动命令；保存后重启 wow 生效。<br>
+        插件、模组配置库与主题包等扩展功能收在下方「高级管理」中。
+    </p>
 
-        <div class="settings-grid">
-
-            <!-- ===== 左侧：wow.yaml 配置 ===== -->
-            <div class="settings-section full">
-                <div class="title">
-                    📝 启动器配置 (wow.yaml)
-                    <span class="badge" id="cfg-mode-badge">表单模式</span>
-                    <div class="cfg-mode-switch">
-                        <button class="mode-btn active" id="mode-form-btn" data-mode="form">🧩 表单</button>
-                        <button class="mode-btn" id="mode-raw-btn" data-mode="raw">{ } 原始 JSON</button>
-                    </div>
-                </div>
-
-                <!-- 表单模式（V3.5.19：按 /api/config/schema 动态生成） -->
-                <div id="config-form-wrap">
-                    <input class="filter-input" id="cfg-search" placeholder="搜索配置项（支持 key 或中文说明）..." />
-                    <div id="config-form">
-                        <div class="empty-state">加载中...</div>
-                    </div>
-
-                    <!-- 最终启动预览（V3.6.2 · 607 指令五：所见即所得）。
-                         前端不做任何 JVM 参数拼接：改动防抖请求后端
-                         /api/config/preview-jvm，由后端跑完「模板 → 合并 →
-                         GC 互斥 → 兜底 → agent 过滤 → 内存红线」完整链路，
-                         返回的最终命令字符串在这里原样展示。 -->
-                    <div id="jvm-preview-panel" class="config-group" style="margin-top:16px;">
-                        <label>🖥️ 最终启动预览（由后端实时计算，所见即所得）</label>
-                        <pre id="jvm-preview-cmd" spellcheck="false" style="margin:6px 0;padding:10px 12px;border-radius:8px;background:#141b24;color:#9ecbff;font-family:monospace;font-size:12px;white-space:pre-wrap;word-break:break-all;min-height:20px;">加载中...</pre>
-                        <div id="jvm-preview-note" style="color:#d9853f;font-size:12px;display:none;"></div>
-                    </div>
-                </div>
-
-                <!-- 原始 JSON 模式 -->
-                <div id="config-raw-wrap" style="display:none;">
-                    <div class="config-group">
-                        <label>配置内容（wow.yaml）</label>
-                        <textarea id="config-editor" spellcheck="false" style="min-height:280px;font-family:monospace;font-size:12px;"></textarea>
-                    </div>
-                </div>
-
-                <div class="btn-row">
-                    <button class="btn btn-success" id="save-config-btn">💾 保存配置</button>
-                    <button class="btn btn-secondary" id="reload-config-btn">🔄 重新加载</button>
-                    <span class="dirty-hint" id="cfg-dirty-hint" style="color:#d9853f;font-size:12px;margin-left:10px;"></span>
-                </div>
-                <div style="margin-top:8px;color:#667788;font-size:12px;">
-                    修改后需要重启服务才能生效，部分配置项保存后立即生效。
-                </div>
+    <!-- ===== 首屏：配置表单 + JVM 预览 ===== -->
+    <div class="settings-section full">
+        <div class="title">
+            📝 启动器配置 (wow.yaml)
+            <span class="badge" id="cfg-mode-badge">表单模式</span>
+            <div class="cfg-mode-switch">
+                <button class="mode-btn active" id="mode-form-btn" data-mode="form">🧩 表单</button>
+                <button class="mode-btn" id="mode-raw-btn" data-mode="raw">{ } 原始 JSON</button>
             </div>
+        </div>
 
-            <!-- ===== wow 插件管理 ===== -->
+        <!-- 表单模式：按 /api/config/schema 动态生成，两个新配置项自动出现 -->
+        <div id="config-form-wrap">
+            <input class="filter-input" id="cfg-search" placeholder="搜索配置项（支持 key 或中文说明）..." />
+            <div id="config-form"><div class="empty-state">加载中...</div></div>
+
+            <!-- 最终启动预览：前端零 JVM 拼接。改动防抖请求后端
+                 /api/config/preview-jvm，由 Jvm.buildJvmArgs 跑完
+                 模板 → 合并 → GC 互斥 → 兜底 → agent 过滤 → 内存红线，
+                 返回的命令字符串在这里用 textContent 原样展示。 -->
+            <div id="jvm-preview-panel" class="config-group">
+                <label>🖥️ 最终启动预览（由后端实时计算，所见即所得）</label>
+                <pre id="jvm-preview-cmd" spellcheck="false">加载中...</pre>
+                <div id="jvm-preview-note"></div>
+            </div>
+        </div>
+
+        <!-- 原始 JSON 模式 -->
+        <div id="config-raw-wrap" style="display:none;">
+            <div class="config-group">
+                <label>配置内容（wow.yaml）</label>
+                <textarea id="config-editor" spellcheck="false" style="min-height:280px;font-family:monospace;font-size:12px;"></textarea>
+            </div>
+        </div>
+
+        <div class="btn-row cfg-toolbar">
+            <button class="btn btn-success" id="save-config-btn">💾 保存配置</button>
+            <button class="btn btn-secondary" id="reload-config-btn">🔄 重新加载</button>
+            <span class="dirty-hint" id="cfg-dirty-hint"></span>
+        </div>
+        <div class="set-hint">修改后需要重启服务才能生效，部分配置项保存后立即生效。</div>
+    </div>
+
+    <!-- ===== 高级管理：插件 / 模组配置库 / 主题包（默认折叠，DOM 全保留） ===== -->
+    <details class="advanced">
+        <summary>高级管理 · 插件 / 模组配置库 / 主题包</summary>
+        <div class="settings-grid">
             <div class="settings-section">
-                <div class="title">
-                    🔌 wow 插件
-                    <span class="badge">扩展命令</span>
-                </div>
+                <div class="title">🔌 wow 插件 <span class="badge">扩展命令</span></div>
                 <div class="btn-row" style="margin-bottom:12px;">
                     <button class="btn btn-primary" id="plugin-install-btn">📦 安装插件</button>
                     <button class="btn btn-secondary" id="plugin-refresh-btn">🔄 刷新列表</button>
                 </div>
                 <input class="filter-input" id="plugin-filter" placeholder="筛选插件..." />
-                <div id="plugin-list">
-                    <div class="empty-state">加载中...</div>
-                </div>
+                <div id="plugin-list"><div class="empty-state">加载中...</div></div>
             </div>
 
-            <!-- ===== 模组配置库（表单包 Schema） ===== -->
             <div class="settings-section full">
-                <div class="title">
-                    🧩 模组配置库
-                    <span class="badge" id="schema-count">加载中...</span>
-                </div>
-                <div style="color:#667788;font-size:12px;margin-bottom:12px;line-height:1.7;">
+                <div class="title">🧩 模组配置库 <span class="badge" id="schema-count">加载中...</span></div>
+                <div class="set-note">
                     表单包决定「模组配置」页里哪些配置项能以中文表单形式编辑。官方内置若干高频模组，
                     你也可以粘贴一段 JSON 或填一个 GitHub 链接导入自己的翻译包——放在
-                    <code style="color:#8fb8d8;">custom-schemas/</code> 下，同名会覆盖官方版本。
+                    <code>custom-schemas/</code> 下，同名会覆盖官方版本。
                 </div>
                 <div class="btn-row" style="margin-bottom:12px;">
                     <button class="btn btn-primary" id="schema-import-btn">📥 导入表单包</button>
                     <button class="btn btn-secondary" id="schema-refresh-btn">🔄 刷新列表</button>
                 </div>
-                <div id="schema-list">
-                    <div class="empty-state">加载中...</div>
-                </div>
+                <div id="schema-list"><div class="empty-state">加载中...</div></div>
             </div>
 
-            <!-- ===== 主题包管理 ===== -->
             <div class="settings-section">
-                <div class="title">
-                    🎨 主题包
-                    <span class="badge">界面样式</span>
-                </div>
+                <div class="title">🎨 主题包 <span class="badge">界面样式</span></div>
                 <div class="btn-row" style="margin-bottom:12px;">
                     <button class="btn btn-primary" id="theme-install-btn">📦 安装主题</button>
                     <button class="btn btn-secondary" id="theme-refresh-btn">🔄 刷新列表</button>
                 </div>
                 <input class="filter-input" id="theme-filter" placeholder="筛选主题..." />
-                <div id="theme-list">
-                    <div class="empty-state">加载中...</div>
-                </div>
+                <div id="theme-list"><div class="empty-state">加载中...</div></div>
             </div>
-
         </div>
-    </div>
+    </details>
 
     <!-- ===== 模态框：导入表单包 ===== -->
     <div class="modal-overlay" id="schema-import-modal">
@@ -618,9 +111,7 @@
             <div class="form-group">
                 <label>方式二：从链接下载（GitHub 页面地址或 raw 直链）</label>
                 <input type="text" id="schema-import-url" placeholder="https://github.com/用户/仓库/blob/main/xxx.json" />
-                <div style="color:#667788;font-size:12px;margin-top:4px;">
-                    两种方式都填时以链接为准。导入后写入 custom-schemas/，不会改动安装目录。
-                </div>
+                <div class="set-hint">两种方式都填时以链接为准。导入后写入 custom-schemas/，不会改动安装目录。</div>
             </div>
             <div class="btn-row">
                 <button class="btn btn-modal-cancel" id="schema-import-cancel">取消</button>
@@ -636,7 +127,7 @@
             <div class="form-group">
                 <label>插件包路径或 URL</label>
                 <input type="text" id="plugin-install-source" placeholder="/path/to/plugin.zip 或 https://example.com/plugin.zip" />
-                <div style="color:#667788;font-size:12px;margin-top:4px;">支持 .zip 格式，需包含 plugin.json 和 index.js</div>
+                <div class="set-hint">支持 .zip 格式，需包含 plugin.json 和 index.js</div>
             </div>
             <div class="btn-row">
                 <button class="btn btn-modal-cancel" id="plugin-install-cancel">取消</button>
@@ -652,7 +143,7 @@
             <div class="form-group">
                 <label>主题包路径或 URL</label>
                 <input type="text" id="theme-install-source" placeholder="/path/to/theme.zip 或 https://example.com/theme.zip" />
-                <div style="color:#667788;font-size:12px;margin-top:4px;">支持 .zip 格式，需包含 theme.json</div>
+                <div class="set-hint">支持 .zip 格式，需包含 theme.json</div>
             </div>
             <div class="btn-row">
                 <button class="btn btn-modal-cancel" id="theme-install-cancel">取消</button>
@@ -661,856 +152,666 @@
         </div>
     </div>
 
-    <!-- Toast -->
     <div class="toast" id="toast"></div>
+</div>
 
-    <script>
-        (function() {
-            const token = sessionStorage.getItem('wow_token');
-            if (!token) {
-                window.location.href = '/login.html';
-                return;
+<script src="/js/auth_guard.js"></script>
+<script>
+(async function () {
+    // 登录闸门：web.require_login=false 时完全免登录
+    if (!(await wowAuthGuard())) return;
+    const token = sessionStorage.getItem('wow_token') || '';
+
+    // ==================== DOM ====================
+    const $ = (id) => document.getElementById(id);
+    const configEditor = $('config-editor');
+    const cfgFormEl = $('config-form');
+    const cfgSearchEl = $('cfg-search');
+    const cfgModeBadge = $('cfg-mode-badge');
+    const cfgFormWrap = $('config-form-wrap');
+    const cfgRawWrap = $('config-raw-wrap');
+    const toastEl = $('toast');
+
+    // ==================== 工具 ====================
+    // 全页只保留一个 HTML 转义函数（旧版有 escapeHtml / escHtml 两套，已合并）。
+    function escapeHtml(value) {
+        return String(value == null ? '' : value)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    let toastTimer = null;
+    function showToast(message, type = 'info', duration = 4000) {
+        toastEl.textContent = message;
+        toastEl.className = 'toast ' + type;
+        void toastEl.offsetWidth;
+        toastEl.classList.add('show');
+        if (toastTimer) clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => toastEl.classList.remove('show'), duration);
+    }
+
+    // ==================== API ====================
+    const authHeaders = { 'Authorization': 'Bearer ' + token };
+    async function unwrap(resp, fallback) {
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({}));
+            throw new Error(err.error || fallback);
+        }
+        return resp.json();
+    }
+    function apiGet(path) {
+        return fetch(path, { headers: authHeaders }).then(r => unwrap(r, '请求失败'));
+    }
+    function apiPost(path, body) {
+        return fetch(path, {
+            method: 'POST',
+            headers: Object.assign({ 'Content-Type': 'application/json' }, authHeaders),
+            body: JSON.stringify(body)
+        }).then(r => unwrap(r, '请求失败'));
+    }
+    function apiExec(command, args = []) {
+        return fetch('/api/exec', {
+            method: 'POST',
+            headers: Object.assign({ 'Content-Type': 'application/json' }, authHeaders),
+            body: JSON.stringify({ command, args })
+        }).then(r => unwrap(r, '命令执行失败'));
+    }
+
+    // ==================== schema 驱动的配置表单 ====================
+    // 字段定义来自 /api/config/schema；boolean → 开关，select → 下拉，
+    // number → 数字，list → 逐行 textarea，secret → 密码框，其余 → 文本。
+    // 新增的 web.require_login / log.disabled 由后端 schema 自动渲染，前端零硬编码。
+    let cfgSchema = [];
+    let cfgValues = {};   // 服务端当前值（扁平 key）
+    let cfgDirty = {};    // 本页改动（扁平 key），提交时只发这些
+    let cfgMode = 'form';
+
+    function currentValue(key) {
+        if (Object.prototype.hasOwnProperty.call(cfgDirty, key)) return cfgDirty[key];
+        return cfgValues[key];
+    }
+    function flattenAll(obj, prefix = '', out = {}) {
+        if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return out;
+        for (const [k, v] of Object.entries(obj)) {
+            const key = prefix ? prefix + '.' + k : k;
+            if (v && typeof v === 'object' && !Array.isArray(v)) flattenAll(v, key, out);
+            else out[key] = v;
+        }
+        return out;
+    }
+    function groupOrder(list) {
+        const order = [];
+        for (const f of list) {
+            const g = f.group || '其他';
+            if (!order.includes(g)) order.push(g);
+        }
+        return order;
+    }
+    function deepMerge(base, patch) {
+        for (const [k, v] of Object.entries(patch || {})) {
+            const parts = String(k).split('.');
+            let cur = base;
+            for (let i = 0; i < parts.length - 1; i++) {
+                const p = parts[i];
+                if (!cur[p] || typeof cur[p] !== 'object' || Array.isArray(cur[p])) cur[p] = {};
+                cur = cur[p];
             }
+            cur[parts[parts.length - 1]] = v;
+        }
+        return base;
+    }
 
-            // ==================== DOM ====================
-            const configEditor = document.getElementById('config-editor');
-            const saveConfigBtn = document.getElementById('save-config-btn');
-            const reloadConfigBtn = document.getElementById('reload-config-btn');
+    function switchHtml(key, checked, disabled) {
+        return `<div style="display:flex;align-items:center;">
+            <label class="cfg-switch">
+                <input type="checkbox" data-key="${escapeHtml(key)}" data-type="boolean" ${checked ? 'checked' : ''} ${disabled ? 'disabled' : ''} />
+                <span class="track"></span>
+            </label>
+            <span class="state-text">${checked ? '开启' : '关闭'}</span>
+        </div>`;
+    }
 
-            // 模组配置库（表单包）
-            const schemaList = document.getElementById('schema-list');
-            const schemaCount = document.getElementById('schema-count');
-            const schemaImportBtn = document.getElementById('schema-import-btn');
-            const schemaRefreshBtn = document.getElementById('schema-refresh-btn');
-            const schemaImportModal = document.getElementById('schema-import-modal');
-            const schemaImportJson = document.getElementById('schema-import-json');
-            const schemaImportUrl = document.getElementById('schema-import-url');
-            const schemaImportConfirm = document.getElementById('schema-import-confirm');
-            const schemaImportCancel = document.getElementById('schema-import-cancel');
+    function controlHtml(field) {
+        const key = field.key;
+        const raw = currentValue(key);
+        const disabled = !!field.readOnly;
+        const ph = field.placeholder ? ` placeholder="${escapeHtml(field.placeholder)}"` : '';
+        const disAttr = disabled ? ' disabled' : '';
 
-            const pluginList = document.getElementById('plugin-list');
-            const pluginFilter = document.getElementById('plugin-filter');
-            const pluginInstallBtn = document.getElementById('plugin-install-btn');
-            const pluginRefreshBtn = document.getElementById('plugin-refresh-btn');
-            const pluginInstallModal = document.getElementById('plugin-install-modal');
-            const pluginInstallSource = document.getElementById('plugin-install-source');
-            const pluginInstallConfirm = document.getElementById('plugin-install-confirm');
-            const pluginInstallCancel = document.getElementById('plugin-install-cancel');
-
-            const themeList = document.getElementById('theme-list');
-            const themeFilter = document.getElementById('theme-filter');
-            const themeInstallBtn = document.getElementById('theme-install-btn');
-            const themeRefreshBtn = document.getElementById('theme-refresh-btn');
-            const themeInstallModal = document.getElementById('theme-install-modal');
-            const themeInstallSource = document.getElementById('theme-install-source');
-            const themeInstallConfirm = document.getElementById('theme-install-confirm');
-            const themeInstallCancel = document.getElementById('theme-install-cancel');
-
-            const toastEl = document.getElementById('toast');
-            // ==================== Toast ====================
-            let toastTimer = null;
-            function showToast(message, type = 'info', duration = 4000) {
-                toastEl.textContent = message;
-                toastEl.className = 'toast ' + type;
-                void toastEl.offsetWidth;
-                toastEl.classList.add('show');
-                if (toastTimer) clearTimeout(toastTimer);
-                toastTimer = setTimeout(() => {
-                    toastEl.classList.remove('show');
-                }, duration);
+        if (field.type === 'boolean') {
+            const v = raw === true || raw === 'true' || raw === 1 || raw === '1';
+            return switchHtml(key, v, disabled);
+        }
+        if (field.type === 'select') {
+            const v = raw === null || raw === undefined ? '' : String(raw);
+            let opts = '';
+            for (const o of (field.options || [])) {
+                const val = typeof o === 'object' ? o.value : o;
+                const lab = typeof o === 'object' ? (o.label || o.value) : o;
+                opts += `<option value="${escapeHtml(String(val))}" ${String(val) === v ? 'selected' : ''}>${escapeHtml(String(lab))}</option>`;
             }
+            if (v === '' || !(field.options || []).some(o => String(typeof o === 'object' ? o.value : o) === v)) {
+                opts = `<option value="" selected>（未设置，使用默认值）</option>` + opts;
+            }
+            return `<select class="cfg-select" data-key="${escapeHtml(key)}" data-type="select"${disAttr}>${opts}</select>`;
+        }
+        if (field.type === 'number') {
+            const v = raw === null || raw === undefined ? '' : raw;
+            return `<input class="cfg-input" type="number" min="0" step="1" data-key="${escapeHtml(key)}" data-type="number" value="${escapeHtml(String(v))}"${ph}${disAttr} />`;
+        }
+        if (field.type === 'list') {
+            let v = '';
+            if (Array.isArray(raw)) v = raw.join('\n');
+            else if (raw !== null && raw !== undefined) v = String(raw);
+            return `<textarea class="cfg-textarea" data-key="${escapeHtml(key)}" data-type="list"${ph}${disAttr}>${escapeHtml(v)}</textarea>
+                <div class="cfg-desc" style="margin-top:4px;">每行一个值；留空表示不使用</div>`;
+        }
+        if (field.type === 'secret') {
+            const has = field.hasValue === true;
+            return `<input class="cfg-input" type="password" autocomplete="new-password"
+                data-key="${escapeHtml(key)}" data-type="secret"
+                placeholder="${has ? '已设置（留空则不修改）' : '未设置'}"${disAttr} />`;
+        }
+        const v = raw === null || raw === undefined ? '' : raw;
+        return `<input class="cfg-input" type="text" data-key="${escapeHtml(key)}" data-type="string" value="${escapeHtml(String(v))}"${ph}${disAttr} />`;
+    }
 
-            // ==================== API ====================
-            async function apiGet(path) {
-                const resp = await fetch(path, {
-                    headers: { 'Authorization': 'Bearer ' + token }
+    function fieldRowHtml(field) {
+        const dirty = Object.prototype.hasOwnProperty.call(cfgDirty, field.key);
+        const cls = ['cfg-row'];
+        if (field.danger) cls.push('danger-row');
+        if (dirty) cls.push('is-dirty');
+        const desc = escapeHtml(field.desc || '');
+        const warn = field.danger
+            ? '<span class="warn">⚠️ 改错会导致启动器异常，请确认后再改。</span>' : '';
+        return `<div class="${cls.join(' ')}" data-row="${escapeHtml(field.key)}">
+            <div class="cfg-label">
+                <div class="name">${escapeHtml(field.label || field.key)}${dirty ? ' <span style="color:#66bb6a;">●</span>' : ''}</div>
+                <div class="key">${escapeHtml(field.key)}</div>
+            </div>
+            <div class="cfg-control">
+                ${controlHtml(field)}
+                ${desc ? `<div class="cfg-desc">${desc}${warn ? '<br>' + warn : ''}</div>` : ''}
+            </div>
+        </div>`;
+    }
+
+    function renderConfigForm() {
+        if (!cfgSchema.length) {
+            cfgFormEl.innerHTML = '<div class="empty-state" style="color:#f44336;">配置结构加载失败，请切到「原始 JSON」模式手动编辑</div>';
+            return;
+        }
+        const kw = (cfgSearchEl.value || '').trim().toLowerCase();
+        const match = (f) => !kw
+            || f.key.toLowerCase().includes(kw)
+            || String(f.label || '').toLowerCase().includes(kw)
+            || String(f.desc || '').toLowerCase().includes(kw);
+
+        const visible = cfgSchema.filter(f => !f.advanced && match(f));
+        const advanced = cfgSchema.filter(f => f.advanced && match(f));
+
+        let html = '';
+        for (const g of groupOrder(visible)) {
+            html += `<div class="cfg-group-title">${escapeHtml(g)}</div>`;
+            for (const f of visible.filter(x => (x.group || '其他') === g)) html += fieldRowHtml(f);
+        }
+        if (advanced.length) {
+            html += `<details class="cfg-details"${kw ? ' open' : ''}>
+                <summary>高级选项（${advanced.length} 项，非必要请勿修改）</summary>`;
+            for (const g of groupOrder(advanced)) {
+                html += `<div class="cfg-group-title">${escapeHtml(g)}</div>`;
+                for (const f of advanced.filter(x => (x.group || '其他') === g)) html += fieldRowHtml(f);
+            }
+            html += '</details>';
+        }
+        if (!visible.length && !advanced.length) {
+            html = `<div class="empty-state">没有匹配「${escapeHtml(kw)}」的配置项</div>`;
+        }
+        cfgFormEl.innerHTML = html;
+        bindFormEvents();
+    }
+
+    function bindFormEvents() {
+        cfgFormEl.querySelectorAll('[data-key]').forEach(el => {
+            const key = el.dataset.key;
+            const type = el.dataset.type;
+            if (type === 'boolean') {
+                el.addEventListener('change', () => {
+                    cfgDirty[key] = el.checked;
+                    const txt = el.closest('.cfg-switch').parentElement.querySelector('.state-text');
+                    if (txt) txt.textContent = el.checked ? '开启' : '关闭';
+                    markDirtyRow(key);
                 });
-                if (!resp.ok) {
-                    const err = await resp.json();
-                    throw new Error(err.error || '请求失败');
-                }
-                return await resp.json();
-            }
-
-            async function apiPost(path, body) {
-                const resp = await fetch(path, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': 'Bearer ' + token
-                    },
-                    body: JSON.stringify(body)
+            } else if (type === 'secret') {
+                el.addEventListener('input', () => {
+                    if (el.value === '') delete cfgDirty[key];
+                    else cfgDirty[key] = el.value;
+                    markDirtyRow(key);
                 });
-                if (!resp.ok) {
-                    const err = await resp.json();
-                    throw new Error(err.error || '请求失败');
-                }
-                return await resp.json();
-            }
-
-            async function apiExec(command, args = []) {
-                const resp = await fetch('/api/exec', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': 'Bearer ' + token
-                    },
-                    body: JSON.stringify({ command, args })
+            } else {
+                el.addEventListener('input', () => {
+                    if (type === 'number') cfgDirty[key] = el.value === '' ? null : Number(el.value);
+                    else if (type === 'list') cfgDirty[key] = el.value.split('\n').map(x => x.trim()).filter(Boolean);
+                    else cfgDirty[key] = el.value === '' ? null : el.value;
+                    markDirtyRow(key);
                 });
-                if (!resp.ok) {
-                    const err = await resp.json();
-                    throw new Error(err.error || '命令执行失败');
-                }
-                return await resp.json();
-            }
-
-            // ==================== 配置视图（表单 / 原始 JSON） ====================
-            // V3.5.19：不再只给一个纯文本框。
-            //   - 从 /api/config/schema 读字段定义（类型 / 中文名 / 说明 / 枚举 / 危险标记）
-            //   - boolean → Switch，select → 下拉，number → 数字输入，list → 逐行 textarea
-            //   - 每项下方固定显示中文说明，防止小白把 key 改成别的东西
-            //   - 原始 JSON 模式保留，供高级用户直接编辑
-            let cfgSchema = [];
-            let cfgValues = {};       // 服务端当前值（扁平 key）
-            let cfgDirty = {};        // 本页改动（扁平 key），提交时只发这些
-            let cfgMode = 'form';
-
-            const cfgFormEl = document.getElementById('config-form');
-            const cfgSearchEl = document.getElementById('cfg-search');
-            const cfgModeBadge = document.getElementById('cfg-mode-badge');
-            const cfgFormWrap = document.getElementById('config-form-wrap');
-            const cfgRawWrap = document.getElementById('config-raw-wrap');
-
-            /** 按 key 取当前生效值：改动优先，其次服务端值 */
-            function currentValue(key) {
-                if (Object.prototype.hasOwnProperty.call(cfgDirty, key)) return cfgDirty[key];
-                return cfgValues[key];
-            }
-
-            function readByPath(obj, key) {
-                const parts = String(key).split('.');
-                let cur = obj;
-                for (const p of parts) {
-                    if (cur === null || cur === undefined || typeof cur !== 'object') return undefined;
-                    cur = cur[p];
-                }
-                return cur;
-            }
-
-            /** 把嵌套配置摊平成 { 'a.b': v } */
-            function flattenAll(obj, prefix = '', out = {}) {
-                if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return out;
-                for (const [k, v] of Object.entries(obj)) {
-                    const key = prefix ? prefix + '.' + k : k;
-                    if (v && typeof v === 'object' && !Array.isArray(v)) flattenAll(v, key, out);
-                    else out[key] = v;
-                }
-                return out;
-            }
-
-            function groupOrder(list) {
-                // 按 schema 中首次出现的顺序排列分组，保证「服务器」永远在最上面
-                const order = [];
-                for (const f of list) {
-                    const g = f.group || '其他';
-                    if (!order.includes(g)) order.push(g);
-                }
-                return order;
-            }
-
-            function switchHtml(key, checked, disabled) {
-                return `<div style="display:flex;align-items:center;">
-                    <label class="cfg-switch">
-                        <input type="checkbox" data-key="${escapeHtml(key)}" data-type="boolean" ${checked ? 'checked' : ''} ${disabled ? 'disabled' : ''} />
-                        <span class="track"></span>
-                    </label>
-                    <span class="state-text">${checked ? '开启' : '关闭'}</span>
-                </div>`;
-            }
-
-            function controlHtml(field) {
-                const key = field.key;
-                const raw = currentValue(key);
-                const disabled = !!field.readOnly;
-                const ph = field.placeholder ? ` placeholder="${escapeHtml(field.placeholder)}"` : '';
-                const disAttr = disabled ? ' disabled' : '';
-
-                if (field.type === 'boolean') {
-                    const v = raw === true || raw === 'true' || raw === 1 || raw === '1';
-                    return switchHtml(key, v, disabled);
-                }
-
-                if (field.type === 'select') {
-                    const v = raw === null || raw === undefined ? '' : String(raw);
-                    let opts = '';
-                    for (const o of (field.options || [])) {
-                        const val = typeof o === 'object' ? o.value : o;
-                        const lab = typeof o === 'object' ? (o.label || o.value) : o;
-                        opts += `<option value="${escapeHtml(String(val))}" ${String(val) === v ? 'selected' : ''}>${escapeHtml(String(lab))}</option>`;
-                    }
-                    if (v === '' || !field.options.some(o => String(typeof o === 'object' ? o.value : o) === v)) {
-                        opts = `<option value="" selected>（未设置，使用默认值）</option>` + opts;
-                    }
-                    return `<select class="cfg-select" data-key="${key}" data-type="select"${disAttr}>${opts}</select>`;
-                }
-
-                if (field.type === 'number') {
-                    const v = raw === null || raw === undefined ? '' : raw;
-                    return `<input class="cfg-input" type="number" min="0" step="1" data-key="${key}" data-type="number" value="${escapeHtml(String(v))}"${ph}${disAttr} />`;
-                }
-
-                if (field.type === 'list') {
-                    let v = '';
-                    if (Array.isArray(raw)) v = raw.join('\n');
-                    else if (raw !== null && raw !== undefined) v = String(raw);
-                    return `<textarea class="cfg-textarea" data-key="${key}" data-type="list"${ph}${disAttr}>${escapeHtml(v)}</textarea>
-                        <div class="cfg-desc" style="margin-top:4px;color:#4a5c72;">每行一个值；留空表示不使用</div>`;
-                }
-
-                if (field.type === 'secret') {
-                    // secret 只回传是否已设置，不回传明文（见 /api/config/schema 的 hasValue）
-                    const has = field.hasValue === true;
-                    return `<input class="cfg-input" type="password" autocomplete="new-password"
-                        data-key="${key}" data-type="secret"
-                        placeholder="${has ? '已设置（留空则不修改）' : '未设置'}"${disAttr} />`;
-                }
-
-                const v = raw === null || raw === undefined ? '' : raw;
-                return `<input class="cfg-input" type="text" data-key="${key}" data-type="string" value="${escapeHtml(String(v))}"${ph}${disAttr} />`;
-            }
-
-            function fieldRowHtml(field) {
-                const dirty = Object.prototype.hasOwnProperty.call(cfgDirty, field.key);
-                const cls = ['cfg-row'];
-                if (field.danger) cls.push('danger-row');
-                if (dirty) cls.push('is-dirty');
-                const desc = escapeHtml(field.desc || '');
-                const warn = field.danger ? '<span class="warn">⚠️ 改错会导致启动器异常，请确认后再改。</span>' : '';
-                return `<div class="${cls.join(' ')}" data-row="${field.key}">
-                    <div class="cfg-label">
-                        <div class="name">${escapeHtml(field.label || field.key)}${dirty ? ' <span style="color:#66bb6a;">●</span>' : ''}</div>
-                        <div class="key">${escapeHtml(field.key)}</div>
-                    </div>
-                    <div class="cfg-control">
-                        ${controlHtml(field)}
-                        ${desc ? `<div class="cfg-desc">${desc}${warn ? '<br>' + warn : ''}</div>` : ''}
-                    </div>
-                </div>`;
-            }
-
-            function renderConfigForm() {
-                if (!cfgSchema.length) {
-                    cfgFormEl.innerHTML = `<div class="empty-state" style="color:#f44336;">配置结构加载失败，请切到「原始 JSON」模式手动编辑</div>`;
-                    return;
-                }
-                const kw = (cfgSearchEl.value || '').trim().toLowerCase();
-                const match = (f) => {
-                    if (!kw) return true;
-                    return f.key.toLowerCase().includes(kw)
-                        || String(f.label || '').toLowerCase().includes(kw)
-                        || String(f.desc || '').toLowerCase().includes(kw);
-                };
-
-                const visible = cfgSchema.filter(f => !f.advanced && match(f));
-                const advanced = cfgSchema.filter(f => f.advanced && match(f));
-
-                let html = '';
-                for (const g of groupOrder(visible)) {
-                    html += `<div class="cfg-group-title">${escapeHtml(g)}</div>`;
-                    for (const f of visible.filter(x => (x.group || '其他') === g)) {
-                        html += fieldRowHtml(f);
-                    }
-                }
-
-                if (advanced.length) {
-                    const open = kw ? ' open' : '';
-                    html += `<details class="cfg-details"${open}>
-                        <summary>高级选项（${advanced.length} 项，非必要请勿修改）</summary>`;
-                    for (const g of groupOrder(advanced)) {
-                        html += `<div class="cfg-group-title">${escapeHtml(g)}</div>`;
-                        for (const f of advanced.filter(x => (x.group || '其他') === g)) {
-                            html += fieldRowHtml(f);
-                        }
-                    }
-                    html += `</details>`;
-                }
-
-                if (!visible.length && !advanced.length) {
-                    html = `<div class="empty-state">没有匹配「${escapeHtml(kw)}」的配置项</div>`;
-                }
-
-                cfgFormEl.innerHTML = html;
-                bindFormEvents();
-            }
-
-            function bindFormEvents() {
-                cfgFormEl.querySelectorAll('[data-key]').forEach(el => {
-                    const key = el.dataset.key;
-                    const type = el.dataset.type;
-                    if (type === 'boolean') {
-                        el.addEventListener('change', () => {
-                            cfgDirty[key] = el.checked;
-                            const txt = el.closest('.cfg-switch').parentElement.querySelector('.state-text');
-                            if (txt) txt.textContent = el.checked ? '开启' : '关闭';
-                            markDirtyRow(key);
-                        });
-                    } else if (type === 'secret') {
-                        el.addEventListener('input', () => {
-                            if (el.value === '') delete cfgDirty[key];
-                            else cfgDirty[key] = el.value;
-                            markDirtyRow(key);
-                        });
-                    } else {
-                        el.addEventListener('input', () => {
-                            if (type === 'number') {
-                                cfgDirty[key] = el.value === '' ? null : Number(el.value);
-                            } else if (type === 'list') {
-                                const arr = el.value.split('\n').map(x => x.trim()).filter(Boolean);
-                                cfgDirty[key] = arr;
-                            } else {
-                                cfgDirty[key] = el.value === '' ? null : el.value;
-                            }
-                            markDirtyRow(key);
-                        });
-                        el.addEventListener('change', () => {
-                            if (type === 'select') {
-                                cfgDirty[key] = el.value === '' ? null : el.value;
-                                markDirtyRow(key);
-                            }
-                        });
+                el.addEventListener('change', () => {
+                    if (type === 'select') {
+                        cfgDirty[key] = el.value === '' ? null : el.value;
+                        markDirtyRow(key);
                     }
                 });
             }
+        });
+    }
 
-            function markDirtyRow(key) {
-                const row = cfgFormEl.querySelector(`[data-row="${CSS.escape(key)}"]`);
-                if (row) row.classList.add('is-dirty');
-                updateDirtyHint();
-                // V3.6.2（607 指令五）：JVM 模板 / 覆盖参数变动 → 防抖刷新最终启动预览
-                if (key === 'server.jvm.template' || key === 'server.jvm.override_args') {
-                    scheduleJvmPreview();
-                }
-            }
+    function markDirtyRow(key) {
+        const row = cfgFormEl.querySelector(`[data-row="${CSS.escape(key)}"]`);
+        if (row) row.classList.add('is-dirty');
+        updateDirtyHint();
+        // JVM 模板 / 覆盖参数变动 → 防抖刷新最终启动预览
+        if (key === 'server.jvm.template' || key === 'server.jvm.override_args') scheduleJvmPreview();
+    }
 
-            // ==================== 最终启动预览（607 指令五） ====================
-            // 前端零拼接逻辑：把（可能未保存的）表单值原样交给后端，
-            // 由后端走完整链路后返回最终命令字符串，这里只负责展示。
-            let jvmPreviewTimer = null;
-            let jvmPreviewSeq = 0;
+    // ==================== 最终启动预览（前端零拼接） ====================
+    let jvmPreviewTimer = null;
+    let jvmPreviewSeq = 0;
 
-            function scheduleJvmPreview() {
-                clearTimeout(jvmPreviewTimer);
-                jvmPreviewTimer = setTimeout(refreshJvmPreview, 500);
-            }
+    function scheduleJvmPreview() {
+        clearTimeout(jvmPreviewTimer);
+        jvmPreviewTimer = setTimeout(refreshJvmPreview, 500);
+    }
 
-            async function refreshJvmPreview() {
-                const seq = ++jvmPreviewSeq;
-                const cmdEl = document.getElementById('jvm-preview-cmd');
-                const noteEl = document.getElementById('jvm-preview-note');
-                if (!cmdEl) return;
-                try {
-                    const template = currentValue('server.jvm.template') || 'g1';
-                    const override = currentValue('server.jvm.override_args');
-                    // Web 端传参规范：直接传 JSON 数组，不传拼接后的长字符串
-                    const r = await apiPost('/api/config/preview-jvm', {
-                        template,
-                        override_args: Array.isArray(override) ? override : []
-                    });
-                    if (seq !== jvmPreviewSeq) return;   // 过期响应（连打时只显示最后一次）
-                    if (!r.success) throw new Error(r.error || '预览失败');
-                    cmdEl.textContent = r.command;        // 原样展示，textContent 防注入
-                    if (noteEl) {
-                        const tips = [];
-                        if (r.memory && r.memory.over_limit) tips.push(r.memory.message);
-                        if (r.removed && r.removed.length) tips.push('已自动移除冲突/禁用参数: ' + r.removed.join(' '));
-                        if (r.injected && r.injected.length) tips.push('已自动注入兜底参数: ' + r.injected.join(' '));
-                        (r.warnings || []).forEach(w => tips.push(w));
-                        noteEl.textContent = tips.join('\n');
-                        noteEl.style.display = tips.length ? 'block' : 'none';
-                        noteEl.style.whiteSpace = 'pre-line';
-                    }
-                } catch (e) {
-                    if (seq !== jvmPreviewSeq) return;
-                    cmdEl.textContent = '预览暂不可用: ' + e.message;
-                }
-            }
-
-            function updateDirtyHint() {
-                const n = Object.keys(cfgDirty).length;
-                const hint = document.getElementById('cfg-dirty-hint');
-                if (hint) {
-                    hint.textContent = n ? `有 ${n} 项未保存的修改` : '';
-                }
-            }
-
-            async function loadConfig() {
-                // 1) 取字段定义（只取一次）
-                if (!cfgSchema.length) {
-                    try {
-                        const schema = await apiGet('/api/config/schema');
-                        cfgSchema = Array.isArray(schema.fields) ? schema.fields : (Array.isArray(schema) ? schema : []);
-                    } catch (e) {
-                        cfgSchema = [];
-                    }
-                }
-
-                // 2) 取当前配置
-                try {
-                    const data = await apiGet('/api/config');
-                    cfgValues = flattenAll(data && data.config ? data.config : data);
-                    configEditor.value = JSON.stringify(data && data.config ? data.config : data, null, 2);
-                } catch (e) {
-                    cfgValues = {};
-                    configEditor.value = '加载失败: ' + e.message;
-                }
-
-                cfgDirty = {};
-                updateDirtyHint();
-                renderConfigForm();
-                // V3.6.2（607 指令五）：表单就绪后立即出一份「最终启动预览」
-                refreshJvmPreview();
-            }
-
-            function setMode(mode) {
-                cfgMode = mode === 'raw' ? 'raw' : 'form';
-                cfgFormWrap.style.display = cfgMode === 'form' ? 'block' : 'none';
-                cfgRawWrap.style.display = cfgMode === 'raw' ? 'block' : 'none';
-                cfgModeBadge.textContent = cfgMode === 'form' ? '表单模式' : '原始 JSON';
-                document.getElementById('mode-form-btn').classList.toggle('active', cfgMode === 'form');
-                document.getElementById('mode-raw-btn').classList.toggle('active', cfgMode === 'raw');
-                if (cfgMode === 'raw') {
-                    // 进原始模式时，把表单里的改动同步进 JSON，避免两处不一致
-                    const merged = deepMerge(structuredCloneSafe(cfgValues), cfgDirty);
-                    configEditor.value = JSON.stringify(merged, null, 2);
-                } else {
-                    renderConfigForm();
-                }
-            }
-
-            function structuredCloneSafe(obj) {
-                try { return JSON.parse(JSON.stringify(obj || {})); } catch (e) { return {}; }
-            }
-
-            function deepMerge(base, patch) {
-                for (const [k, v] of Object.entries(patch || {})) {
-                    const parts = String(k).split('.');
-                    let cur = base;
-                    for (let i = 0; i < parts.length - 1; i++) {
-                        const p = parts[i];
-                        if (!cur[p] || typeof cur[p] !== 'object' || Array.isArray(cur[p])) cur[p] = {};
-                        cur = cur[p];
-                    }
-                    cur[parts[parts.length - 1]] = v;
-                }
-                return base;
-            }
-
-            async function saveConfig() {
-                if (cfgMode === 'raw') {
-                    let config;
-                    try {
-                        config = JSON.parse(configEditor.value);
-                    } catch (e) {
-                        showToast('JSON 格式错误: ' + e.message, 'error');
-                        return;
-                    }
-                    try {
-                        const r = await apiPost('/api/config', config);
-                        const skipped = (r && r.skipped && r.skipped.length)
-                            ? `（忽略未知项: ${r.skipped.join(', ')}）` : '';
-                        showToast('配置已保存' + skipped, 'success');
-                        await loadConfig();
-                    } catch (e) {
-                        showToast('保存失败: ' + e.message, 'error');
-                    }
-                    return;
-                }
-
-                // 表单模式：只提交改动项
-                const patch = {};
-                for (const [k, v] of Object.entries(cfgDirty)) patch[k] = v;
-                if (!Object.keys(patch).length) {
-                    showToast('没有需要保存的修改', 'info');
-                    return;
-                }
-
-                // 危险项二次确认
-                const dangerKeys = cfgSchema.filter(f => f.danger && Object.prototype.hasOwnProperty.call(patch, f.key));
-                if (dangerKeys.length) {
-                    const names = dangerKeys.map(f => f.label || f.key).join('、');
-                    if (!confirm(`以下项标记为危险配置：\n  ${names}\n\n改错可能导致启动器无法启动，确认保存？`)) {
-                        return;
-                    }
-                }
-
-                try {
-                    const r = await apiPost('/api/config/batch', { patch });
-                    const skipped = (r && r.skipped && r.skipped.length)
-                        ? `，忽略 ${r.skipped.length} 个未知项` : '';
-                    showToast(`已保存 ${r.applied !== undefined ? r.applied : Object.keys(patch).length} 项配置${skipped}`, 'success');
-                    await loadConfig();
-                } catch (e) {
-                    showToast('保存失败: ' + e.message, 'error');
-                }
-            }
-
-            // ==================== 插件管理 ====================
-            async function loadPlugins(filter = '') {
-                try {
-                    const data = await apiGet('/api/plugins');
-                    let plugins = data.plugins || [];
-                    if (filter) {
-                        const lower = filter.toLowerCase();
-                        plugins = plugins.filter(p =>
-                            p.name.toLowerCase().includes(lower) ||
-                            p.author.toLowerCase().includes(lower)
-                        );
-                    }
-                    if (plugins.length === 0) {
-                        pluginList.innerHTML = `<div class="empty-state">暂无插件</div>`;
-                        return;
-                    }
-                    let html = '';
-                    for (const p of plugins) {
-                        const status = p.active ? '已加载' : '未加载';
-                        html += `<div class="plugin-item">
-                            <div class="info">
-                                <span class="name">${escapeHtml(p.name)}</span>
-                                <span class="meta">作者: ${escapeHtml(p.author)} v${escapeHtml(p.version)}</span>
-                                <span class="meta" style="color:${p.active ? '#4CAF50' : '#667788'};">${status}</span>
-                            </div>
-                            <div class="actions">
-                                <button class="btn-sm ${p.active ? 'inactive' : 'active'}" data-action="toggle" data-name="${escapeHtml(p.name)}">${p.active ? '禁用' : '启用'}</button>
-                                <button class="btn-sm danger" data-action="delete" data-name="${escapeHtml(p.name)}">删除</button>
-                            </div>
-                        </div>`;
-                    }
-                    pluginList.innerHTML = html;
-                    // 绑定事件
-                    pluginList.querySelectorAll('[data-action]').forEach(el => {
-                        el.addEventListener('click', async () => {
-                            const action = el.dataset.action;
-                            const name = el.dataset.name;
-                            await handlePluginAction(action, name);
-                        });
-                    });
-                } catch (e) {
-                    pluginList.innerHTML = `<div class="empty-state" style="color:#f44336;">加载失败: ${escapeHtml(e.message)}</div>`;
-                }
-            }
-
-            async function handlePluginAction(action, name) {
-                try {
-                    if (action === 'delete') {
-                        if (!confirm(`确定要删除插件 "${name}" 吗？`)) return;
-                        await apiExec('plugin remove', [name]);
-                        showToast(`插件 ${name} 已删除`, 'success');
-                        loadPlugins(pluginFilter.value);
-                    } else if (action === 'toggle') {
-                        // 实际上 plugin toggle 未实现，用 install 替代？这里做占位
-                        showToast(`暂不支持切换插件状态，请使用 wow plugin 命令`, 'warning');
-                    }
-                } catch (e) {
-                    showToast('操作失败: ' + e.message, 'error');
-                }
-            }
-
-            async function installPlugin() {
-                const source = pluginInstallSource.value.trim();
-                if (!source) {
-                    showToast('请输入插件包路径或 URL', 'warning');
-                    return;
-                }
-                pluginInstallConfirm.disabled = true;
-                try {
-                    await apiExec('plugin install', [source]);
-                    showToast('插件安装成功', 'success');
-                    pluginInstallModal.classList.remove('active');
-                    pluginInstallSource.value = '';
-                    loadPlugins(pluginFilter.value);
-                } catch (e) {
-                    showToast('安装失败: ' + e.message, 'error');
-                } finally {
-                    pluginInstallConfirm.disabled = false;
-                }
-            }
-
-            // ==================== 主题管理 ====================
-            async function loadThemes(filter = '') {
-                try {
-                    const data = await apiGet('/api/themes');
-                    let themes = data.themes || [];
-                    const current = data.current || 'default';
-                    if (filter) {
-                        const lower = filter.toLowerCase();
-                        themes = themes.filter(t =>
-                            t.name.toLowerCase().includes(lower) ||
-                            t.author.toLowerCase().includes(lower)
-                        );
-                    }
-                    if (themes.length === 0) {
-                        themeList.innerHTML = `<div class="empty-state">暂无主题</div>`;
-                        return;
-                    }
-                    let html = '';
-                    for (const t of themes) {
-                        const isActive = t.name === current;
-                        html += `<div class="theme-item">
-                            <div class="info">
-                                <span class="name">${escapeHtml(t.name)} ${isActive ? '⭐' : ''}</span>
-                                <span class="meta">作者: ${escapeHtml(t.author)} v${escapeHtml(t.version)}</span>
-                                <span class="meta">${escapeHtml(t.description)}</span>
-                            </div>
-                            <div class="actions">
-                                ${!isActive ? `<button class="btn-sm active" data-action="switch" data-name="${escapeHtml(t.name)}">切换</button>` : ''}
-                                ${t.name !== 'default' ? `<button class="btn-sm danger" data-action="delete" data-name="${escapeHtml(t.name)}">删除</button>` : ''}
-                            </div>
-                        </div>`;
-                    }
-                    themeList.innerHTML = html;
-                    themeList.querySelectorAll('[data-action]').forEach(el => {
-                        el.addEventListener('click', async () => {
-                            const action = el.dataset.action;
-                            const name = el.dataset.name;
-                            await handleThemeAction(action, name);
-                        });
-                    });
-                } catch (e) {
-                    themeList.innerHTML = `<div class="empty-state" style="color:#f44336;">加载失败: ${escapeHtml(e.message)}</div>`;
-                }
-            }
-
-            async function handleThemeAction(action, name) {
-                try {
-                    if (action === 'delete') {
-                        if (!confirm(`确定要删除主题 "${name}" 吗？`)) return;
-                        await apiExec('theme delete', [name]);
-                        showToast(`主题 ${name} 已删除`, 'success');
-                        loadThemes(themeFilter.value);
-                    } else if (action === 'switch') {
-                        await apiExec('theme switch', [name]);
-                        showToast(`已切换到主题: ${name}，请刷新页面查看效果`, 'success');
-                        loadThemes(themeFilter.value);
-                    }
-                } catch (e) {
-                    showToast('操作失败: ' + e.message, 'error');
-                }
-            }
-
-            async function installTheme() {
-                const source = themeInstallSource.value.trim();
-                if (!source) {
-                    showToast('请输入主题包路径或 URL', 'warning');
-                    return;
-                }
-                themeInstallConfirm.disabled = true;
-                try {
-                    await apiExec('theme install', [source]);
-                    showToast('主题安装成功', 'success');
-                    themeInstallModal.classList.remove('active');
-                    themeInstallSource.value = '';
-                    loadThemes(themeFilter.value);
-                } catch (e) {
-                    showToast('安装失败: ' + e.message, 'error');
-                } finally {
-                    themeInstallConfirm.disabled = false;
-                }
-            }
-
-            function escapeHtml(text) {
-                if (!text) return '';
-                const div = document.createElement('div');
-                div.textContent = text;
-                return div.innerHTML;
-            }
-
-            // ==================== 事件绑定 ====================
-            saveConfigBtn.addEventListener('click', saveConfig);
-            reloadConfigBtn.addEventListener('click', () => {
-                if (Object.keys(cfgDirty).length && !confirm('有未保存的修改，重新加载会丢弃它们，继续？')) return;
-                loadConfig();
+    async function refreshJvmPreview() {
+        const seq = ++jvmPreviewSeq;
+        const cmdEl = $('jvm-preview-cmd');
+        const noteEl = $('jvm-preview-note');
+        if (!cmdEl) return;
+        try {
+            // 空 template 由后端 buildJvmArgs 回退默认档位；前端不做任何拼接。
+            const template = currentValue('server.jvm.template') || '';
+            const override = currentValue('server.jvm.override_args');
+            const r = await apiPost('/api/config/preview-jvm', {
+                template,
+                override_args: Array.isArray(override) ? override : []
             });
-
-            // 表单 / 原始 JSON 切换
-            document.getElementById('mode-form-btn').addEventListener('click', () => setMode('form'));
-            document.getElementById('mode-raw-btn').addEventListener('click', () => setMode('raw'));
-            cfgSearchEl.addEventListener('input', () => renderConfigForm());
-
-            // 有未保存改动时离开页面给个提醒
-            window.addEventListener('beforeunload', (e) => {
-                if (cfgMode === 'form' && Object.keys(cfgDirty).length) {
-                    e.preventDefault();
-                    e.returnValue = '';
-                }
-            });
-
-            // 插件
-            pluginInstallBtn.addEventListener('click', () => {
-                pluginInstallModal.classList.add('active');
-                pluginInstallSource.focus();
-            });
-            pluginInstallCancel.addEventListener('click', () => {
-                pluginInstallModal.classList.remove('active');
-                pluginInstallSource.value = '';
-            });
-            pluginInstallConfirm.addEventListener('click', installPlugin);
-            pluginInstallModal.addEventListener('click', (e) => {
-                if (e.target === pluginInstallModal) {
-                    pluginInstallModal.classList.remove('active');
-                    pluginInstallSource.value = '';
-                }
-            });
-            pluginInstallSource.addEventListener('keydown', (e) => {
-                if (e.key === 'Enter') installPlugin();
-            });
-            pluginRefreshBtn.addEventListener('click', () => loadPlugins(pluginFilter.value));
-            pluginFilter.addEventListener('input', () => loadPlugins(pluginFilter.value));
-
-            // 主题
-            themeInstallBtn.addEventListener('click', () => {
-                themeInstallModal.classList.add('active');
-                themeInstallSource.focus();
-            });
-            themeInstallCancel.addEventListener('click', () => {
-                themeInstallModal.classList.remove('active');
-                themeInstallSource.value = '';
-            });
-            themeInstallConfirm.addEventListener('click', installTheme);
-            themeInstallModal.addEventListener('click', (e) => {
-                if (e.target === themeInstallModal) {
-                    themeInstallModal.classList.remove('active');
-                    themeInstallSource.value = '';
-                }
-            });
-            themeInstallSource.addEventListener('keydown', (e) => {
-                if (e.key === 'Enter') installTheme();
-            });
-            themeRefreshBtn.addEventListener('click', () => loadThemes(themeFilter.value));
-            themeFilter.addEventListener('input', () => loadThemes(themeFilter.value));
-
-            // ==================== 模组配置库（表单包） ====================
-            function escHtml(s) {
-                return String(s == null ? '' : s)
-                    .replace(/&/g, '&amp;').replace(/</g, '&lt;')
-                    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+            if (seq !== jvmPreviewSeq) return;   // 过期响应只显示最后一次
+            if (!r.success) throw new Error(r.error || '预览失败');
+            cmdEl.textContent = r.command;        // 原样展示，textContent 防注入
+            if (noteEl) {
+                const tips = [];
+                if (r.memory && r.memory.over_limit) tips.push(r.memory.message);
+                if (r.removed && r.removed.length) tips.push('已自动移除冲突/禁用参数: ' + r.removed.join(' '));
+                if (r.injected && r.injected.length) tips.push('已自动注入兜底参数: ' + r.injected.join(' '));
+                (r.warnings || []).forEach(w => tips.push(w));
+                noteEl.textContent = tips.join('\n');
+                noteEl.style.display = tips.length ? 'block' : 'none';
             }
+        } catch (e) {
+            if (seq !== jvmPreviewSeq) return;
+            cmdEl.textContent = '预览暂不可用: ' + e.message;
+        }
+    }
 
-            async function loadSchemas() {
-                schemaList.innerHTML = '<div class="empty-state">加载中...</div>';
-                try {
-                    const r = await apiGet('/api/schema/list');
-                    const list = r.schemas || [];
-                    schemaCount.textContent = `共 ${list.length} 个（官方 ${list.filter(s => s.origin === 'builtin').length} / 用户 ${list.filter(s => s.origin === 'custom').length}）`;
-                    if (!list.length) {
-                        schemaList.innerHTML = '<div class="empty-state">还没有任何表单包</div>';
-                        return;
-                    }
-                    schemaList.innerHTML = '';
-                    const wrap = document.createElement('div');
-                    wrap.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px;';
-                    for (const s of list) {
-                        const card = document.createElement('div');
-                        card.style.cssText = 'background:#0f1a2f;border:1px solid #1f2b3a;border-radius:6px;padding:10px 12px;';
-                        card.innerHTML =
-                            '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">' +
-                                '<b style="color:#ccd;font-size:13px;">' + escHtml(s.display_name) + '</b>' +
-                                '<span style="font-size:10px;padding:1px 6px;border-radius:3px;' +
-                                    (s.origin === 'custom' ? 'background:#3a2c1a;color:#d8b06a;' : 'background:#1e2f1e;color:#8fce8f;') + '">' +
-                                    (s.origin === 'custom' ? '用户' : '官方') + '</span>' +
-                            '</div>' +
-                            '<div style="font-family:monospace;font-size:11px;color:#667788;margin-top:3px;">' + escHtml(s.mod_id) + '</div>' +
-                            '<div style="font-size:11px;color:#8899aa;margin-top:5px;">' +
-                                s.file_count + ' 个文件 · ' + s.field_count + ' 个字段</div>' +
-                            '<div style="font-size:11px;color:#556677;margin-top:2px;">' + escHtml((s.platforms || []).join(' / ')) + '</div>';
-                        if (s.origin === 'custom') {
-                            const del = document.createElement('button');
-                            del.className = 'btn btn-secondary';
-                            del.style.cssText = 'margin-top:8px;font-size:11px;padding:4px 10px;';
-                            del.textContent = '🗑 删除';
-                            del.addEventListener('click', async () => {
-                                if (!confirm(`删除用户表单包「${s.mod_id}」？官方版本（如果有）会重新生效。`)) return;
-                                try {
-                                    const resp = await fetch('/api/schema/' + encodeURIComponent(s.mod_id), {
-                                        method: 'DELETE',
-                                        headers: { 'Authorization': 'Bearer ' + token }
-                                    });
-                                    const j = await resp.json().catch(() => ({}));
-                                    if (!resp.ok || j.success === false) throw new Error(j.error || '删除失败');
-                                    showToast('已删除 ' + s.mod_id, 'success');
-                                    loadSchemas();
-                                } catch (e) {
-                                    showToast(e.message, 'error');
-                                }
-                            });
-                            card.appendChild(del);
-                        }
-                        wrap.appendChild(card);
-                    }
-                    schemaList.appendChild(wrap);
-                    if (r.errors && r.errors.length) {
-                        const err = document.createElement('div');
-                        err.style.cssText = 'margin-top:12px;font-size:12px;color:#e8a0a0;';
-                        err.textContent = '⚠️ 以下表单包加载失败：' + r.errors.join('；');
-                        schemaList.appendChild(err);
-                    }
-                } catch (e) {
-                    schemaList.innerHTML = '<div class="empty-state">' + escHtml(e.message) + '</div>';
-                }
-            }
+    function updateDirtyHint() {
+        const n = Object.keys(cfgDirty).length;
+        const hint = $('cfg-dirty-hint');
+        if (hint) hint.textContent = n ? `有 ${n} 项未保存的修改` : '';
+    }
 
-            function openSchemaImport() {
-                schemaImportJson.value = '';
-                schemaImportUrl.value = '';
-                schemaImportModal.classList.add("active");
-            }
+    async function loadConfig() {
+        if (!cfgSchema.length) {
+            try {
+                const schema = await apiGet('/api/config/schema');
+                cfgSchema = Array.isArray(schema.fields) ? schema.fields : (Array.isArray(schema) ? schema : []);
+            } catch (e) { cfgSchema = []; }
+        }
+        try {
+            const data = await apiGet('/api/config');
+            cfgValues = flattenAll(data && data.config ? data.config : data);
+            configEditor.value = JSON.stringify(data && data.config ? data.config : data, null, 2);
+        } catch (e) {
+            cfgValues = {};
+            configEditor.value = '加载失败: ' + e.message;
+        }
+        cfgDirty = {};
+        updateDirtyHint();
+        renderConfigForm();
+        refreshJvmPreview();
+    }
 
-            async function doSchemaImport() {
-                schemaImportConfirm.disabled = true;
-                schemaImportConfirm.textContent = '导入中...';
-                try {
-                    const r = await apiPost('/api/schema/import', {
-                        json: schemaImportJson.value,
-                        url: schemaImportUrl.value.trim()
-                    });
-                    schemaImportModal.classList.remove("active");
-                    showToast(`已导入「${r.display_name}」`, 'success');
-                    if (r.warnings && r.warnings.length) {
-                        showToast(r.warnings.join('；'), 'info', 6000);
-                    }
-                    loadSchemas();
-                } catch (e) {
-                    showToast(e.message, 'error', 6000);
-                } finally {
-                    schemaImportConfirm.disabled = false;
-                    schemaImportConfirm.textContent = '导入';
-                }
-            }
+    function setMode(mode) {
+        cfgMode = mode === 'raw' ? 'raw' : 'form';
+        cfgFormWrap.style.display = cfgMode === 'form' ? 'block' : 'none';
+        cfgRawWrap.style.display = cfgMode === 'raw' ? 'block' : 'none';
+        cfgModeBadge.textContent = cfgMode === 'form' ? '表单模式' : '原始 JSON';
+        $('mode-form-btn').classList.toggle('active', cfgMode === 'form');
+        $('mode-raw-btn').classList.toggle('active', cfgMode === 'raw');
+        if (cfgMode === 'raw') {
+            const merged = deepMerge(JSON.parse(JSON.stringify(cfgValues || {})), cfgDirty);
+            configEditor.value = JSON.stringify(merged, null, 2);
+        } else {
+            renderConfigForm();
+        }
+    }
 
-            schemaImportBtn.addEventListener('click', openSchemaImport);
-            schemaImportCancel.addEventListener('click', () => schemaImportModal.classList.remove('active'));
-            schemaImportConfirm.addEventListener('click', doSchemaImport);
-            schemaRefreshBtn.addEventListener('click', loadSchemas);
-
-            // ==================== 初始化 ====================
-            async function init() {
+    async function saveConfig() {
+        if (cfgMode === 'raw') {
+            let config;
+            try { config = JSON.parse(configEditor.value); }
+            catch (e) { showToast('JSON 格式错误: ' + e.message, 'error'); return; }
+            try {
+                const r = await apiPost('/api/config', config);
+                const skipped = (r && r.skipped && r.skipped.length)
+                    ? `（忽略未知项: ${r.skipped.join(', ')}）` : '';
+                showToast('配置已保存' + skipped, 'success');
                 await loadConfig();
-                await loadPlugins();
-                await loadThemes();
-                await loadSchemas();
+            } catch (e) { showToast('保存失败: ' + e.message, 'error'); }
+            return;
+        }
+        const patch = Object.assign({}, cfgDirty);
+        if (!Object.keys(patch).length) { showToast('没有需要保存的修改', 'info'); return; }
+        const dangerKeys = cfgSchema.filter(f => f.danger && Object.prototype.hasOwnProperty.call(patch, f.key));
+        if (dangerKeys.length) {
+            const names = dangerKeys.map(f => f.label || f.key).join('、');
+            if (!confirm(`以下项标记为危险配置：\n  ${names}\n\n改错可能导致启动器无法启动，确认保存？`)) return;
+        }
+        try {
+            const r = await apiPost('/api/config/batch', { patch });
+            const skipped = (r && r.skipped && r.skipped.length)
+                ? `，忽略 ${r.skipped.length} 个未知项` : '';
+            const applied = r.applied !== undefined ? r.applied : Object.keys(patch).length;
+            showToast(`已保存 ${applied} 项配置${skipped}`, 'success');
+            await loadConfig();
+        } catch (e) { showToast('保存失败: ' + e.message, 'error'); }
+    }
+
+    // ==================== 插件管理 ====================
+    const pluginList = $('plugin-list');
+    const pluginFilter = $('plugin-filter');
+    async function loadPlugins(filter = '') {
+        try {
+            const data = await apiGet('/api/plugins');
+            let plugins = data.plugins || [];
+            if (filter) {
+                const lower = filter.toLowerCase();
+                plugins = plugins.filter(p => p.name.toLowerCase().includes(lower) || p.author.toLowerCase().includes(lower));
             }
-
-            init();
-
-            // 监听来自父框架的消息
-            window.addEventListener('message', (e) => {
-                if (e.origin !== window.location.origin) return;
-                if (e.data.type === 'refresh-settings') {
-                    loadConfig();
-                    loadPlugins();
-                    loadThemes();
-                }
+            if (!plugins.length) { pluginList.innerHTML = '<div class="empty-state">暂无插件</div>'; return; }
+            pluginList.innerHTML = plugins.map(p => `<div class="plugin-item">
+                <div class="info">
+                    <span class="name">${escapeHtml(p.name)}</span>
+                    <span class="meta">作者: ${escapeHtml(p.author)} v${escapeHtml(p.version)}</span>
+                    <span class="meta" style="color:${p.active ? '#4CAF50' : '#667788'};">${p.active ? '已加载' : '未加载'}</span>
+                </div>
+                <div class="actions">
+                    <button class="btn-sm ${p.active ? 'inactive' : 'active'}" data-action="toggle" data-name="${escapeHtml(p.name)}">${p.active ? '禁用' : '启用'}</button>
+                    <button class="btn-sm danger" data-action="delete" data-name="${escapeHtml(p.name)}">删除</button>
+                </div>
+            </div>`).join('');
+            pluginList.querySelectorAll('[data-action]').forEach(el => {
+                el.addEventListener('click', async () => {
+                    const { action, name } = el.dataset;
+                    try {
+                        if (action === 'delete') {
+                            if (!confirm(`确定要删除插件 "${name}" 吗？`)) return;
+                            await apiExec('plugin remove', [name]);
+                            showToast(`插件 ${name} 已删除`, 'success');
+                            loadPlugins(pluginFilter.value);
+                        } else {
+                            showToast('暂不支持切换插件状态，请使用 wow plugin 命令', 'warning');
+                        }
+                    } catch (e) { showToast('操作失败: ' + e.message, 'error'); }
+                });
             });
-        })();
-    </script>
+        } catch (e) {
+            pluginList.innerHTML = `<div class="empty-state" style="color:#f44336;">加载失败: ${escapeHtml(e.message)}</div>`;
+        }
+    }
+
+    const pluginInstallModal = $('plugin-install-modal');
+    const pluginInstallSource = $('plugin-install-source');
+    const pluginInstallConfirm = $('plugin-install-confirm');
+    function closePluginInstall() {
+        pluginInstallModal.classList.remove('active');
+        pluginInstallSource.value = '';
+    }
+    async function installPlugin() {
+        const source = pluginInstallSource.value.trim();
+        if (!source) { showToast('请输入插件包路径或 URL', 'warning'); return; }
+        pluginInstallConfirm.disabled = true;
+        try {
+            await apiExec('plugin install', [source]);
+            showToast('插件安装成功', 'success');
+            closePluginInstall();
+            loadPlugins(pluginFilter.value);
+        } catch (e) { showToast('安装失败: ' + e.message, 'error'); }
+        finally { pluginInstallConfirm.disabled = false; }
+    }
+
+    // ==================== 主题管理 ====================
+    const themeList = $('theme-list');
+    const themeFilter = $('theme-filter');
+    async function loadThemes(filter = '') {
+        try {
+            const data = await apiGet('/api/themes');
+            let themes = data.themes || [];
+            const current = data.current || 'default';
+            if (filter) {
+                const lower = filter.toLowerCase();
+                themes = themes.filter(t => t.name.toLowerCase().includes(lower) || t.author.toLowerCase().includes(lower));
+            }
+            if (!themes.length) { themeList.innerHTML = '<div class="empty-state">暂无主题</div>'; return; }
+            themeList.innerHTML = themes.map(t => {
+                const isActive = t.name === current;
+                return `<div class="theme-item">
+                    <div class="info">
+                        <span class="name">${escapeHtml(t.name)} ${isActive ? '⭐' : ''}</span>
+                        <span class="meta">作者: ${escapeHtml(t.author)} v${escapeHtml(t.version)}</span>
+                        <span class="meta">${escapeHtml(t.description)}</span>
+                    </div>
+                    <div class="actions">
+                        ${!isActive ? `<button class="btn-sm active" data-action="switch" data-name="${escapeHtml(t.name)}">切换</button>` : ''}
+                        ${t.name !== 'default' ? `<button class="btn-sm danger" data-action="delete" data-name="${escapeHtml(t.name)}">删除</button>` : ''}
+                    </div>
+                </div>`;
+            }).join('');
+            themeList.querySelectorAll('[data-action]').forEach(el => {
+                el.addEventListener('click', async () => {
+                    const { action, name } = el.dataset;
+                    try {
+                        if (action === 'delete') {
+                            if (!confirm(`确定要删除主题 "${name}" 吗？`)) return;
+                            await apiExec('theme delete', [name]);
+                            showToast(`主题 ${name} 已删除`, 'success');
+                            loadThemes(themeFilter.value);
+                        } else {
+                            await apiExec('theme switch', [name]);
+                            showToast(`已切换到主题: ${name}，请刷新页面查看效果`, 'success');
+                            loadThemes(themeFilter.value);
+                        }
+                    } catch (e) { showToast('操作失败: ' + e.message, 'error'); }
+                });
+            });
+        } catch (e) {
+            themeList.innerHTML = `<div class="empty-state" style="color:#f44336;">加载失败: ${escapeHtml(e.message)}</div>`;
+        }
+    }
+
+    const themeInstallModal = $('theme-install-modal');
+    const themeInstallSource = $('theme-install-source');
+    const themeInstallConfirm = $('theme-install-confirm');
+    function closeThemeInstall() {
+        themeInstallModal.classList.remove('active');
+        themeInstallSource.value = '';
+    }
+    async function installTheme() {
+        const source = themeInstallSource.value.trim();
+        if (!source) { showToast('请输入主题包路径或 URL', 'warning'); return; }
+        themeInstallConfirm.disabled = true;
+        try {
+            await apiExec('theme install', [source]);
+            showToast('主题安装成功', 'success');
+            closeThemeInstall();
+            loadThemes(themeFilter.value);
+        } catch (e) { showToast('安装失败: ' + e.message, 'error'); }
+        finally { themeInstallConfirm.disabled = false; }
+    }
+
+    // ==================== 模组配置库（表单包） ====================
+    const schemaList = $('schema-list');
+    const schemaCount = $('schema-count');
+    const schemaImportModal = $('schema-import-modal');
+    const schemaImportJson = $('schema-import-json');
+    const schemaImportUrl = $('schema-import-url');
+    const schemaImportConfirm = $('schema-import-confirm');
+
+    async function loadSchemas() {
+        schemaList.innerHTML = '<div class="empty-state">加载中...</div>';
+        try {
+            const r = await apiGet('/api/schema/list');
+            const list = r.schemas || [];
+            schemaCount.textContent = `共 ${list.length} 个（官方 ${list.filter(s => s.origin === 'builtin').length} / 用户 ${list.filter(s => s.origin === 'custom').length}）`;
+            if (!list.length) { schemaList.innerHTML = '<div class="empty-state">还没有任何表单包</div>'; return; }
+            schemaList.innerHTML = '';
+            const wrap = document.createElement('div');
+            wrap.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px;';
+            for (const s of list) {
+                const card = document.createElement('div');
+                card.style.cssText = 'background:#0f1a2f;border:1px solid #1f2b3a;border-radius:6px;padding:10px 12px;';
+                const originStyle = s.origin === 'custom'
+                    ? 'background:#3a2c1a;color:#d8b06a;' : 'background:#1e2f1e;color:#8fce8f;';
+                card.innerHTML =
+                    '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">' +
+                        '<b style="color:#ccd;font-size:13px;">' + escapeHtml(s.display_name) + '</b>' +
+                        '<span style="font-size:10px;padding:1px 6px;border-radius:3px;' + originStyle + '">' +
+                            (s.origin === 'custom' ? '用户' : '官方') + '</span>' +
+                    '</div>' +
+                    '<div style="font-family:monospace;font-size:11px;color:#667788;margin-top:3px;">' + escapeHtml(s.mod_id) + '</div>' +
+                    '<div style="font-size:11px;color:#8899aa;margin-top:5px;">' +
+                        s.file_count + ' 个文件 · ' + s.field_count + ' 个字段</div>' +
+                    '<div style="font-size:11px;color:#556677;margin-top:2px;">' + escapeHtml((s.platforms || []).join(' / ')) + '</div>';
+                if (s.origin === 'custom') {
+                    const del = document.createElement('button');
+                    del.className = 'btn btn-secondary';
+                    del.style.cssText = 'margin-top:8px;font-size:11px;padding:4px 10px;';
+                    del.textContent = '🗑 删除';
+                    del.addEventListener('click', async () => {
+                        if (!confirm(`删除用户表单包「${s.mod_id}」？官方版本（如果有）会重新生效。`)) return;
+                        try {
+                            const resp = await fetch('/api/schema/' + encodeURIComponent(s.mod_id), {
+                                method: 'DELETE', headers: authHeaders
+                            });
+                            const j = await resp.json().catch(() => ({}));
+                            if (!resp.ok || j.success === false) throw new Error(j.error || '删除失败');
+                            showToast('已删除 ' + s.mod_id, 'success');
+                            loadSchemas();
+                        } catch (e) { showToast(e.message, 'error'); }
+                    });
+                    card.appendChild(del);
+                }
+                wrap.appendChild(card);
+            }
+            schemaList.appendChild(wrap);
+            if (r.errors && r.errors.length) {
+                const err = document.createElement('div');
+                err.style.cssText = 'margin-top:12px;font-size:12px;color:#e8a0a0;';
+                err.textContent = '⚠️ 以下表单包加载失败：' + r.errors.join('；');
+                schemaList.appendChild(err);
+            }
+        } catch (e) {
+            schemaList.innerHTML = '<div class="empty-state">' + escapeHtml(e.message) + '</div>';
+        }
+    }
+
+    function openSchemaImport() {
+        schemaImportJson.value = '';
+        schemaImportUrl.value = '';
+        schemaImportModal.classList.add('active');
+    }
+    async function doSchemaImport() {
+        schemaImportConfirm.disabled = true;
+        schemaImportConfirm.textContent = '导入中...';
+        try {
+            const r = await apiPost('/api/schema/import', {
+                json: schemaImportJson.value,
+                url: schemaImportUrl.value.trim()
+            });
+            schemaImportModal.classList.remove('active');
+            showToast(`已导入「${r.display_name}」`, 'success');
+            if (r.warnings && r.warnings.length) showToast(r.warnings.join('；'), 'info', 6000);
+            loadSchemas();
+        } catch (e) { showToast(e.message, 'error', 6000); }
+        finally {
+            schemaImportConfirm.disabled = false;
+            schemaImportConfirm.textContent = '导入';
+        }
+    }
+
+    // ==================== 事件绑定 ====================
+    $('save-config-btn').addEventListener('click', saveConfig);
+    $('reload-config-btn').addEventListener('click', () => {
+        if (Object.keys(cfgDirty).length && !confirm('有未保存的修改，重新加载会丢弃它们，继续？')) return;
+        loadConfig();
+    });
+    $('mode-form-btn').addEventListener('click', () => setMode('form'));
+    $('mode-raw-btn').addEventListener('click', () => setMode('raw'));
+    cfgSearchEl.addEventListener('input', () => renderConfigForm());
+
+    window.addEventListener('beforeunload', (e) => {
+        if (cfgMode === 'form' && Object.keys(cfgDirty).length) {
+            e.preventDefault();
+            e.returnValue = '';
+        }
+    });
+
+    $('plugin-install-btn').addEventListener('click', () => {
+        pluginInstallModal.classList.add('active');
+        pluginInstallSource.focus();
+    });
+    $('plugin-install-cancel').addEventListener('click', closePluginInstall);
+    pluginInstallConfirm.addEventListener('click', installPlugin);
+    pluginInstallModal.addEventListener('click', (e) => { if (e.target === pluginInstallModal) closePluginInstall(); });
+    pluginInstallSource.addEventListener('keydown', (e) => { if (e.key === 'Enter') installPlugin(); });
+    $('plugin-refresh-btn').addEventListener('click', () => loadPlugins(pluginFilter.value));
+    pluginFilter.addEventListener('input', () => loadPlugins(pluginFilter.value));
+
+    $('theme-install-btn').addEventListener('click', () => {
+        themeInstallModal.classList.add('active');
+        themeInstallSource.focus();
+    });
+    $('theme-install-cancel').addEventListener('click', closeThemeInstall);
+    themeInstallConfirm.addEventListener('click', installTheme);
+    themeInstallModal.addEventListener('click', (e) => { if (e.target === themeInstallModal) closeThemeInstall(); });
+    themeInstallSource.addEventListener('keydown', (e) => { if (e.key === 'Enter') installTheme(); });
+    $('theme-refresh-btn').addEventListener('click', () => loadThemes(themeFilter.value));
+    themeFilter.addEventListener('input', () => loadThemes(themeFilter.value));
+
+    $('schema-import-btn').addEventListener('click', openSchemaImport);
+    $('schema-import-cancel').addEventListener('click', () => schemaImportModal.classList.remove('active'));
+    schemaImportConfirm.addEventListener('click', doSchemaImport);
+    $('schema-refresh-btn').addEventListener('click', loadSchemas);
+
+    // ==================== 初始化 ====================
+    async function init() {
+        await loadConfig();
+        await loadPlugins();
+        await loadThemes();
+        await loadSchemas();
+    }
+    init();
+
+    // 监听来自父框架的消息
+    window.addEventListener('message', (e) => {
+        if (e.origin !== window.location.origin) return;
+        if (e.data.type === 'refresh-settings') {
+            loadConfig();
+            loadPlugins();
+            loadThemes();
+        }
+    });
+})();
+</script>
 </body>
 </html>

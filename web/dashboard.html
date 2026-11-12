@@ -272,14 +272,13 @@
 
     <!-- V3.5.19：日志改为 WebSocket 实时推送（socket.io 客户端由服务端自动托管） -->
     <script src="/socket.io/socket.io.js"></script>
+    <script src="/js/auth_guard.js"></script>
     <script>
-        (function() {
+        (async function() {
             // ==================== 状态与引用 ====================
-            const token = sessionStorage.getItem('wow_token');
-            if (!token) {
-                window.location.href = '/login.html';
-                return;
-            }
+            // 登录闸门：web.require_login=false 时完全免登录
+            if (!(await wowAuthGuard())) return;
+            const token = sessionStorage.getItem('wow_token') || '';
 
             const consoleBox = document.getElementById('console-box');
             const consoleInput = document.getElementById('console-input');

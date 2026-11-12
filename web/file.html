@@ -328,13 +328,12 @@
         </div>
     </div>
 
+    <script src="/js/auth_guard.js"></script>
     <script>
-        (function() {
-            const token = sessionStorage.getItem('wow_token');
-            if (!token) {
-                window.location.href = '/login.html';
-                return;
-            }
+        (async function() {
+            // 登录闸门：web.require_login=false 时完全免登录
+            if (!(await wowAuthGuard())) return;
+            const token = sessionStorage.getItem('wow_token') || '';
 
             // ==================== DOM 引用 ====================
             const tbody = document.getElementById('file-list-body');

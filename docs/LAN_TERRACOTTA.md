@@ -2,7 +2,10 @@
 
 wow~ V3.3.0 起内置对接 **[陶瓦（Terracotta）](https://github.com/burningtnt/Terracotta)**，为你的 Minecraft 服务端提供开箱即用的内网 / 局域网穿透联机能力。没有公网 IP 也能让好友直接加入。
 
-> ⚠️ **3.3.0 范围**：仅实现 **房主端（「我要当房主」）**。加入端由 **PCL / HMCL / BakaXL / FCL** 等启动器内置支持，wow~ 无需也不实现加入逻辑。
+> ✅ **3.7.0 范围**：同时支持 **房主端（「我要当房主」/ 开房）** 与 **房客端（「我要当房客」/ Join Room）**。
+> 在 `R`（网络）页选择第 9 项「我要当房客」，输入房主提供的**房间号**与自己的**玩家名**，wow~ 会通过陶瓦的 `/state/guesting` 真正加入房间。
+> 房客侧无需本机运行 Minecraft 服务端；加入端也可继续由 **PCL / HMCL / BakaXL / FCL** 等启动器内置支持。
+> 若陶瓦二进制版本过旧、没有 `/state/guesting` 路由，wow~ 会**运行时探测并降级**：给出升级 `lan.version` 或改用启动器加入的可执行提示，并回显房间号，不会崩溃。
 
 > 📌 **命令引导词**：文档中的 `wow` 是简写 —— Linux / macOS 请写 `./wow.sh`，Windows 请写 `wow.bat`。例如 `wow lan host` 在 Linux 下即 `./wow.sh lan host`。
 
