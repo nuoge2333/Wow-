@@ -103,7 +103,7 @@ git push origin main
 - 已发布的最新版本：`v3.7.3-26.46`（2026-11-09）
 - **下一个版本号尚未确定**，等用户说「发行」时再定
 - 下一周期累积的改动：见 `git log v3.7.3-26.46..HEAD`
-- 待发行改动摘要（截至 2026-11-12，两批合并累积在**同一待发行版本**下）：
+- 待发行改动摘要（截至 2026-11-13，三批合并累积在**同一待发行版本**下）：
   1. **readline 收归单例**（11-10）：`core/src/stdin_session.js` 全项目唯一
      消费者，三层防线（唯一出口 / 运行时不变式 / 全局创建守卫）。
   2. **3.7.0 视图重构与功能补丁执行令**（11-12）：五大视图状态机 +
@@ -111,7 +111,14 @@ git push origin main
      日志统一闸门 `log_sink.js` + 文件管理 `isDir` 修复 + 陶瓦真加入房间 +
      `set.html` 推倒重写 + `shutdown.js` 防僵尸 + 4 场景 pty 实测回归。
      `npm test` **49 个文件全绿**（72.5s），`WOW_PTY_STRICT=1` 严格模式
-     13 项全过。详见 `docs/CHANGELOG.md` 的两个 `[待发行]` 章节。
+     13 项全过。详见 `docs/CHANGELOG.md` 的 `[待发行]` 章节。
+  3. **Web 安全加固两指令**（11-13）：危险开关在非本机访问时物理隐藏 +
+     `/api/config`、`/api/config/batch` 后端 403 二次拦截
+     （`core/src/web_security.js`）；新增 `web.trust_proxy` 反代声明位；
+     备用钥匙密码登录三接口（`auth/config` / `login-password` /
+     `set-password`）+ 5 次/15 分钟 IP 限流 + 验证码 CSPRNG。
+     新增 4 个测试文件（`aa_web_security` 37 项、`web_security_static` 22 项、
+     `danger_guard_e2e` 16 项、`password_auth_e2e` 21 项）。
 
 ### 本版发行进度（v3.7.3-26.46，2026-11-09）
 

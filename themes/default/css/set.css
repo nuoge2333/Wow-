@@ -525,6 +525,47 @@ details.advanced > .settings-grid { margin-bottom: 18px; }
 .toast.success { border-left-color: var(--set-accent); }
 .toast.warning { border-left-color: #ff9800; }
 
+/* ── 指令一：危险开关锁定提示（非本机时才由 JS 渲染出来） ── */
+#set-page .danger-locked {
+    margin: 4px 0 14px;
+    padding: 10px 14px;
+    border-left: 3px solid var(--set-danger);
+    background: rgba(244, 67, 54, .08);
+    border-radius: 4px;
+    color: var(--set-danger);
+    font-size: 12px;
+    line-height: 1.7;
+}
+
+/* ── 指令二：备用钥匙卡片 ── */
+#set-page .spare-key-card { margin-top: 16px; }
+#set-page .spare-key-card .badge.ok {
+    color: var(--set-accent);
+    background: rgba(76, 175, 80, .12);
+}
+#set-page .spare-key-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 12px 16px;
+    margin-bottom: 6px;
+}
+#set-page .spare-key-grid .field { display: flex; flex-direction: column; gap: 6px; }
+#set-page .spare-key-grid label { color: var(--set-muted); font-size: 12px; }
+#set-page .spare-key-grid input {
+    background: var(--set-input);
+    border: 1px solid var(--set-line-strong);
+    border-radius: 6px;
+    padding: 9px 11px;
+    color: var(--set-text);
+    font-size: 13px;
+    outline: none;
+}
+#set-page .spare-key-grid input:focus { border-color: var(--set-accent); }
+#set-page .spare-key-grid input:disabled { opacity: .55; cursor: not-allowed; }
+#set-page .spare-key-grid .inline-row { display: flex; gap: 8px; }
+#set-page .spare-key-grid .inline-row input { flex: 1; min-width: 0; }
+#set-page .spare-key-grid .inline-row .btn { white-space: nowrap; }
+
 /* ── 响应式 ── */
 @media (max-width: 900px) {
     .settings-grid { grid-template-columns: 1fr; }

@@ -74,9 +74,22 @@ check('03 authMiddleware 未加入免登录短路分支', () => {
         !/isLoginVerifyEnabled/.test(mwBody), '中间件不应有免登录分支');
 });
 
-check('04 不存在 /api/auth/config 路由', () => {
+check('04 /api/auth/config 路由存在且已列入 publicPaths', () => {
     const src = read('web_service.js');
-    assert.ok(!src.includes("/api/auth/config"), '不应保留 auth/config 路由');
+    assert.ok(/app\.get\('\/api\/auth\/config'/.test(src), '缺少 auth/config 路由');
+    const m = src.match(/const publicPaths = \[([^\]]+)\]/);
+    assert.ok(m && m[1].includes("'/api/auth/config'"), 'auth/config 必须在 publicPaths 内（登录前可调）');
+});
+
+check('04b /api/auth/set-password 公开，但必须校验邮箱验证码', () => {
+    const src = read('web_service.js');
+    assert.ok(/app\.post\('\/api\/auth\/set-password'/.test(src), '缺少 set-password 路由');
+    const m = src.match(/const publicPaths = \[([^\]]+)\]/);
+    assert.ok(m, '未找到 publicPaths');
+    assert.ok(m[1].includes("'/api/auth/set-password'"),
+        'set-password 需登录前可调：首次设密码时用户不可能已有 token');
+    assert.ok(/verificationCodes\.get\(admin\)/.test(src),
+        'set-password 必须校验邮箱验证码，不能只凭 email 就改密码');
 });
 
 // ---------- 2. isExposedHost ----------

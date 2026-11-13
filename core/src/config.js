@@ -79,6 +79,11 @@ const DEFAULT_CONFIG = {
         // V3.5.21：true = 放开插件注册的自定义命令经 Web 端执行。
         // 插件是第三方代码、与主程序同权限，Web 又是远程入口，两者叠加风险最高，故默认关闭。
         allow_plugins: false,
+        // 指令一：true = 本面板挂在 nginx / Caddy 等反向代理后面。
+        // 反代到 127.0.0.1:8080 时，绑定地址、socket 来源 IP、隧道标记全都
+        // 「看起来是本机」，服务端无法自行分辨；必须由管理员显式声明，
+        // 声明后一律强制登录，且危险开关的 Web 写入口保持锁定。
+        trust_proxy: false,
         // V3.5.22：cloudflared 二进制的自定义镜像前缀。
         // 留空 = 用内置的国内镜像列表（gh-proxy.com / ghfast.top / ghproxy.net）+ GitHub 官方兜底。
         // 可填镜像根（https://my.mirror）或完整的 releases/latest/download 前缀。

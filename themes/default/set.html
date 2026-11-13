@@ -98,6 +98,49 @@
         </div>
     </details>
 
+    <!-- ===== 备用钥匙：设了密码，登录页就多一条「密码登录」通道 ===== -->
+    <!-- 验证码登录永远保留，忘密码也能靠邮箱回去。邮箱必须与 mail.admin_email 一致。 -->
+    <div class="settings-section full spare-key-card" id="spare-key-card">
+        <div class="title">
+            🔑 备用钥匙
+            <span class="badge" id="spare-state-badge">未设置</span>
+        </div>
+        <div class="set-note" id="spare-key-note">
+            设一个密码，登录页就会多出「密码登录」入口；验证码登录始终保留，忘了密码也能回去。
+            首次设置需要邮箱验证码，收件地址必须是 <code>wow.yaml</code> 里的
+            <code>mail.admin_email</code>。
+        </div>
+        <div class="spare-key-grid">
+            <div class="field">
+                <label for="spare-email">管理员邮箱</label>
+                <input type="email" id="spare-email" placeholder="admin@example.com" autocomplete="email" />
+            </div>
+            <div class="field">
+                <label for="spare-code">邮箱验证码</label>
+                <div class="inline-row">
+                    <input type="text" id="spare-code" placeholder="6 位数字" maxlength="6" autocomplete="one-time-code" />
+                    <button class="btn btn-secondary" id="spare-send-btn">获取验证码</button>
+                </div>
+            </div>
+            <div class="field">
+                <label for="spare-password">新密码</label>
+                <input type="password" id="spare-password" placeholder="8~128 位，至少含一个字母" autocomplete="new-password" />
+            </div>
+            <div class="field">
+                <label for="spare-password2">确认新密码</label>
+                <input type="password" id="spare-password2" placeholder="再输入一次" autocomplete="new-password" />
+            </div>
+            <div class="field" id="spare-old-wrap" style="display:none;">
+                <label for="spare-old">当前密码</label>
+                <input type="password" id="spare-old" placeholder="已设置过密码时必填" autocomplete="current-password" />
+            </div>
+        </div>
+        <div class="btn-row">
+            <button class="btn btn-primary" id="spare-submit-btn">🔑 设置登录密码</button>
+        </div>
+        <div class="set-hint" id="spare-status"></div>
+    </div>
+
     <!-- ===== 模态框：导入表单包 ===== -->
     <div class="modal-overlay" id="schema-import-modal">
         <div class="modal">
@@ -160,7 +203,20 @@
 (async function () {
     // 登录闸门：web.require_login=false 时完全免登录
     if (!(await wowAuthGuard())) return;
-    const token = sessionStorage.getItem('wow_token') || '';
+
+    // ==================== 安全边界（指令一） ====================
+    // 只有「本机直连」才允许看到危险开关：公网 / 局域网 / 反向代理访问时，
+    // 三个 web.allow_* 在 DOM 里就不存在（是根本没渲染，不是 CSS 隐藏）。
+    // 口径与后端 web_security.isLoopbackHost 保持一致。
+    const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '::1', '[::1]']);
+    const isLocalPanel = LOOPBACK_HOSTS.has(location.hostname);
+    // web.auth_password 永远隐藏：它存的是 scrypt 哈希，露在表单里只会被误改。
+    const HIDDEN_KEYS = new Set(['web.auth_password']);
+    if (!isLocalPanel) {
+        ['web.allow_scheme_ops', 'web.allow_remote_install', 'web.allow_plugins']
+            .forEach((k) => HIDDEN_KEYS.add(k));
+    }
+    const DANGER_LOCKED_TEXT = '⚠️ 危险开关已被锁定。如需开启，请在服务器本机（127.0.0.1）访问 Web 面板修改，或使用 CLI 命令 wow config wow ...';
 
     // ==================== DOM ====================
     const $ = (id) => document.getElementById(id);
@@ -192,7 +248,15 @@
     }
 
     // ==================== API ====================
-    const authHeaders = { 'Authorization': 'Bearer ' + token };
+    // 请求头可变：备用钥匙流程设置成功后会拿到新 token（本机免登录时页面
+    // 初始根本没有 token），同步一次后，后续所有请求都自动带上。
+    const authHeaders = {};
+    function syncAuthHeader() {
+        const t = sessionStorage.getItem('wow_token') || '';
+        if (t) authHeaders['Authorization'] = 'Bearer ' + t;
+        else delete authHeaders['Authorization'];
+    }
+    syncAuthHeader();
     async function unwrap(resp, fallback) {
         if (!resp.ok) {
             const err = await resp.json().catch(() => ({}));
@@ -348,19 +412,28 @@
             || String(f.label || '').toLowerCase().includes(kw)
             || String(f.desc || '').toLowerCase().includes(kw);
 
-        const visible = cfgSchema.filter(f => !f.advanced && match(f));
-        const advanced = cfgSchema.filter(f => f.advanced && match(f));
+        // 隐藏键在渲染前就过滤掉：非本机时三个危险开关连 DOM 都不存在。
+        const visible = cfgSchema.filter(f => !HIDDEN_KEYS.has(f.key) && !f.advanced && match(f));
+        const advanced = cfgSchema.filter(f => !HIDDEN_KEYS.has(f.key) && f.advanced && match(f));
+
+        // 锁定提示只插一次，且只在「Web 面板」分组标题之后 —— 不留空白卡片。
+        let tipDone = false;
+        const lockedTip = (group) => {
+            if (isLocalPanel || tipDone || group !== 'Web 面板') return '';
+            tipDone = true;
+            return `<div class="danger-locked">${escapeHtml(DANGER_LOCKED_TEXT)}</div>`;
+        };
 
         let html = '';
         for (const g of groupOrder(visible)) {
-            html += `<div class="cfg-group-title">${escapeHtml(g)}</div>`;
+            html += `<div class="cfg-group-title">${escapeHtml(g)}</div>${lockedTip(g)}`;
             for (const f of visible.filter(x => (x.group || '其他') === g)) html += fieldRowHtml(f);
         }
         if (advanced.length) {
             html += `<details class="cfg-details"${kw ? ' open' : ''}>
                 <summary>高级选项（${advanced.length} 项，非必要请勿修改）</summary>`;
             for (const g of groupOrder(advanced)) {
-                html += `<div class="cfg-group-title">${escapeHtml(g)}</div>`;
+                html += `<div class="cfg-group-title">${escapeHtml(g)}</div>${lockedTip(g)}`;
                 for (const f of advanced.filter(x => (x.group || '其他') === g)) html += fieldRowHtml(f);
             }
             html += '</details>';
@@ -460,6 +533,20 @@
         if (hint) hint.textContent = n ? `有 ${n} 项未保存的修改` : '';
     }
 
+    // 深拷贝并剔除隐藏键（web.auth_password / 非本机时的三个 allow_*）。
+    // 原始 JSON 模式若不剔，非本机保存整份对象时会把「未改动」的 allow_*
+    // 一起发出去，被后端「出现即拦」误伤成 403。
+    function stripHiddenDeep(source) {
+        const out = JSON.parse(JSON.stringify(source || {}));
+        for (const key of HIDDEN_KEYS) {
+            const parts = key.split('.');
+            let node = out;
+            for (let i = 0; i < parts.length - 1 && node; i++) node = node[parts[i]];
+            if (node && typeof node === 'object') delete node[parts[parts.length - 1]];
+        }
+        return out;
+    }
+
     async function loadConfig() {
         if (!cfgSchema.length) {
             try {
@@ -469,8 +556,9 @@
         }
         try {
             const data = await apiGet('/api/config');
-            cfgValues = flattenAll(data && data.config ? data.config : data);
-            configEditor.value = JSON.stringify(data && data.config ? data.config : data, null, 2);
+            const raw = data && data.config ? data.config : data;
+            cfgValues = flattenAll(raw);
+            configEditor.value = JSON.stringify(stripHiddenDeep(raw), null, 2);
         } catch (e) {
             cfgValues = {};
             configEditor.value = '加载失败: ' + e.message;
@@ -501,6 +589,8 @@
             let config;
             try { config = JSON.parse(configEditor.value); }
             catch (e) { showToast('JSON 格式错误: ' + e.message, 'error'); return; }
+            // 与表单模式同口径：隐藏键一律不发，避免非本机保存被 403 误伤。
+            config = stripHiddenDeep(config);
             try {
                 const r = await apiPost('/api/config', config);
                 const skipped = (r && r.skipped && r.skipped.length)
@@ -793,12 +883,130 @@
     schemaImportConfirm.addEventListener('click', doSchemaImport);
     $('schema-refresh-btn').addEventListener('click', loadSchemas);
 
+    // ==================== 备用钥匙（指令二） ====================
+    // 流程：填邮箱 → 获取验证码 → 填验证码 + 新密码 → 提交。
+    // 后端凭「邮箱 + 验证码」认证（首次设密码时用户不可能已有 token），
+    // 校验通过后用 scrypt 加盐哈希写入 web.auth_password，并回一个新 token，
+    // 前端顺手存进 sessionStorage，设完即为登录态。
+    const spareEmail = $('spare-email');
+    const spareCode = $('spare-code');
+    const sparePassword = $('spare-password');
+    const sparePassword2 = $('spare-password2');
+    const spareOld = $('spare-old');
+    const spareOldWrap = $('spare-old-wrap');
+    const spareSendBtn = $('spare-send-btn');
+    const spareSubmitBtn = $('spare-submit-btn');
+    const spareStatus = $('spare-status');
+    const spareNote = $('spare-key-note');
+    const spareBadge = $('spare-state-badge');
+
+    let spareTimer = null;
+
+    function spareSay(text, isError = false) {
+        spareStatus.textContent = text || '';
+        spareStatus.style.color = isError ? '#f44336' : '';
+    }
+
+    async function loadAuthConfig() {
+        try {
+            const cfg = await apiGet('/api/auth/config');
+            if (cfg.email) spareEmail.placeholder = cfg.email;   // 掩码提示，a***@example.com
+            spareBadge.textContent = cfg.password_enabled ? '已设置' : '未设置';
+            spareBadge.classList.toggle('ok', !!cfg.password_enabled);
+            if (!cfg.email_configured) {
+                [spareEmail, spareCode, sparePassword, sparePassword2].forEach(el => { el.disabled = true; });
+                spareSendBtn.disabled = true;
+                spareSubmitBtn.disabled = true;
+                spareNote.textContent = '还没有管理员邮箱：请先在 wow.yaml 里设置 mail.admin_email'
+                    + '（并把该邮箱加入 mail.whitelist），再回来设置密码。';
+                spareNote.classList.add('danger-locked');
+                return;
+            }
+            if (cfg.password_enabled) {
+                spareOldWrap.style.display = 'block';
+                spareSubmitBtn.textContent = '🔑 修改登录密码';
+            }
+        } catch (e) {
+            spareNote.textContent = '读取登录状态失败：' + e.message;
+        }
+    }
+
+    function startSpareCountdown() {
+        let left = 60;
+        spareSendBtn.disabled = true;
+        spareSendBtn.textContent = `${left}s 后重发`;
+        if (spareTimer) clearInterval(spareTimer);
+        spareTimer = setInterval(() => {
+            left -= 1;
+            if (left <= 0) {
+                clearInterval(spareTimer);
+                spareTimer = null;
+                spareSendBtn.disabled = false;
+                spareSendBtn.textContent = '获取验证码';
+                return;
+            }
+            spareSendBtn.textContent = `${left}s 后重发`;
+        }, 1000);
+    }
+
+    spareSendBtn.addEventListener('click', async () => {
+        const email = spareEmail.value.trim();
+        if (!email) { spareSay('请先填写管理员邮箱', true); return; }
+        spareSendBtn.disabled = true;
+        try {
+            await apiPost('/api/auth/request-code', { email });
+            spareSay('验证码已发送。没配 SMTP 时会打印在服务器控制台。');
+            startSpareCountdown();
+        } catch (e) {
+            spareSendBtn.disabled = false;
+            spareSay('发送失败：' + e.message, true);
+        }
+    });
+
+    spareSubmitBtn.addEventListener('click', async () => {
+        const email = spareEmail.value.trim();
+        const code = spareCode.value.trim();
+        const pwd = sparePassword.value;
+        const pwd2 = sparePassword2.value;
+        const oldPwd = spareOld.value;
+
+        if (!email) { spareSay('请填写管理员邮箱', true); return; }
+        if (!code || code.length !== 6) { spareSay('请输入 6 位邮箱验证码', true); return; }
+        if (pwd.length < 8 || pwd.length > 128 || !/[A-Za-z]/.test(pwd)) {
+            spareSay('密码需 8~128 位且至少包含一个字母', true); return;
+        }
+        if (pwd !== pwd2) { spareSay('两次输入的新密码不一致', true); return; }
+
+        spareSubmitBtn.disabled = true;
+        try {
+            const body = { email, code, password: pwd };
+            if (oldPwd) body.old_password = oldPwd;
+            const r = await apiPost('/api/auth/set-password', body);
+            if (r && r.token) {
+                sessionStorage.setItem('wow_token', r.token);
+                syncAuthHeader();
+            }
+            sparePassword.value = '';
+            sparePassword2.value = '';
+            spareOld.value = '';
+            spareCode.value = '';
+            spareSay(r && r.message ? r.message : '登录密码已设置，验证码登录仍可继续使用');
+            showToast('登录密码已更新', 'success');
+            await loadAuthConfig();
+        } catch (e) {
+            spareSay('设置失败：' + e.message, true);
+        } finally {
+            spareSubmitBtn.disabled = false;
+        }
+    });
+
     // ==================== 初始化 ====================
     async function init() {
         await loadConfig();
         await loadPlugins();
         await loadThemes();
         await loadSchemas();
+        await loadAuthConfig();
     }
     init();
 

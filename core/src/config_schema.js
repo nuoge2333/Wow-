@@ -157,6 +157,11 @@ const SCHEMA = [
         danger: true
     },
     {
+        key: 'web.trust_proxy', type: 'boolean', group: 'Web 面板', label: '反向代理后面',
+        desc: '用 nginx / Caddy 等反向代理到本面板时必须开启。反代到 127.0.0.1 时服务端分辨不出真实来源，开启后一律强制登录、危险开关保持锁定。不挂反代请保持关闭。',
+        advanced: true, danger: true
+    },
+    {
         key: 'web.require_login', type: 'boolean', group: 'Web 面板', label: '强制登录',
         desc: '关闭 = 打开面板与调用接口都无需登录（适合只在本机用）；开启 = 必须验证身份。⚠️ 面板监听 0.0.0.0 或开了内网穿透时，无论这里怎么设都会强制要求登录。',
         danger: true

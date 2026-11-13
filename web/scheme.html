@@ -451,19 +451,44 @@
             /**
              * 面板默认禁止「方案结构变更」（web.allow_scheme_ops = false）。
              * 被拒时弹一次确认，用户同意才写配置并重试——不静默放开安全闸门。
+             *
+             * 指令一：只有本机直连才能改这个开关。公网 / 局域网 / 反代访问时
+             * 不再弹确认、也不发 POST（后端本来也会 403），直接给同一句红字。
              */
+            const LOOPBACK_HOSTS = ['127.0.0.1', 'localhost', '::1', '[::1]'];
+            const isLocalPanel = LOOPBACK_HOSTS.indexOf(location.hostname) >= 0;
+            const DANGER_LOCKED_TEXT = '⚠️ 危险开关已被锁定。如需开启，请在服务器本机（127.0.0.1）访问 Web 面板修改，或使用 CLI 命令 wow config wow ...';
+
             async function runSchemeOp(fn) {
                 try {
                     return await fn();
                 } catch (e) {
-                    if (e.code === 'POLICY_DENIED' || /allow_scheme_ops/.test(e.message || '')) {
+                    const msg = (e && e.message) || '';
+                    // 旧缓存页面可能仍把请求发出去，被后端 403 拦下——换成同款提示
+                    if (/危险开关/.test(msg)) {
+                        showToast(DANGER_LOCKED_TEXT, 'error', 8000);
+                        throw e;
+                    }
+                    if (e.code === 'POLICY_DENIED' || /allow_scheme_ops/.test(msg)) {
+                        if (!isLocalPanel) {
+                            showToast(DANGER_LOCKED_TEXT, 'error', 8000);
+                            throw e;
+                        }
                         const ok = confirm(
                             '该操作默认在 Web 端被禁用（wow.yaml → web.allow_scheme_ops: false）。\n\n' +
                             '是否现在开启「允许面板操作方案」并重试？\n\n' +
                             '⚠️ 开启后，任何能登录面板的人都可以创建 / 切换 / 删除方案。'
                         );
                         if (ok) {
-                            await apiPost('/api/config', { key: 'web.allow_scheme_ops', value: true });
+                            try {
+                                await apiPost('/api/config', { key: 'web.allow_scheme_ops', value: true });
+                            } catch (err) {
+                                if (/危险开关/.test((err && err.message) || '')) {
+                                    showToast(DANGER_LOCKED_TEXT, 'error', 8000);
+                                    throw e;
+                                }
+                                throw err;
+                            }
                             return await fn();
                         }
                     }

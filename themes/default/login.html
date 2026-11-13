@@ -118,6 +118,29 @@
             opacity: 0.5;
             cursor: not-allowed;
         }
+        /* 指令二：验证码 / 密码双通道 Tab（未设密码时不显示） */
+        .login-tabs {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 22px;
+        }
+        .login-tabs button {
+            flex: 1;
+            padding: 9px 0;
+            border-radius: 6px;
+            border: 1px solid #2a3a5e;
+            background: #0f1a2f;
+            color: #8899aa;
+            font-size: 13px;
+            font-family: inherit;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .login-tabs button.active {
+            background: #1d2b45;
+            border-color: #4CAF50;
+            color: #eee;
+        }
         .footer {
             text-align: center;
             margin-top: 20px;
@@ -135,6 +158,11 @@
         <h1>🎮 wow</h1>
         <div class="sub">Minecraft 服务器管理面板</div>
 
+        <div class="login-tabs" id="login-tabs" style="display:none;">
+            <button type="button" class="active" data-tab="code">验证码登录</button>
+            <button type="button" data-tab="password">密码登录</button>
+        </div>
+
         <div id="login-form">
             <div class="form-group">
                 <label for="email">邮箱地址</label>
@@ -151,6 +179,16 @@
             <div id="message" class="error-msg"></div>
         </div>
 
+        <!-- 密码登录：仅当 wow.yaml 里已设置 web.auth_password 时才显示 -->
+        <div id="password-form" style="display:none;">
+            <div class="form-group">
+                <label for="login-password">登录密码</label>
+                <input type="password" id="login-password" placeholder="输入面板登录密码" autocomplete="current-password" />
+            </div>
+            <button class="btn-primary" id="password-login-btn">登录</button>
+            <div id="password-message" class="error-msg"></div>
+        </div>
+
         <div class="footer">
             验证码将发送到您的邮箱 · <a href="#" id="privacy-link">隐私说明</a>
         </div>
@@ -163,6 +201,15 @@
             const sendBtn = document.getElementById('send-code-btn');
             const loginBtn = document.getElementById('login-btn');
             const msgEl = document.getElementById('message');
+
+            // 指令二：密码登录（备用钥匙）。未设置密码时整条通道不出现。
+            const tabsEl = document.getElementById('login-tabs');
+            const loginFormEl = document.getElementById('login-form');
+            const passwordFormEl = document.getElementById('password-form');
+            const passwordInput = document.getElementById('login-password');
+            const passwordBtn = document.getElementById('password-login-btn');
+            const passwordMsgEl = document.getElementById('password-message');
+            let activeTab = 'code';
 
             let countdown = 0;
             let timer = null;
@@ -224,6 +271,70 @@
                 }
             }
 
+            // ===== 指令二：验证码 / 密码双通道 =====
+            function setPasswordMessage(text, isError = true) {
+                passwordMsgEl.textContent = text;
+                passwordMsgEl.className = isError ? 'error-msg' : 'success-msg';
+            }
+
+            function switchTab(tab) {
+                activeTab = tab === 'password' ? 'password' : 'code';
+                loginFormEl.style.display = activeTab === 'code' ? 'block' : 'none';
+                passwordFormEl.style.display = activeTab === 'password' ? 'block' : 'none';
+                tabsEl.querySelectorAll('button').forEach((b) => {
+                    b.classList.toggle('active', b.getAttribute('data-tab') === activeTab);
+                });
+                if (activeTab === 'password') passwordInput.focus();
+            }
+
+            // 没设置密码就只保留验证码登录（接口挂了也照常能用，fail-safe）
+            async function loadAuthModes() {
+                try {
+                    const resp = await fetch('/api/auth/config', { credentials: 'same-origin' });
+                    if (!resp.ok) return;
+                    const cfg = await resp.json();
+                    if (cfg && cfg.password_enabled === true) {
+                        tabsEl.style.display = 'flex';
+                        switchTab('code');
+                    }
+                } catch (e) { /* 保持纯验证码登录 */ }
+            }
+
+            async function loginWithPassword() {
+                const password = passwordInput.value;
+                if (!password) {
+                    setPasswordMessage('请输入登录密码');
+                    return;
+                }
+                passwordBtn.disabled = true;
+                setPasswordMessage('登录中...', false);
+                try {
+                    const resp = await fetch('/api/auth/login-password', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ password })
+                    });
+                    const data = await resp.json().catch(() => ({}));
+                    if (resp.ok && data.success && data.token) {
+                        sessionStorage.setItem('wow_token', data.token);
+                        setPasswordMessage('登录成功，正在跳转...', false);
+                        window.location.href = '/index.html';
+                        return;
+                    }
+                    if (resp.status === 429) {
+                        const sec = Number(data.retry_after_seconds) || 0;
+                        const mins = sec > 0 ? Math.ceil(sec / 60) : 15;
+                        setPasswordMessage(`尝试过于频繁，请约 ${mins} 分钟后再试`);
+                    } else {
+                        setPasswordMessage(data.error || '密码错误');
+                    }
+                    passwordBtn.disabled = false;
+                } catch (e) {
+                    setPasswordMessage('网络错误，请检查连接');
+                    passwordBtn.disabled = false;
+                }
+            }
+
             // 登录
             async function login() {
                 const email = emailInput.value.trim();
@@ -266,10 +377,17 @@
             // 事件绑定
             sendBtn.addEventListener('click', sendCode);
             loginBtn.addEventListener('click', login);
+            passwordBtn.addEventListener('click', loginWithPassword);
+            tabsEl.querySelectorAll('button').forEach((b) => {
+                b.addEventListener('click', () => switchTab(b.getAttribute('data-tab')));
+            });
 
-            // 回车键触发登录
+            // 回车键触发登录（按当前 Tab 分派）
             codeInput.addEventListener('keydown', (e) => {
                 if (e.key === 'Enter') login();
+            });
+            passwordInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') loginWithPassword();
             });
             emailInput.addEventListener('keydown', (e) => {
                 if (e.key === 'Enter') {
@@ -301,6 +419,9 @@
                 e.preventDefault();
                 alert('您的邮箱仅用于本服务器登录验证，不会存储或转发至任何第三方。');
             });
+
+            // 决定是否显示「密码登录」通道
+            loadAuthModes();
         })();
     </script>
 </body>

@@ -27,6 +27,9 @@ const { isWebCommandAllowed } = require('./command_policy');
 const WebNotes = require('./web_notes');
 // 实例配置（server.properties）读写
 const ServerProps = require('./server_props');
+// 指令一/二：危险开关拦截 + 登录限流的纯逻辑底座（零副作用，可反复 require）
+const security = require('./web_security');
+const rateLimit = security.createRateLimiter();
 
 // 用于存储 WebSocket 客户端连接
 let wsClients = [];
@@ -37,6 +40,10 @@ let isRunning = false;
 let logTailProcess = null;
 // V3.5.16：Cloudflare Tunnel 句柄（用于 stopWeb 时一并关闭）
 let tunnelHandle = null;
+// 指令一：隧道「建立中」哨兵。startTunnelForLocal() 是异步不 await 的，
+// tunnelHandle 要等公网地址就绪才赋值，中间这段窗口面板其实已经能被公网访问。
+// 没有它，这段窗口里 requireLogin()/危险开关判定都会误判成「本机」。
+let tunnelPending = false;
 
 // PID 文件路径（跨进程状态持久化）
 const WEB_PID_FILE = path.join(__dirname, '../.web.pid');
@@ -78,6 +85,13 @@ function requireLogin() {
     catch (e) { return true; }   // 配置读不到时按「需要登录」处理更安全
     if (flag) return true;
     try {
+        // 指令一：管理员显式声明「我挂在反向代理后面」。nginx/Caddy 反代到
+        // 127.0.0.1 时，绑定地址、socket IP、隧道标记全都「看起来是本机」，
+        // 只有这个声明位能让服务端可靠地知道自己已被公网访问。
+        if (config.getConfig('web.trust_proxy', false) === true) return true;
+        if (tunnelPending) return true;   // 隧道建立中，公网地址随时可能就绪
+    } catch (e) { return true; }
+    try {
         const cfgHost = config.getConfig('web.host', '127.0.0.1');
         // activeHost 是本次实际绑定；配置项写了对外地址时也一律强制
         // （用户可能只是临时用 --host 覆盖，配置本身仍指向公网）。
@@ -85,6 +99,23 @@ function requireLogin() {
     } catch (e) { return true; }
     if (tunnelHandle) return true;   // 隧道已建立 = 面板映射到公网
     return false;
+}
+
+/**
+ * 指令一：把「本机 / 暴露」判定所需的运行时状态打包给 web_security。
+ * 纯逻辑模块不读配置、不持有状态，全部由这里注入，便于单测反复重加载。
+ */
+function securityCtx() {
+    let cfgHost = '127.0.0.1';
+    let trustProxy = false;
+    try { cfgHost = config.getConfig('web.host', '127.0.0.1'); } catch (e) { /* 用默认 */ }
+    try { trustProxy = config.getConfig('web.trust_proxy', false) === true; } catch (e) { /* 用默认 */ }
+    return {
+        activeHost,
+        cfgHost,
+        tunnelActive: !!(tunnelHandle || tunnelPending),
+        trustProxy
+    };
 }
 
 /**
@@ -264,15 +295,26 @@ function verifyPassword(plain, stored) {
  * 生成验证码并发送
  */
 function generateAndSendCode(email) {
-    const code = String(Math.floor(100000 + Math.random() * 900000));
-    verificationCodes.set(email.toLowerCase(), {
-        code,
-        expires: Date.now() + 5 * 60 * 1000 // 5分钟有效
-    });
+    const key = email.toLowerCase();
 
     // 清理过期验证码
     for (const [k, v] of verificationCodes) {
         if (Date.now() > v.expires) verificationCodes.delete(k);
+    }
+
+    // 指令二：未过期的码直接复用，既不刷新有效期（防无限续期），
+    // 也不重复发邮件（防刷）。反复点「获取验证码」不会让手上的码失效。
+    const existing = verificationCodes.get(key);
+    let code;
+    if (existing && Date.now() < existing.expires) {
+        code = existing.code;
+    } else {
+        // CSPRNG 取代 Math.random，验证码不再可预测
+        code = String(crypto.randomInt(100000, 1000000));
+        verificationCodes.set(key, {
+            code,
+            expires: Date.now() + 5 * 60 * 1000 // 5分钟有效
+        });
     }
 
     // 如果配置了 SMTP，发送邮件
@@ -293,12 +335,24 @@ function generateAndSendCode(email) {
 /**
  * JWT 认证中间件
  */
+/**
+ * 认证中间件。web.require_login=false 时由外层包装层整体跳过（见 startWeb 内）。
+ *
+ * 指令二：`/api/auth/set-password` 列入白名单，凭「管理员邮箱 + 邮箱验证码」
+ * 认证而非 JWT —— 首次设密码时用户不可能已有 token，而换 token 的 login 会
+ * 消费掉验证码，协议上走不通。提权链由「验证码必填 + 5 次/15 分钟 IP 限流 +
+ * 邮箱为空即拒绝」堵住。
+ */
 function authMiddleware(req, res, next) {
     try {
-        // 白名单路径（无需认证）
-        // 注：/api/download 允许通过 ?token= 认证（浏览器 window.open 无法带 Authorization 头），
-        //     故在中间件层放行，由路由内部完成校验。
-        const publicPaths = ['/api/auth/request-code', '/api/auth/login', '/api/auth/verify', '/api/auth/mode', '/api/download'];
+        // 白名单路径（无需认证）。注：/api/download 用 ?token= 认证（window.open 带不了头）。
+        // 指令二：auth/config、login-password、set-password 必须登录前可调。
+        const publicPaths = [
+            '/api/auth/request-code', '/api/auth/login', '/api/auth/verify',
+            '/api/auth/mode', '/api/download',
+            '/api/auth/config', '/api/auth/login-password',
+            '/api/auth/set-password'
+        ];
         if (publicPaths.includes(req.path)) {
             return next();
         }
@@ -415,6 +469,16 @@ function startWeb(options = {}) {
     // 否则 2MB 的 PUT /api/files/content 会在 body 解析阶段就被拒（且抛未捕获异常）。
     app.use(express.json({ limit: '4mb' }));
 
+    // 指令一：危险开关写入闸门。注册在认证包装层**之前**，这样 Postman
+    // 直接 POST /api/config 改 web.allow_* 时，非本机一律先拿到 403（而不是
+    // 被未登录 401 抢先），文案所见即所得。守卫自身 fail-closed，且只针对
+    // 两个配置写入路径，普通配置写入与静态页完全不受影响。
+    // 注意：包装层与 authMiddleware 函数体保持原样，既有安全断言一行不动。
+    app.use(security.guardDangerKeys({
+        ctx: securityCtx,
+        flatten: flattenConfigPatch
+    }));
+
     // 认证中间件（保护 /api/* 路由）
     // web.require_login=false 时完全放行；true 或对外暴露 / 隧道时走既有 JWT 校验。
     // 用包装层而不是改 authMiddleware 函数体，既有安全断言一行不动。
@@ -507,6 +571,18 @@ function startWeb(options = {}) {
 
     app.post('/api/auth/login', (req, res) => {
         const { email, code, password } = req.body;
+        const ip = security.clientIp(req);
+
+        // 指令二：限流只按「凭据校验失败(401)」计数；400/403 一律不计，
+        // 避免白名单拒绝、参数错误把正常用户锁在门外。
+        const lock = rateLimit.isLocked(ip, 'login');
+        if (lock.locked) {
+            return res.status(429).json({
+                success: false,
+                error: '尝试过于频繁，请稍后再试',
+                retry_after_seconds: lock.retryAfter
+            });
+        }
 
         // V3.5.8：邮箱白名单（mail.whitelist）——即便验证码已被拿到，
         // 名单外的邮箱也不得换取 token。这是 request-code 之外的第二道闸，
@@ -534,9 +610,11 @@ function startWeb(options = {}) {
             }
             if (password) {
                 if (verifyPassword(password, offlineHash)) {
+                    rateLimit.noteSuccess(ip, 'login');
                     logger.impt(`Web 离线密码登录成功: ${email || 'admin@local'}`);
                     return issueToken(res, email || 'admin@local');
                 }
+                rateLimit.noteFailure(ip, 'login');
                 return res.status(401).json({ success: false, error: '离线密码错误' });
             }
         }
@@ -557,10 +635,12 @@ function startWeb(options = {}) {
         }
 
         if (stored.code !== code.trim()) {
+            rateLimit.noteFailure(ip, 'login');
             return res.status(401).json({ success: false, error: '验证码错误' });
         }
 
         verificationCodes.delete(email.toLowerCase());
+        rateLimit.noteSuccess(ip, 'login');
         return issueToken(res, email);
     });
 
@@ -580,6 +660,150 @@ function startWeb(options = {}) {
         } catch (e) {
             res.json({ valid: false });
         }
+    });
+
+    /**
+     * 指令二：登录页状态暴露（公开）。
+     * 前端据此决定 login.html 是否显示「密码登录」Tab、set.html 备用钥匙
+     * 卡片是否可用。**绝不回管理员邮箱明文**——否则「公开 email +
+     * dev_mode 回显码 + 匿名设密码」会组成一条完整提权链，故只给掩码。
+     */
+    app.get('/api/auth/config', (req, res) => {
+        const pwd = config.getConfig('web.auth_password', null);
+        const admin = config.getConfig('mail.admin_email', null);
+        const hasAdmin = !!(admin && String(admin).trim());
+        res.json({
+            password_enabled: !!(pwd && String(pwd).trim()),
+            email: hasAdmin ? security.maskEmail(String(admin).trim()) : '',
+            email_configured: hasAdmin
+        });
+    });
+
+    /**
+     * 指令二：密码登录（公开）。复用既有 web.auth_password 的 scrypt 加盐哈希，
+     * 与 /api/auth/login 的离线密码分支完全互通，成功同样签发 JWT。
+     */
+    app.post('/api/auth/login-password', (req, res) => {
+        const ip = security.clientIp(req);
+        const lock = rateLimit.isLocked(ip, 'login-password');
+        if (lock.locked) {
+            return res.status(429).json({
+                success: false, error: '尝试过于频繁，请稍后再试',
+                retry_after_seconds: lock.retryAfter
+            });
+        }
+
+        let stored = config.getConfig('web.auth_password', null);
+        if (!stored || !String(stored).trim()) {
+            return res.status(401).json({ success: false, error: '未设置登录密码，请先用验证码登录' });
+        }
+        // 兼容 CLI 直接写进 wow.yaml 的明文密码：首次使用自动哈希后落盘
+        if (!String(stored).startsWith(SCRYPT_PREFIX)) {
+            stored = hashPassword(stored);
+            config.setConfig('web.auth_password', stored);
+        }
+
+        const { password } = req.body || {};
+        if (!password || !verifyPassword(password, stored)) {
+            rateLimit.noteFailure(ip, 'login-password');
+            return res.status(401).json({ success: false, error: '密码错误' });
+        }
+
+        rateLimit.noteSuccess(ip, 'login-password');
+        logger.impt('Web 密码登录成功: admin@local');
+        return issueToken(res, 'admin@local');
+    });
+
+    /**
+     * 指令二：设置/修改登录密码（**需 JWT**，不在 publicPaths）。
+     * 三重校验：管理员邮箱已配置且提交邮箱与之匹配 → 验证码有效 → 密码强度。
+     * 已有密码时还要核对原密码，避免任何登录态（含 XSS/CSRF）静默重置。
+     * 通过后用 scrypt 加盐哈希写入 web.auth_password。
+     */
+    app.post('/api/auth/set-password', (req, res) => {
+        // 指令二：本接口的凭据是「管理员邮箱 + 邮箱验证码」，不是 JWT。
+        // 原因：首次设置密码时用户不可能已经有 token（没有密码就没法登录），
+        // 而 /api/auth/login 换 token 时会立刻消费掉验证码，所以「先换 token
+        // 再设密码」在协议上走不通。验证码已发到管理员邮箱，本身就是强凭据，
+        // 再叠 IP 限流（5 次 / 15 分钟）足以抵挡爆破；成功后直接签发 token，
+        // 用户设完密码即为登录态。
+        const ip = security.clientIp(req);
+        const lock = rateLimit.isLocked(ip, 'set-password');
+        if (lock.locked) {
+            return res.status(429).json({
+                success: false, error: '尝试过于频繁，请稍后再试',
+                retry_after_seconds: lock.retryAfter
+            });
+        }
+
+        const body = req.body || {};
+        const email = body.email;
+        const code = body.code;
+        const password = body.password;
+        const oldPassword = body.old_password;
+
+        // 门槛：wow.yaml 里没有管理员邮箱就不允许设置密码（指令二的硬要求）
+        const admin = String(config.getConfig('mail.admin_email', null) || '').trim().toLowerCase();
+        if (!admin) {
+            return res.status(400).json({
+                success: false, error: '请先在 wow.yaml 配置 mail.admin_email（管理员邮箱）后再设置密码'
+            });
+        }
+        if (!email || String(email).trim().toLowerCase() !== admin) {
+            return res.status(400).json({ success: false, error: '邮箱必须与管理员邮箱一致' });
+        }
+
+        // 已有密码时要求核对原密码
+        let current = config.getConfig('web.auth_password', null);
+        if (current && String(current).trim()) {
+            if (!String(current).startsWith(SCRYPT_PREFIX)) {
+                current = hashPassword(current);
+                config.setConfig('web.auth_password', current);
+            }
+            if (!oldPassword || !verifyPassword(oldPassword, current)) {
+                rateLimit.noteFailure(ip, 'set-password');
+                return res.status(401).json({ success: false, error: '原密码不正确' });
+            }
+        }
+
+        // 验证码校验（与 /api/auth/login 同口径，key 用小写管理员邮箱）
+        const stored = verificationCodes.get(admin);
+        if (!stored) {
+            return res.status(401).json({ success: false, error: '请先获取验证码' });
+        }
+        if (Date.now() > stored.expires) {
+            verificationCodes.delete(admin);
+            return res.status(401).json({ success: false, error: '验证码已过期，请重新获取' });
+        }
+        if (!code || stored.code !== String(code).trim()) {
+            rateLimit.noteFailure(ip, 'set-password');
+            return res.status(401).json({ success: false, error: '验证码错误' });
+        }
+
+        // 密码强度：8~128 位且含字母
+        const pwd = String(password == null ? '' : password);
+        if (pwd.length < 8 || pwd.length > 128 || !/[A-Za-z]/.test(pwd)) {
+            return res.status(400).json({ success: false, error: '密码需 8~128 位且至少包含一个字母' });
+        }
+
+        verificationCodes.delete(admin);
+        config.setConfig('web.auth_password', hashPassword(pwd));
+        rateLimit.noteSuccess(ip, 'set-password');
+        logger.impt('Web 备用钥匙登录密码已更新');
+
+        // 设完密码即为登录态：与 issueToken 同口径签发 token（issueToken 会直接
+        // res.json，这里还要带 message，故就地签）。前端拿到后写入 sessionStorage。
+        const sessionTimeout = config.getConfig('web.session_timeout', 86400);
+        const token = jwt.sign(
+            { email: admin, iat: Math.floor(Date.now() / 1000) },
+            getJwtSecret(),
+            { expiresIn: sessionTimeout }
+        );
+        return res.json({
+            success: true,
+            message: '登录密码已设置，验证码登录仍可继续使用',
+            token
+        });
     });
 
     // ===== API 路由 =====
@@ -2436,13 +2660,20 @@ function startWeb(options = {}) {
                 logger.warn('Cloudflare Tunnel 已跳过：未配置 web.auth_token / web.auth_password');
             } catch (e) { /* 日志失败不影响 */ }
         } else {
-            startTunnelForLocal(port).catch(e => {
-                console.error('');
-                console.error(`❌ Cloudflare Tunnel 启动失败: ${e.message}`);
-                console.error('   Web 面板本身仍在本地正常运行，可继续用本机地址访问。');
-                console.error('');
-                logger.erro(`Cloudflare Tunnel 启动失败: ${e.message}`);
-            });
+            // 指令一：在调用前先置「隧道建立中」哨兵，覆盖 tunnelHandle 尚未赋值、
+            // 但公网地址其实已经可达的这段窗口（startTunnelForLocal 异步不 await）。
+            // 无论成功失败都要清掉，否则面板会被永久当成「暴露」状态。
+            tunnelPending = true;
+            startTunnelForLocal(port)
+                .then(() => { tunnelPending = false; })
+                .catch(e => {
+                    tunnelPending = false;
+                    console.error('');
+                    console.error(`❌ Cloudflare Tunnel 启动失败: ${e.message}`);
+                    console.error('   Web 面板本身仍在本地正常运行，可继续用本机地址访问。');
+                    console.error('');
+                    logger.erro(`Cloudflare Tunnel 启动失败: ${e.message}`);
+                });
         }
     }
 
@@ -2478,8 +2709,19 @@ async function startTunnelForLocal(port) {
     console.log(`  ☁️  正在建立 Cloudflare 隧道 -> ${localUrl}`);
     console.log('     首次使用需下载 cloudflared，请稍候...');
 
-    const t = await Tunnel.startTunnel(localUrl);
+    // 指令一：从这里到 tunnelHandle 赋值之间，是一段「公网随时可达、
+    // 但句柄尚未就绪」的窗口。先置哨兵，让 requireLogin()/危险开关判定
+    // 全程收紧；成功由 tunnelHandle 接手，失败则立刻撤销。
+    tunnelPending = true;
+    let t;
+    try {
+        t = await Tunnel.startTunnel(localUrl);
+    } catch (e) {
+        tunnelPending = false;
+        throw e;
+    }
     tunnelHandle = t;
+    tunnelPending = false;
 
     // 高亮打印公网地址
     const bar = '═'.repeat(58);
@@ -2619,6 +2861,8 @@ function cleanupOwnStateFiles() {
  * V3.5.16：关闭隧道句柄（幂等，未开启时静默）
  */
 function stopTunnelHandle() {
+    // 指令一：连同「建立中」哨兵一起清，避免 stopWeb 之后残留暴露状态
+    tunnelPending = false;
     if (!tunnelHandle) return;
     try {
         tunnelHandle.stop();

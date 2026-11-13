@@ -192,6 +192,7 @@ backup:
 | `port` | integer | `8080` | Web 服务监听端口 |
 | `host` | string | `127.0.0.1` | 绑定地址（`0.0.0.0` 允许远程访问） |
 | `auth_token` | string | `null` | 自定义 JWT 密钥（`null` 自动生成）。暴露非回环地址时必填，否则 `web start` 拒绝启动 |
+| `require_login` | boolean | `false` | 🔺 **V3.7.0** `false` = 面板与接口都免登录；`true` = 强制验证。绑定 `0.0.0.0` / 非回环 / 开隧道 / `trust_proxy: true` 时**忽略 false 强制登录** |
 | `auth_password` | string | `null` | 🔺 **V3.5.3** 离线登录密码。未配 SMTP 时的替代登录方式；填写明文后首次登录会自动转成 scrypt 哈希落盘 |
 | `run_startup` | boolean | `true` | 是否随 CLI 自动启动 Web 服务 |
 | `theme` | string | `default` | 当前激活的主题包名称 |
@@ -201,6 +202,7 @@ backup:
 | `allow_scheme_ops` | boolean | `false` | 🔺 **V3.5.7** 放开 `scheme create/switch/delete/edit/pull/prune/register/export/import` |
 | `allow_remote_install` | boolean | `false` | 🔺 **V3.5.7** 放开 `install <http(s)://...>` 远程下载（等同任意代码执行入口） |
 | `allow_plugins` | boolean | `false` | 🔺 **V3.5.21** 放开插件注册的自定义命令经 Web 端执行（插件是第三方任意代码） |
+| `trust_proxy` | boolean | `false` | 🔺 **V3.7.0** 面板挂在 nginx / Caddy 等反向代理后面时置 `true`。反代到 `127.0.0.1` 时服务端分辨不出真实来源，只能靠这个声明位强制登录并保持危险开关锁定 |
 | `tunnel_mirror` | string | `''` | 🔺 **V3.5.22** cloudflared 二进制下载源。留空 = 内置三家国内镜像 + GitHub 官方兜底 |
 
 **示例：**
@@ -217,6 +219,7 @@ web:
   allow_scheme_ops: false
   allow_remote_install: false
   allow_plugins: false
+  trust_proxy: false
   tunnel_mirror: ''
 ```
 
@@ -238,14 +241,44 @@ web:
 > 该检查在 `server.listen()` **之前**执行，不占端口。先补齐再启动：
 >
 > ```bash
-> wow config wow web.auth_token 一串足够长的随机字符
+> wow config set web.auth_token 一串足够长的随机字符
 > wow web start --public
 > ```
+>
+> 📌 正式写法是 `wow config set <key> <value>`；旧写法 `wow config wow <key> <value>`
+> 仍然兼容（本文档部分历史示例保留旧写法），两者等价。
 
 > 🔒 **关于 `allow_scheme_ops` / `allow_remote_install` / `allow_plugins`**
 > 默认均为 `false`，保持安全基线。开启 `allow_remote_install` 相当于把任意代码执行入口
 > 暴露给 Web 面板访问者，请仅在完全可信的网络环境中开启。
 > `allow_plugins` 同理：插件与主程序同权限，放开它等于让面板登录者通过插件执行任意代码。
+>
+> ### 🔐 V3.7.0 起：这三个开关在 Web 端被物理锁定
+>
+> - **前端**：非本机访问 `set.html` 时，三个开关**连 DOM 都不渲染**（不是 CSS 隐藏），
+>   原位显示红字：`⚠️ 危险开关已被锁定。如需开启，请在服务器本机（127.0.0.1）访问 Web 面板修改，或使用 CLI 命令 wow config wow ...`
+> - **后端**：`POST /api/config` 与 `POST /api/config/batch` 只要载荷里**出现**这三个键，
+>   且请求不是「本机直连」，一律 `403`
+>   `出于安全考虑，危险开关只能在 127.0.0.1 下修改`。判定是出现即拦，`false` 也拦。
+> - **「本机」的判定**（全部满足才算）：socket 来源回环 + `Host` 回环 + 无隧道（含建立中）
+>   + `trust_proxy` 未开 + 绑定地址未暴露。出现任何转发头（`X-Forwarded-For` / `Forwarded` /
+>   `X-Real-IP` / `CF-Connecting-IP` / `CF-Ray`…）直接锁死——**转发头只用于收紧，不用于放行**。
+> - **CLI 不受限**：`wow config set web.allow_scheme_ops true` 仍然可用。
+>   本机 shell 权限本就是最高权限，Web 端拦的是「远端登录者顺手把闸门拉开」。
+>
+> ### 🌐 反向代理部署必读
+>
+> nginx / Caddy 反代到 `127.0.0.1:8080` 时，绑定地址、来源 IP、隧道标记全都
+> 「看起来是本机」。必须显式声明：
+>
+> ```yaml
+> web:
+>   trust_proxy: true
+> ```
+>
+> 开启后 `requireLogin()` 恒为真（面板一定要求登录）、危险开关在 Web 端保持锁定，
+> 上面那套「本机判定」也不会再因为 socket 是 `127.0.0.1` 而误放行。
+> 没有挂反代时请**保持 `false`**，否则本机自用也要登录。
 
 ### `web.tunnel_mirror` — cloudflared 下载源
 
@@ -332,6 +365,9 @@ mail:
 > - 写 `- "*"` = 放开所有邮箱（等价于不限制，仅用于明确表态）。
 > - 除 YAML 列表外，也接受逗号分隔字符串：`whitelist: "a@b.com, c@d.cn"`。
 > - 兼容 `mail.WhiteList` / `mail.whiteList` 写法（主键 `whitelist` 优先）。
+> - **设置了「备用钥匙」密码时，`mail.admin_email` 必须也在名单内**（名单非空时）。
+>   否则「获取验证码」会 403，导致密码无法设置 / 修改 —— 密码登录本身不需要验证码，
+>   但设置密码必须走邮箱验证码。
 
 > 💡 Gmail 需要使用 **应用专用密码**，不是登录密码。
 

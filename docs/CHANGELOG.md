@@ -42,7 +42,7 @@
 
 | 版本 | 状态 | 发布时间 |
 |------|------|------|
-| **待发行** | 累积改动：readline 单例 + 3.7.0 视图重构执行令（版本号待定） | — |
+| **待发行** | 累积改动：readline 单例 + 3.7.0 视图重构 + 危险开关锁定 + 备用钥匙密码登录（版本号待定） | — |
 | **3.7.3-26.46** | 当前版本（M 模式画面独占 + 三处线上问题） | 2026-11-09 |
 | **3.7.2-26.45** | 上一版本 |2026-11-08|
 | **3.7.1-26.44** | 上一版本 |2026-11-08|
@@ -119,6 +119,43 @@
 | **1.0.0** | 内部迭代 |2026-02-07|
 
 ---
+
+## [待发行] — 2026-11-13：危险开关 Web 端锁定 + 备用钥匙密码登录
+
+> 承接两条 Web 安全加固指令。与 11-10 / 11-12 两批改动合并累积在**同一个待发行
+> 版本**下，版本号 / tag / Release 等用户说「发行」时再定（见 `docs/RELEASE_POLICY.md`）。
+
+### 一、危险开关物理隐藏（前端防呆 + 后端二次拦截）
+
+- 新增 `core/src/web_security.js`（零副作用纯逻辑底座）：从 `config_schema.listFields()` 派生 `danger === true && key.startsWith('web.allow_')` 的三个键，并用 `EXPECTED_DANGER_KEYS` 显式常量做双保险；schema 万一漏标 `danger:true` 会 **fail-fast 拒绝加载**，避免静默漏防。
+- 新增独立中间件 `guardDangerKeys()`，注册在认证包装层**之前**，覆盖 `POST /api/config` 与 `POST /api/config/batch`，兼容「单键 `{key,value}`」「`{patch}`」「整份嵌套对象」三种载荷。命中危险键且非本机 → `403 { error: '出于安全考虑，危险开关只能在 127.0.0.1 下修改' }`；`ctx` 取不到时 **fail-closed**，绝不 fail-open。
+- 「本机」判定取最严：`socket.remoteAddress` 必须是回环 + `Host` 必须是回环 + 无隧道（含建立中窗口）+ `web.trust_proxy` 未开 + 绑定地址未暴露；出现 `x-forwarded-for` / `forwarded` / `x-real-ip` / `cf-connecting-ip` / `cf-ray` 等任一转发头即锁死。转发头**只用于收紧，绝不用于放行**。
+- `set.html` 非本机访问时三个开关**连 DOM 都不渲染**（不是 CSS 隐藏），原位显示红字：`⚠️ 危险开关已被锁定。如需开启，请在服务器本机（127.0.0.1）访问 Web 面板修改，或使用 CLI 命令 wow config wow ...`；原始 JSON 模式的加载与保存都剔除隐藏键，避免非本机保存整份对象被误伤成 403。
+- `scheme.html` 的快捷开关在非本机时不再弹确认、不发 POST，直接给同一句红字；旧缓存页面收到 403 时也映射成同一提示。
+
+### 二、新增配置 `web.trust_proxy`
+
+`web.trust_proxy`（默认 `false`）：面板挂在 nginx / Caddy 等反向代理后面时置 `true`。反代到 `127.0.0.1:8080` 时，绑定地址、来源 IP、隧道标记全都「看起来是本机」，只有这个显性声明位能让服务端知道自己已被公网访问。开启后 `requireLogin()` 恒为真、危险开关保持锁定。
+
+### 三、备用钥匙：密码登录双通道
+
+| 接口 | 是否公开 | 说明 |
+|------|----------|------|
+| `GET /api/auth/config` | 是 | `{ password_enabled, email, email_configured }`；`email` 为掩码（`a***@example.com`），不回管理员邮箱明文 |
+| `POST /api/auth/login-password` | 是 | 校验 `web.auth_password`（scrypt 加盐哈希），成功发 JWT；5 次 401 失败后锁 15 分钟（429 + `retry_after_seconds`） |
+| `POST /api/auth/set-password` | 是 | 凭「管理员邮箱 + 邮箱验证码」认证（首次设密码时不可能已有 token，且换 token 的 login 会消费验证码）；成功返回 JWT。`mail.admin_email` 为空直接 400 |
+
+- `login.html` 启动时查询 `/api/auth/config`，仅当 `password_enabled === true` 才出现「验证码登录 / 密码登录」双 Tab；接口失败或未设密码时保持纯验证码表单（fail-safe）。
+- `set.html` 新增独立「备用钥匙」卡片：邮箱 → 获取验证码 → 验证码 + 新密码 → 提交；已有密码时追加「当前密码」校验。`mail.admin_email` 未配置时整卡禁用并提示。
+- 验证码登录始终保留：密码通道被限流锁死也不影响验证码通道（限流按「通道 + IP」分桶）。
+- 验证码改用 `crypto.randomInt`（CSPRNG），未过期的码复用、不刷新有效期、不重复发邮件。
+
+### 四、已知边界（本轮明确不做）
+
+- 锁定只作用于 Web 配置写入口；`wow config set` 等 CLI 通道不受限（本机 shell 权限本就是最高权限）。
+- `socket.io` 握手未做 JWT 校验（沿用既有行为）。
+- 隧道 / 反向代理共享 `127.0.0.1` 时，限流按 IP 分桶会退化为「全局限流」，可能被用于自我 DoS。
+- 已登录态 `GET /api/config` 仍返回全量配置（含 secret 哈希）；匿名请求在公网 / 反代模式下已被强制登录拦住。
 
 ## [待发行] — 2026-11-12：3.7.0 视图重构与功能补丁执行令
 
