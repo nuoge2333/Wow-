@@ -144,43 +144,46 @@ check('joinRoom 空房间号 / 空玩家名返回 null（同步前置校验，�
     assert.strictEqual(r2, null);
 });
 
-console.log('\n[4] interactive.js —— R 页第 9 项与菜单接线');
+console.log('\n[4] interactive.js —— R 页联机四项与 ACTION_BY_KEY 接线');
 
-check('R 页追加第 9 项「我要当房客」，legacy=144，未重排前 8 项', () => {
+check('R 页四项联机动作各自成项（V3.7.4 扁平化后无聚合入口）', () => {
     const i = itvSrc.indexOf("key: 'R'");
     const body = itvSrc.slice(i, itvSrc.indexOf("key: 'T'", i));
-    for (let n = 1; n <= 9; n++) {
-        assert.ok(new RegExp(`id: '${n}'`).test(body), `R 页缺第 ${n} 项`);
+    for (const label of ['开房（陶瓦，生成房间号）', '查看房间号 / 联机状态',
+                         '关房（停止陶瓦）', '我要当房客 Join Room (陶瓦)']) {
+        assert.ok(new RegExp(`label: '${label.replace(/[/()\[\]]/g, m => '\\' + m)}'`).test(body),
+            `R 页缺少「${label}」`);
     }
-    assert.ok(/id: '9', legacy: \['144'\], label: '我要当房客 Join Room \(陶瓦\)'/.test(body), '第 9 项定义不符');
-    // 前 8 项 legacy 保持原值，确认没有插入 / 重排
-    for (const legacy of ['14', '141', '142', '143', '7', '121', '122', '123']) {
-        assert.ok(new RegExp(`legacy: \\['${legacy}'\\]`).test(body), `原 legacy ${legacy} 被改动`);
-    }
+    // 扁平化后 R 页第 1 项直接是开房，不再有「联机 / 我要当房主」聚合项
+    assert.ok(/id: '1', label: '开房（陶瓦，生成房间号）'/.test(body), 'R 页第 1 项不是开房');
+    assert.ok(!/label: '联机 \/ 我要当房主 \(陶瓦\)'/.test(body), '聚合入口仍存在');
 });
 
-check("dispatchMenuItem 加 case '144' → dispatchMenu('14', {sub:'4'})", () => {
-    assert.ok(/case '144': return dispatchMenu\('14', options, rl, \{ sub: '4' \}, io\)/.test(itvSrc), '缺 case 144 接线');
-});
-
-check("case '14' 子菜单新增第 4 项，提示范围扩到 (0-4)", () => {
-    const i = itvSrc.indexOf("case '14': {");
-    assert.ok(i > 0, '找不到 case 14');
-    const body = itvSrc.slice(i, i + 2200);
-    assert.ok(/4\. 我要当房客/.test(body), '子菜单未列第 4 项');
-    assert.ok(/请选择 \(0-4\)/.test(body), '提示范围未扩到 0-4');
-    assert.ok(/sub === '4'/.test(body), '缺 sub=4 分支');
-});
-
-check('房客输入走 ioAsk 收集房间号/玩家名，调用 Terracotta.joinRoom，绝不自建 readline', () => {
-    const i = itvSrc.indexOf("case '14': {");
-    const body = itvSrc.slice(i, i + 3000);
+check('R4「我要当房客」经 ACTION_BY_KEY 接到 terracottaJoin', () => {
+    assert.ok(/action\('R', 4, \(env\) => terracottaJoin\(env\)\)/.test(itvSrc),
+        'R4 未接到 terracottaJoin');
+    const i = itvSrc.indexOf('async function terracottaJoin(');
+    assert.ok(i > 0, '缺 terracottaJoin 实现');
+    const body = itvSrc.slice(i, i + 1600);
     assert.ok(/请输入房间号/.test(body), '未收集房间号');
     assert.ok(/请输入你的玩家名/.test(body), '未收集玩家名');
     assert.ok(/Terracotta\.joinRoom\(\{ roomCode, player: playerName \}\)/.test(body), '未调 joinRoom');
-    const sub4 = body.slice(body.indexOf("sub === '4'"), body.indexOf('} catch (e)'));
-    assert.ok(!/createInterface|createRL\(/.test(sub4), '房客分支自建了 readline');
-    assert.ok(/ioAsk\(io, rl,/.test(sub4), '未走统一 ioAsk 通道');
+    assert.ok(!/createInterface|createRL\(/.test(body), '房客动作自建了 readline');
+    assert.ok(/ioAsk\(env\.io, env\.rl,/.test(body), '未走统一 ioAsk 通道');
+});
+
+check('R1/R2/R3 分别接到 hostRoom / getStatus / stopHost', () => {
+    assert.ok(/action\('R', 1, \(env\) => terracottaHost\(env\)\)/.test(itvSrc));
+    assert.ok(/action\('R', 2, \(\) => terracottaStatus\(\)\)/.test(itvSrc));
+    assert.ok(/action\('R', 3, \(\) => terracottaStop\(\)\)/.test(itvSrc));
+    assert.ok(/Terracotta\.hostRoom\(/.test(itvSrc), '缺 hostRoom 调用');
+    assert.ok(/Terracotta\.getStatus\(/.test(itvSrc), '缺 getStatus 调用');
+    assert.ok(/Terracotta\.stopHost\(/.test(itvSrc), '缺 stopHost 调用');
+});
+
+check('陶瓦子菜单已彻底移除（源码不再打印 1~4 选择页）', () => {
+    const codeLines = itvSrc.split('\n').filter(l => !/^\s*(\/\/|\*|\/\*)/.test(l));
+    assert.ok(!codeLines.some(l => /请选择 \(0-/.test(l)), '仍有「请选择 (0-N)」');
 });
 
 console.log('\n[5] 注释与文档更正');

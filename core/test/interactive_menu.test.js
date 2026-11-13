@@ -23,122 +23,132 @@ function check(title, fn) {
 
 console.log('\n菜单改造校验 (V3.5.7 + V3.5.8 + V3.5.9)\n');
 
-// 提取顶层 case 体，便于精确断言
-// 注意：case 体内部有嵌套块，简单用 `^            }` 会在第一个嵌套 } 处提前截断，
-// 因此改为「从本体开始、到下一个顶层 case 或文件尾」的区间截取。
-const topCaseBodies = {};
-{
-    const marks = [];
-    for (const m of src.matchAll(/^            case '(\d+)': \{/gm)) {
-        marks.push({ num: m[1], start: m.index });
-    }
-    for (let i = 0; i < marks.length; i++) {
-        const end = (i + 1 < marks.length) ? marks[i + 1].start : src.length;
-        topCaseBodies[marks[i].num] = src.slice(marks[i].start, end);
-    }
+// V3.7.4 扁平化：原来的 14 个顶层 case（含 10 张 `请选择 (0-N)` 子菜单）已全部
+// 拆成模块级具名函数，dispatchMenu 只剩一张转发表。所以这里的断言从
+// 「源码里有没有 case 2 的子菜单」改为「具名动作函数是否齐备、子菜单是否彻底消失」。
+
+/** 取一个 `async function NAME(` 的完整函数体（到下一个顶层 `\n}` 为止） */
+function fnBody(name) {
+    const re = new RegExp(`(?:async )?function ${name}\\([^)]*\\) \\{`);
+    const m = src.match(re);
+    if (!m) return '';
+    const start = m.index;
+    const rest = src.slice(start);
+    // 顶层 `}`：行首无缩进的 }
+    const endM = rest.match(/\n\}/);
+    return endM ? rest.slice(0, endM.index + 2) : rest;
 }
 
-console.log('— 顶层 case 完整性 —');
-check('顶层 case 1-14 全部存在', () => {
-    for (let i = 1; i <= 14; i++) {
-        assert.ok(topCaseBodies[String(i)], `缺少 case '${i}'`);
+console.log('— 扁平化：零子菜单 —');
+check('源码中不存在任何「请选择 (0-N)」子菜单提示', () => {
+    // 只查真实代码行，注释里解释「以前有过」不算
+    const codeLines = src.split('\n').filter(l => !/^\s*(\/\/|\*|\/\*)/.test(l));
+    const hit = codeLines.filter(l => /请选择 \(0-/.test(l));
+    assert.strictEqual(hit.length, 0, `仍有子菜单提示：${hit.join(' | ')}`);
+});
+check('源码中不存在 subOf（子菜单读取器）', () => {
+    const codeLines = src.split('\n').filter(l => !/^\s*(\/\/|\*|\/\*)/.test(l));
+    assert.ok(!codeLines.some(l => /subOf\s*\(/.test(l)), 'subOf 未彻底移除');
+});
+check('dispatchMenu 不再接受 preset 参数', () => {
+    assert.ok(/async function dispatchMenu\(choice, options, rl, io = null\)/.test(src),
+        'dispatchMenu 签名仍带 preset');
+});
+check('dispatchMenu 是一张纯转发表（不含子菜单 switch）', () => {
+    const body = fnBody('dispatchMenu');
+    assert.ok(body.length > 0, '未找到 dispatchMenu');
+    assert.ok(!/请选择/.test(body), 'dispatchMenu 里还打印选择页');
+});
+
+console.log('— 具名动作函数齐备 —');
+check('方案五项动作都是独立函数', () => {
+    for (const n of ['schemeCreate', 'schemeSwitch', 'schemeDelete', 'schemeInfo', 'schemePrune']) {
+        assert.ok(fnBody(n).length > 0, `缺少 ${n}`);
+    }
+});
+check('模组七项动作都是独立函数', () => {
+    for (const n of ['modList', 'modInstall', 'modRemove', 'modToggle',
+                     'modViewConfig', 'modEditConfig', 'modBackupConfig']) {
+        assert.ok(fnBody(n).length > 0, `缺少 ${n}`);
+    }
+});
+check('陶瓦四项动作都是独立函数', () => {
+    for (const n of ['terracottaHost', 'terracottaStatus', 'terracottaStop', 'terracottaJoin']) {
+        assert.ok(fnBody(n).length > 0, `缺少 ${n}`);
+    }
+});
+check('server.properties 四项动作都是独立函数', () => {
+    for (const n of ['propsListAll', 'propsSetOne', 'propsWizard', 'propsResetOne']) {
+        assert.ok(fnBody(n).length > 0, `缺少 ${n}`);
     }
 });
 
-// 菜单 2
-const c2 = topCaseBodies['2'] || '';
-console.log('\n— 菜单 2：新建方案 —');
-check('case 2 不再是「下载/安装实例」标题', () => {
-    // 只检测 printHeader 的实参，注释里提到旧名不算
-    assert.ok(!/printHeader\('下载\/安装实例'\)/.test(c2), '仍残留旧标题');
+console.log('\n— 新建方案：逻辑完整性（原 case 2 子项 1）—');
+const createBody = fnBody('schemeCreate');
+check('schemeCreate 标题为「新建方案」', () => {
+    assert.ok(/printHeader\('新建方案'\)/.test(createBody));
 });
-check('case 2 标题为「新建方案」', () => {
-    assert.ok(/printHeader\('新建方案'\)/.test(c2));
+check('schemeCreate 询问方案名', () => {
+    assert.ok(/ioAsk\(env\.io, env\.rl, '方案名称: '\)/.test(createBody),
+        '未询问方案名');
 });
-check('case 2 询问方案名', () => {
-    // V3.6.3：TUI 模式下提问走 ioAsk（挂起键盘后的安全通道），
-    // 兼容模式与外部裸调仍走 ask(rl, ...)，两种都应存在
-    assert.ok(/ioAsk\(io, rl, '方案名称: '\)/.test(c2) || /ask\(rl, '方案名称: '\)/.test(c2),
-        'case 2 未询问方案名');
+check('schemeCreate 校验方案名合法性', () => {
+    assert.ok(/validateNameSegment/.test(createBody));
 });
-check('case 2 校验方案名合法性', () => {
-    assert.ok(/validateNameSegment/.test(c2));
+check('schemeCreate 检查方案是否已存在', () => {
+    assert.ok(/_schemeExists/.test(createBody));
 });
-check('case 2 检查方案是否已存在', () => {
-    assert.ok(/_schemeExists/.test(c2));
-});
-check('case 2 用对象签名调 create（修复位置参数 bug）', () => {
-    assert.ok(/schemeManager\.create\(\s*sName\s*,\s*\{/.test(c2),
+check('schemeCreate 用对象签名调 create（修复位置参数 bug）', () => {
+    assert.ok(/schemeManager\.create\(\s*sName\s*,\s*\{/.test(createBody),
         '未使用 create(name, { ... }) 对象签名');
 });
-check('case 2 传入 type/version/loader/build 四项', () => {
-    // 允许 ES6 简写（type,）与全写（type: type）两种形式
+check('schemeCreate 传入 type/version/loader/build 四项', () => {
     for (const k of ['type', 'version', 'loader', 'build']) {
-        assert.ok(new RegExp(`${k}\\s*[:,]`).test(c2), `缺少 ${k}`);
+        assert.ok(new RegExp(`${k}\\s*[:,]`).test(createBody), `缺少 ${k}`);
     }
 });
-check('case 2 不残留 create 三位置参数写法', () => {
+check('schemeCreate 有 try/catch 包裹创建过程', () => {
+    assert.ok(/try\s*\{[\s\S]*schemeManager\.create[\s\S]*catch/.test(createBody));
+});
+check('schemeCreate 不残留 create 三位置参数写法', () => {
     assert.ok(!/create\(\s*\w+\s*,\s*\w+\s*,\s*\w+\s*\)/.test(src),
         '仍存在 create(name, version, loader) 位置参数调用');
 });
-check('case 2 有 try/catch 包裹创建过程', () => {
-    assert.ok(/try\s*\{[\s\S]*schemeManager\.create[\s\S]*catch/.test(c2));
-});
-check('case 2 引用不存在的 getSchemeDir 已移除', () => {
+check('schemeCreate 引用不存在的 getSchemeDir 已移除', () => {
     assert.ok(!/utils\.getSchemeDir/.test(src));
 });
-check('case 2 使用 schemesDir 输出真实目录', () => {
-    assert.ok(/schemesDir/.test(c2));
+check('schemeCreate 使用 schemesDir 输出真实目录', () => {
+    assert.ok(/schemesDir/.test(createBody));
 });
-
-// 菜单 2：方案管理（V3.5.x 合并「新建方案」+「方案管理」为单一入口）
-const c2full = topCaseBodies['2'] || '';
-console.log('\n— 菜单 2：方案管理（合并原 13）—');
-check('case 2 标题为「方案管理」', () => {
-    assert.ok(/printHeader\('方案管理'\)/.test(c2full));
+check('loader 随核心类型自动确定（create 传入 loader: type）', () => {
+    assert.ok(/loader:\s*type/.test(createBody), 'loader 未跟随 type');
 });
-check('case 2 含方案管理子菜单 1-5（新建/切换/列出/删除/信息）', () => {
-    assert.ok(/1\. 新建方案/.test(c2full));
-    assert.ok(/2\. 切换方案/.test(c2full));
-    assert.ok(/3\. 列出方案/.test(c2full));
-    assert.ok(/4\. 删除方案/.test(c2full));
-    assert.ok(/5\. 方案信息/.test(c2full));
+check('schemeSwitch 已 await switch（异步方法）', () => {
+    assert.ok(/await schemeManager\.switch\(/.test(fnBody('schemeSwitch')));
 });
-check('case 2 子菜单提示范围改为 (0-5)', () => {
-    assert.ok(/请选择 \(0-5\)/.test(c2full));
+check('schemeDelete 已 await delete（异步方法）', () => {
+    assert.ok(/await schemeManager\.delete\(/.test(fnBody('schemeDelete')));
 });
-check('case 2 仍保留新建方案逻辑（方案名/校验/create 对象签名）', () => {
-    assert.ok(/ioAsk\(io, rl, '方案名称: '\)|ask\(rl, '方案名称: '\)/.test(c2full));
-    assert.ok(/validateNameSegment/.test(c2full));
-    assert.ok(/schemeManager\.create\(\s*sName\s*,\s*\{/.test(c2full));
-});
-check('case 2 切换方案已 await switch（异步方法）', () => {
-    assert.ok(/await schemeManager\.switch\(/.test(c2full));
-});
-check('case 2 delete 已 await（异步方法）', () => {
-    assert.ok(/await schemeManager\.delete\(/.test(c2full));
-});
-check('case 2 含 schemeManager\.info（方案信息）', () => {
-    assert.ok(/schemeManager\.info\(/.test(c2full));
-});
-check('case 2 已移除原「备份/恢复」标题', () => {
-    assert.ok(!/printHeader\('备份\/恢复/.test(c2full));
+check('schemeInfo 调 schemeManager.status（方案信息输出）', () => {
+    assert.ok(/schemeManager\.status\(/.test(fnBody('schemeInfo')));
 });
 
 // 主菜单文字
 console.log('\n— 主菜单文字 —');
-check('主菜单（W 页）含「方案管理」且旧编号 2 仍指向它', () => {
-    // V3.6.3：主菜单的硬编码数组改成 PAGES 声明式表格
-    // V3.7.2：页内序号改为 1,2,3…，「方案管理」在 W 页是第 1 项、旧编号 2
-    assert.ok(/id: '1', legacy: \['2'\], label: '方案管理/.test(src),
-        'W 页的「方案管理」不再认旧编号 2');
+check('W 页第 1 项是「新建方案」（原聚合入口已拆开）', () => {
+    // V3.7.4：原「方案管理 (新建/切换/列表/删除/信息)」聚合项删除，
+    // 五项动作各自成项，第 1 项就是最常用的「新建方案」
+    assert.ok(/id: '1', label: '新建方案'/.test(src), 'W 页第 1 项不是「新建方案」');
+    assert.ok(!/label: '方案管理 \(/.test(src), '聚合入口「方案管理 (…」仍存在');
 });
 check('主菜单第 2 项不再显示「下载/安装实例」', () => {
     assert.ok(!/\['2', '下载\/安装实例'\]/.test(src));
 });
-check('主菜单（Y 页）末尾仍是「Web 主题更改」（旧编号 13）', () => {
-    assert.ok(/id: '7', legacy: \['13'\], label: 'Web 主题更改'/.test(src),
-        'Y 页的「Web 主题更改」不再认旧编号 13');
+check('Y 页把 Web 主题拆成四项（列出/安装/切换/删除）', () => {
+    for (const label of ['列出已安装 Web 主题', '安装 Web 主题', '切换 Web 主题', '删除 Web 主题']) {
+        assert.ok(new RegExp(`label: '${label}'`).test(src), `Y 页缺少「${label}」`);
+    }
+    assert.ok(!/label: 'Web 主题更改'/.test(src), '旧的聚合项「Web 主题更改」仍存在');
 });
 check('主菜单不再存在「方案管理 (切换/列表/删除)」旧第 13 项', () => {
     assert.ok(!/\['13', '方案管理 \(切换\/列表\/删除\)'\]/.test(src));
@@ -372,7 +382,7 @@ check('新建方案不再询问「加载器 (默认 ...)」', () => {
     assert.ok(!/ask\(rl, [`']加载器/.test(src), '仍存在加载器提问');
 });
 check('loader 随核心类型自动确定（create 传入 loader: type）', () => {
-    assert.ok(/loader: type/.test(c2full), 'create 未传 loader: type');
+    assert.ok(/loader: type/.test(fnBody('schemeCreate')), 'create 未传 loader: type');
 });
 
 console.log('\n— V3.5.11 scheme create 帮助文案（cli.js）—');

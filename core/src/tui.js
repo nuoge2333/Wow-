@@ -358,13 +358,6 @@ function drawPage(ctx) {
     const items = def.items || [];
     const idWidth = Math.max(2, ...items.map(it => String(it.id).length));
     const labelWidth = Math.max(0, ...items.map(it => dispWidth(it.label))) + 2;
-    // 旧编号小注：`旧 22`。只在对本页序号有歧义时显示（老用户靠它找旧习惯），
-    // 且**不占编号列**——编号列永远只有界面上那套 1 2 3 4 5。
-    const legacyTags = items.map(it => {
-        const legacy = Array.isArray(it.legacy) ? it.legacy.map(String) : [];
-        return legacy.length ? `旧 ${legacy.join('/')}` : '';
-    });
-    const tagWidth = Math.max(0, ...legacyTags.map(t => dispWidth(t)));
     // 备注列宽：本页实际最长的一条（会被下面的列预算再压一次）。
     // 早先这里还夹了一个「建议上限」，结果 13 字的备注被截成 `PCL/HMC…`，
     // 而 70 列其实放得下——真正需要截断的判断只在列预算里做。
@@ -372,13 +365,14 @@ function drawPage(ctx) {
     for (let i = 0; i < items.length; i++) {
         const it = items[i];
         const num = paint(String(it.id).padStart(idWidth), 'cyan');
-        // 标签列按「本页最长标签」排；但标签 + 旧编号小注 + 备注加起来
-        // 可能超过 70 列（网络页第一项标签就有 18 字），超了就等比压两列：
-        // 先压标签（截断加 …），不够再压备注。编号列永远完整。
+        // 标签列按「本页最长标签」排；标签 + 备注加起来可能超过 70 列
+        // （网络页第一项标签就有 18 字），超了就等比压两列：先压标签
+        // （截断加 …），不够再压备注。编号列永远完整。
+        //
+        // V3.7.4 扁平化后不再有「旧 xx」小注，tagReserve 归零。
         //
         // 右边距留 1 格：正好贴到 70 列时有些终端会在最后一列自动换行。
-        const tagReserve = tagWidth ? tagWidth + 2 : 0;
-        const budget = WIDTH - 1 - 4 - idWidth - 2 - tagReserve;
+        const budget = WIDTH - 1 - 4 - idWidth - 2;
         let labelCol = Math.min(labelWidth, budget);
         // 标签列不低于 10 格（`变更配置 (se…`），否则名字短到认不出，
         // 剩下的空间让备注去截
@@ -389,11 +383,8 @@ function drawPage(ctx) {
             hintCol = Math.max(0, budget - labelCol);
         }
         const label = padRight(fit(it.label, labelCol - 2), labelCol);
-        const tag = legacyTags[i]
-            ? paint(padRight(legacyTags[i], tagWidth), 'dim') + '  '
-            : (tagWidth ? ' '.repeat(tagWidth + 2) : '');
         const hint = it.hint ? paint(fit(String(it.hint), hintCol), 'gray') : '';
-        line(`  ${num}. ${label}${tag}${hint}`);
+        line(`  ${num}. ${label}${hint}`);
     }
 
     line('');

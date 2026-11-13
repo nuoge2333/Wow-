@@ -46,10 +46,20 @@ check('每页都有 label / title / items', () => {
     }
 });
 
-// 执行令阶段 4a：R 页追加第 9 项「我要当房客 Join Room」，由 8 项变 9 项。
-check('Q 页 6 项 / W 页 9 项 / E 页 7 项 / R 页 9 项 / T 页 7 项 / Y 页 7 项', () => {
+// V3.7.4 扁平化：原 10 个聚合入口拆成页内独立项，项数随之上浮。
+//   Q 9 / W 9 / E 11 / R 10 / T 7 / Y 9
+check('Q 页 9 项 / W 页 9 项 / E 页 11 项 / R 页 10 项 / T 页 7 项 / Y 页 9 项', () => {
     const counts = Object.fromEntries(itv.PAGES.map(p => [p.key, p.items.length]));
-    assert.deepStrictEqual(counts, { Q: 6, W: 9, E: 7, R: 9, T: 7, Y: 7 });
+    assert.deepStrictEqual(counts, { Q: 9, W: 9, E: 11, R: 10, T: 7, Y: 9 });
+});
+
+check('每页每一项都能在 ACTION_BY_KEY 里找到实现（无空壳项）', () => {
+    for (const p of itv.PAGES) {
+        for (const it of p.items) {
+            const k = `${p.key}:${it.id}`;
+            assert.ok(itv.ACTION_BY_KEY.has(k), `${k} 没有注册动作函数（点了会报未知菜单项）`);
+        }
+    }
 });
 
 check('每页内编号不重复', () => {
@@ -59,11 +69,11 @@ check('每页内编号不重复', () => {
     }
 });
 
-check('原主菜单的 1~14 全部有页认领（改成页内序号后旧编号不丢）', () => {
-    const origin = new Set(['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14']);
-    const all = new Set(itv.PAGES.flatMap(p => p.items.flatMap(it => itv.idsOf(it))));
-    for (const n of origin) {
-        assert.ok(all.has(n), `原主菜单 ${n} 号没有任何页认领`);
+check('PAGES 项不再有 legacy 字段（旧编号兼容已移除）', () => {
+    for (const p of itv.PAGES) {
+        for (const it of p.items) {
+            assert.ok(!('legacy' in it), `${p.key} 页「${it.label}」还带 legacy`);
+        }
     }
 });
 
@@ -91,17 +101,15 @@ check('页内序号不重复、旧编号不侵占别页序号（跨页解析不�
     }
 });
 
-check('resolveNumber：本页序号 → 本页旧编号 → 跨页旧编号', () => {
+check('resolveNumber：只认本页顺号，同一数字在不同页指向不同动作', () => {
     // 同一数字在不同页表示不同的东西，这是「到哪页都是顺号」的核心
     assert.strictEqual(itv.resolveNumber('1', 'Q').item.label, '启动 / 停止服务器');
-    assert.strictEqual(itv.resolveNumber('1', 'W').item.label.startsWith('方案管理'), true);
-    assert.strictEqual(itv.resolveNumber('1', 'E').item.label, '管理模组 / 插件');
-    // 本页旧编号仍认
-    assert.strictEqual(itv.resolveNumber('22', 'W').item.label, '列出全部方案（含状态）');
-    // 跨页旧编号：Q 页敲 22 会得到 W 页那一项
-    const cross = itv.resolveNumber('22', 'Q');
-    assert.strictEqual(cross.page, 'W');
-    assert.strictEqual(cross.functional, '22');
+    assert.strictEqual(itv.resolveNumber('1', 'W').item.label, '新建方案');
+    assert.strictEqual(itv.resolveNumber('1', 'E').item.label, '列出已安装模组');
+    // 旧编号不再被认
+    assert.strictEqual(itv.resolveNumber('22', 'W'), null);
+    assert.strictEqual(itv.resolveNumber('141', 'R'), null);
+    assert.strictEqual(itv.resolveNumber('144', 'R'), null);
     // 不存在的编号
     assert.strictEqual(itv.resolveNumber('999', 'Q'), null);
 });
@@ -119,12 +127,12 @@ check('页键不在任何一页的功能编号里（避免歧义）', () => {
     }
 });
 
-check('findPageOfItem 能定位编号所在页', () => {
+check('findPageOfItem 能定位编号所在页（只按本页顺号）', () => {
     assert.strictEqual(itv.findPageOfItem('1'), 'Q');
-    assert.strictEqual(itv.findPageOfItem('14'), 'Q');   // Q 页先出现
-    assert.strictEqual(itv.findPageOfItem('21'), 'W');
-    assert.strictEqual(itv.findPageOfItem('141'), 'R');
+    assert.strictEqual(itv.findPageOfItem('9'), 'Q');
     assert.strictEqual(itv.findPageOfItem('999'), null);
+    // 给了 currentPage 时优先在本页命中
+    assert.strictEqual(itv.findPageOfItem('1', 'W'), 'W');
 });
 
 // ─────────────────────────────────────────────
@@ -211,14 +219,13 @@ check('编号长度上限（乱按不会堆出一长串）', () => {
     assert.ok(/numBuf\.length < 4/.test(itvSrc), '缺长度上限');
 });
 
-check('跨页编号会自动跳到所属页执行（老习惯敲 22 不该被判无此功能）', () => {
+check('执行时把本页页键传给 dispatchMenuItem（编号只在当前页生效）', () => {
     const m = itvSrc.match(/const runItem = async \(id\) => \{[\s\S]*?\n    \};/);
     assert.ok(m, '未找到 runItem');
     assert.ok(/const hit = resolveNumber\(id, state\.page\)/.test(m[0]), '未按当前页解析编号');
-    assert.ok(/if \(hit\.page !== state\.page\) state\.page = hit\.page;/.test(m[0]),
-        '跨页命中时未切换 state.page');
+    assert.ok(!/hit\.page !== state\.page/.test(m[0]), '扁平化后不该再有跨页跳转');
     assert.ok(/dispatchMenuItem\(String\(id\), options, null, ctx, io, \{ page: hit\.page \}\)/.test(m[0]),
-        'dispatchMenuItem 没拿到当前页，无法区分「本页序号」与「旧编号」');
+        'dispatchMenuItem 没拿到当前页，编号无法区分页');
 });
 
 check('编号回显在提示行（输入时不至于看不见自己敲了什么）', () => {
@@ -427,17 +434,21 @@ check('兼容模式支持页键切页与控制字符', () => {
 // ─────────────────────────────────────────────
 console.log('\n— dispatchMenu 的 rl 归属 —');
 
-check('TUI 模式下不自建 rl（borrowed 分支）', () => {
-    assert.ok(/const borrowed = Boolean\(io\) && !rl;/.test(itvSrc), '缺 borrowed 判定');
-    assert.ok(/const ownRl = !rl && !borrowed;/.test(itvSrc), 'ownRl 判定不对');
+check('TUI 模式下动作不自建 rl（io 存在时只借用，不新建 readline）', () => {
+    assert.ok(/const io = makeIo\(kb\);/.test(itvSrc), '缺 makeIo 调用');
+    assert.ok(/if \(io\) await io\.enter\(\);/.test(itvSrc), '动作执行前未挂起键盘');
+    // 扁平化后 dispatchMenu 不再承担 rl 归属：所有动作都在 dispatchMenuItem 里
+    assert.ok(!/const borrowed = Boolean\(io\) && !rl;/.test(itvSrc),
+        'dispatchMenu 已扁平成转发器，不该再有 borrowed 分支');
 });
 
-check('子管理器借用的 rl 走 shareRl（TUI 下为 undefined 让其自建临时 rl）', () => {
-    assert.ok(/const shareRl = borrowed \? undefined : rl;/.test(itvSrc), '缺 shareRl');
-    // quickSet / pack install / theme install|switch 都应传 shareRl
-    assert.ok(/props\.quickSet\(undefined, shareRl\)/.test(itvSrc), 'quickSet 未用 shareRl');
-    assert.ok(/packGenerator\.install\((filePath|url), shareRl\)/.test(itvSrc), 'pack install 未用 shareRl');
-    assert.ok(/themeManager\.(install|switch)\((filePath|name), shareRl\)/.test(itvSrc), 'theme 未用 shareRl');
+check('子管理器在 TUI 下拿到 undefined 的 rl（自建临时 rl，不抢 stdin）', () => {
+    // quickSet / pack install / theme install|switch 都必须按 env.io 判断
+    assert.ok(/props\.quickSet\(undefined, env\.io \? undefined : env\.rl\)/.test(itvSrc),
+        'quickSet 未按 TUI 与否决定是否传 rl');
+    assert.ok(/packGenerator\.install\(target, env\.io \? undefined : env\.rl\)/.test(itvSrc),
+        'pack install 未按 TUI 与否决定是否传 rl');
+    assert.ok(/const shareRl = env\.io \? undefined : env\.rl;/.test(itvSrc), 'theme 缺 shareRl 判定');
 });
 
 // ─────────────────────────────────────────────

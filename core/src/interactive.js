@@ -8,34 +8,36 @@
  *   - wow L                              → 长命令模式（REPL）
  *   - server start 的控制台里输入 :wow    → 也进入本界面（V3.6.3 起）
  *
- * 结构（V3.6.3 / 609 指令重构）：
+ * 结构（V3.6.3 / 609 指令重构；V3.7.4 扁平化）：
  *   ┌ 状态栏     版本 / 服务器状态 / 当前方案 / 已装与当前 Java
  *   ├ 分隔线
- *   ├ 功能区     七页之一的功能列表（数字对应下方 dispatch 里的 case）
+ *   ├ 功能区     六页之一的功能列表，**一层直达**：编号就是最终动作
  *   └ 导航栏     [Q]服务器 [W]方案 [E]内容 [R]网络 [T]工具 [Y]高级 [L]长命令 [0]退出
  *
- * 七页的**功能编号**刻意保持与原主菜单 1~14 一一对应（见 PAGES 的 id），
- * 这样 `dispatch()` 里的 `case '1'` … `case '14'` 一行都不用改：
- * 改的只是「用户按哪个键能走到这个 case」，不是「case 里做什么」。
+ * V3.7.4 扁平化：原「方案管理 / 系统设置 / 错误日志分析 / 联机(陶瓦) / 管理模组 /
+ * server.properties / 下载管理器 / 安装整合包 / 模组搜索下载 / Web 主题」十个聚合项
+ * 进去后会再弹一张 `请选择 (0-N)` 的二级菜单。现在全部拆成页内独立项，
+ * 菜单只剩一层：**看到编号 = 最终动作**，不再有「进去还要再选一次」。
+ * 编号一律是页内顺号 1..N，旧编号（原扁平菜单的 1~14 / 21~26 / 141 等）兼容已移除。
  *
  * 按键（TUI 模式）：
  *   - Q/W/E/R/T/Y 切页并重绘（字母键按下即生效）
- *   - 数字         进入编号输入框，**回车**执行当前页对应功能
+ *   - 数字         **回车**执行当前页对应功能
  *   - Backspace    删掉输错的最后一位编号
  *   - L            进入长命令模式
  *   - 0 + 回车     退出（二次确认）
  *   - 回车         编号为空时重绘当前页（刷新状态）
  *   - Ctrl+C       退出（二次确认）
  *
- * 数字为什么必须回车：编号有 1~3 位（`1` / `14` / `141`），单键触发要么猜、
+ * 数字为什么必须回车：编号最多两位（E 页 13 项），单键触发要么猜、
  * 要么加等待窗口——两者都会让「手快」变成错误。与原来的数字菜单保持一致，
  * 输入完整编号再回车，简单且没有时序问题。
  *
  * 无 TTY（管道 / CI / Docker）时自动降级为「输入一行 + 回车」的兼容模式，
- * 七页与功能完全一致。
+ * 六页与功能完全一致。
  *
  * 单 readline 原则：
- *   整个 M 模式只有 tui.createKeyboard() 创建的那一个 readline。二级菜单
+ *   整个 M 模式只有 tui.createKeyboard() 创建的那一个 readline。动作执行期间
  *   通过 pause() 让出键盘、复用同一个 rl 提问，绝不新建第二个实例——
  *   两个 rl 同时挂在 stdin 上会让每个字符被回显两遍（历史 bug）。
  *   唯一的例外是「跳去 server start / L 模式」，那两处必须彻底 close()
@@ -50,33 +52,20 @@ const tui = require('./tui');
 
 // ==================== 页面定义（数据层） ====================
 //
-// 只有声明，没有逻辑。id 就是 dispatch() 的 case 编号：
-//   1 启动服务器         2 方案管理         3 管理模组/插件     4 模组搜索下载
-//   5 server.properties  6 认证设置         7 下载管理器设置    8 系统设置
-//   9 安装整合包        10 生成整合包      11 错误日志分析     12 状态监控
-//  13 Web 主题          14 陶瓦联机        15 长命令模式
+// 只有声明，没有逻辑。id 就是本页顺号（1..N），也是 dispatchMenuItem 的分发依据。
 //
-// `hint` 是右对齐的实时备注（函数形式，画页时求值一次），
-// 拿不到数据就不显示——不会让整行消失，布局稳定。
-
-// 七页的**功能编号**改为「按页顺号」：每页都从 1 开始、依次 1 2 3 4 …，
-// 到哪一页都是「第 n 项敲 n 回车」。这样界面上看到的数字就是能敲的数字，
-// 不需要记忆「22 属于 W 页」这类跨页编号。
-//
-// 每个功能除了本页序号，还可能保留**旧编号**（legacy）——原扁平菜单的
-// 1~14 与 3.7.x 的 21/22/31/141 等扩展编号。旧编号仍然认，但按「别处才认」
-// 处理：本页没有对应项时才跳页/转调，界面上用灰字小注 `旧 22` 提示，不占编号列。
+// V3.7.4 扁平化：菜单只有一层。原先「方案管理 / 系统设置 / 错误日志分析 /
+// 联机(陶瓦) / 管理模组 / server.properties / 下载管理器 / 安装整合包 /
+// 模组搜索下载 / Web 主题」这十个聚合项点进去还要再选一次（打印
+// `请选择 (0-N)`），现已全部拆成页内独立项。看到编号 = 最终动作。
 //
 // `hint` 是右对齐的实时备注（函数形式，画页时求值一次），
 // 拿不到数据就不显示——不会让整行消失，布局稳定。
 //
-// `legacy` 的两种形态：
-//   - 数组：这些旧编号都指向本页这一项（如 Q 页第 3 项既认旧 5）；
-//   - 函数：旧编号需要转调别的菜单（由 dispatchMenuItem 的 LEGACY_ROUTES 处理）。
-// 注意 **旧编号可以在多页重复**（`4` 在 Q/E/T 都是「模组搜索下载」的不同别名），
-// 跨页解析时只用来「找一项能执行的」，执行内容以 dispatchMenuItem 的 case 为准。
+// 旧编号（原扁平菜单 1~14、3.7.x 的 21/22/31/141 等）兼容已整体移除：
+// 不再有 `legacy` 字段，输入不存在的号直接提示「没有编号 X」，不再跨页猜测。
 
-/** 备注列宽上限（按最长的一条留位，保证旧编号小注不会把页面撑过 70 列） */
+/** 备注列宽上限（最长的一条按 8 个字算，保证一行塞进 70 列） */
 const HINT_MAX = 8;
 
 const PAGES = [
@@ -86,24 +75,24 @@ const PAGES = [
         title: '服务器启停 / 运行状态',
         items: [
             {
-                id: '1', legacy: ['1'], label: '启动 / 停止服务器',
+                id: '1', label: '启动 / 停止服务器',
                 hint: (ctx) => {
                     const s = ctx.status.collect();
                     return s.running ? '运行中' : '已停止';
                 }
             },
             {
-                id: '2', legacy: ['12'], label: '服务器状态监控',
+                id: '2', label: '服务器状态监控',
                 hint: (ctx) => (ctx.status.collect().running ? '可看实时日志' : null)
             },
+            { id: '3', label: '查看服务端属性（全部）', hint: () => 'server.properties' },
+            { id: '4', label: '修改单个服务端属性', hint: () => '键值直改' },
+            { id: '5', label: '服务端属性快速向导', hint: () => '端口/人数/难度' },
+            { id: '6', label: '重置服务端属性为默认', hint: () => '单项回滚' },
+            { id: '7', label: '错误日志分析（AI）', hint: () => '崩溃排查' },
+            { id: '8', label: '查看控制台日志（实时跟踪）', hint: () => 'Ctrl+C 停' },
             {
-                id: '3', legacy: ['5'], label: '变更配置 (server.properties)',
-                hint: () => '端口/人数/难度…'
-            },
-            { id: '4', legacy: ['11'], label: '错误日志分析', hint: () => '崩溃排查' },
-            { id: '5', legacy: ['4'], label: '查看控制台日志（实时跟踪）', hint: () => 'Ctrl+C 停' },
-            {
-                id: '6', legacy: ['14'], label: '联机 / 我要当房主 (陶瓦)',
+                id: '9', label: '开房联机（陶瓦，同 R 页 1）',
                 hint: () => '无需公网 IP'
             }
         ]
@@ -113,21 +102,15 @@ const PAGES = [
         label: '方案',
         title: '方案管理',
         items: [
-            {
-                id: '1', legacy: ['2'], label: '方案管理 (新建/切换/列表/删除/信息)',
-                hint: (ctx) => {
-                    const s = ctx.status.collect().scheme;
-                    return s ? `当前: ${s}` : '未指定';
-                }
-            },
-            { id: '2', legacy: ['21'], label: '快速切换方案', hint: () => '输入名称即可' },
-            { id: '3', legacy: ['22'], label: '列出全部方案（含状态）', hint: () => 'mark 标记当前' },
-            { id: '4', legacy: ['23'], label: '方案信息 / 资源引用', hint: () => '独占统计' },
-            { id: '5', legacy: ['24'], label: '新建方案', hint: () => '类型 + 版本' },
-            { id: '6', legacy: ['25'], label: '删除方案', hint: () => '需二次确认' },
-            { id: '7', legacy: ['9'], label: '安装整合包（新建方案的另一种入口）', hint: () => 'zip / URL' },
-            { id: '8', legacy: ['10'], label: '生成客户端整合包', hint: () => '导出给朋友' },
-            { id: '9', legacy: ['26'], label: '整理资源池（瘦身）', hint: () => '清未引用文件' }
+            { id: '1', label: '新建方案', hint: () => '类型 + 版本' },
+            { id: '2', label: '切换方案', hint: () => '输入名称即可' },
+            { id: '3', label: '列出全部方案（含状态）', hint: () => 'mark 标记当前' },
+            { id: '4', label: '删除方案', hint: () => '需二次确认' },
+            { id: '5', label: '方案信息 / 资源引用', hint: () => '独占统计' },
+            { id: '6', label: '安装整合包（本地 .zip）', hint: () => '从文件装' },
+            { id: '7', label: '安装整合包（远程 URL）', hint: () => '从网址装' },
+            { id: '8', label: '生成客户端整合包', hint: () => '导出给朋友' },
+            { id: '9', label: '整理资源池（瘦身）', hint: () => '清未引用文件' }
         ]
     },
     {
@@ -136,7 +119,7 @@ const PAGES = [
         title: '内容与配置（模组 / 插件 / 配置文件）',
         items: [
             {
-                id: '1', legacy: ['3'], label: '管理模组 / 插件',
+                id: '1', label: '列出已安装模组',
                 hint: (ctx) => {
                     try {
                         const n = ctx.options.modManager ? ctx.options.modManager.listMods().length : null;
@@ -144,12 +127,16 @@ const PAGES = [
                     } catch (e) { return null; }
                 }
             },
-            { id: '2', legacy: ['4'], label: '模组 / 插件搜索下载', hint: () => 'URL / 本地文件' },
-            { id: '3', legacy: ['31'], label: '列出已安装模组', hint: () => '启用状态一览' },
-            { id: '4', legacy: ['32'], label: '启用 / 禁用模组', hint: () => '不删文件' },
-            { id: '5', legacy: ['33'], label: '查看 / 编辑模组配置文件', hint: () => 'GUI 在 Web 端' },
-            { id: '6', legacy: ['34'], label: '备份模组配置文件', hint: () => '改坏能回滚' },
-            { id: '7', legacy: ['5'], label: '变更配置 (server.properties)', hint: () => '核心玩法参数' }
+            { id: '2', label: '安装模组（URL 或本地路径）', hint: () => '一条命令装' },
+            { id: '3', label: '卸载模组', hint: () => '需选编号' },
+            { id: '4', label: '启用 / 禁用模组', hint: () => '不删文件' },
+            { id: '5', label: '查看模组配置文件', hint: () => '只读预览' },
+            { id: '6', label: '编辑模组配置文件', hint: () => '改前先备份' },
+            { id: '7', label: '备份模组配置文件', hint: () => '改坏能回滚' },
+            { id: '8', label: '查看服务端属性（全部）', hint: () => 'server.properties' },
+            { id: '9', label: '修改单个服务端属性', hint: () => '核心玩法参数' },
+            { id: '10', label: '服务端属性快速向导', hint: () => '问答式修改' },
+            { id: '11', label: '重置服务端属性为默认', hint: () => '单项回滚' }
         ]
     },
     {
@@ -157,18 +144,16 @@ const PAGES = [
         label: '网络',
         title: '网络与联机',
         items: [
-            {
-                id: '1', legacy: ['14'], label: '联机 / 我要当房主 (陶瓦)',
-                hint: () => 'PCL/HMCL 内置支持'
-            },
-            { id: '2', legacy: ['141'], label: '开房（生成房间号）', hint: () => '好友输房间号加入' },
-            { id: '3', legacy: ['142'], label: '查看房间号 / 状态', hint: () => '当前联机信息' },
-            { id: '4', legacy: ['143'], label: '关房（停止陶瓦）', hint: () => '释放进程' },
-            { id: '5', legacy: ['7'], label: '下载镜像 / 超时 / 重试', hint: () => 'BMCLAPI 等' },
-            { id: '6', legacy: ['121'], label: '服务器端口与外网可见性', hint: () => 'server-port' },
-            { id: '7', legacy: ['122'], label: '查看本机网络信息', hint: () => '内网 IP / 端口' },
-            { id: '8', legacy: ['123'], label: 'Web 面板启动 / 停止', hint: () => '浏览器管理' },
-            { id: '9', legacy: ['144'], label: '我要当房客 Join Room (陶瓦)', hint: () => '输房间号加入' }
+            { id: '1', label: '开房（陶瓦，生成房间号）', hint: () => '好友输房间号加入' },
+            { id: '2', label: '查看房间号 / 联机状态', hint: () => '当前联机信息' },
+            { id: '3', label: '关房（停止陶瓦）', hint: () => '释放进程' },
+            { id: '4', label: '我要当房客 Join Room (陶瓦)', hint: () => '输房间号加入' },
+            { id: '5', label: '下载镜像地址', hint: () => 'BMCLAPI 等' },
+            { id: '6', label: '下载超时时间', hint: () => '秒' },
+            { id: '7', label: '下载重试次数', hint: () => '失败重来几次' },
+            { id: '8', label: '服务器端口与外网可见性', hint: () => 'server-port' },
+            { id: '9', label: '查看本机网络信息', hint: () => '内网 IP / 端口' },
+            { id: '10', label: 'Web 面板启动 / 停止', hint: () => '浏览器管理' }
         ]
     },
     {
@@ -176,16 +161,13 @@ const PAGES = [
         label: '工具',
         title: '工具与日志',
         items: [
-            {
-                id: '1', legacy: ['11'], label: '错误日志分析',
-                hint: () => 'AI 摘要 / 报告'
-            },
-            { id: '2', legacy: ['111'], label: 'AI 分析最近日志', hint: () => '定位崩溃原因' },
-            { id: '3', legacy: ['112'], label: '生成统计报告', hint: () => '保存为文件' },
-            { id: '4', legacy: ['4'], label: '实时日志跟踪', hint: () => 'tail -f，Ctrl+C 退出' },
-            { id: '5', legacy: ['113'], label: '清理旧日志（保留最近 N 天）', hint: () => '省磁盘' },
-            { id: '6', legacy: ['10'], label: '生成客户端整合包', hint: () => '打包发给朋友' },
-            { id: '7', legacy: ['9'], label: '安装整合包', hint: () => 'zip / URL' }
+            { id: '1', label: 'AI 分析最近日志', hint: () => '定位崩溃原因' },
+            { id: '2', label: '生成统计报告', hint: () => '保存为文件' },
+            { id: '3', label: '实时日志跟踪', hint: () => 'tail -f，Ctrl+C 退出' },
+            { id: '4', label: '清理旧日志（保留最近 N 天）', hint: () => '省磁盘' },
+            { id: '5', label: '生成客户端整合包', hint: () => '打包发给朋友' },
+            { id: '6', label: '安装整合包（本地 .zip）', hint: () => '从文件装' },
+            { id: '7', label: '安装整合包（远程 URL）', hint: () => '从网址装' }
         ]
     },
     {
@@ -194,18 +176,20 @@ const PAGES = [
         title: '高级与杂项',
         items: [
             {
-                id: '1', legacy: ['8'], label: '系统设置（Java / 性能 / 信息）',
+                id: '1', label: 'Java 设置（扫描 / 选择 / 安装）',
                 hint: (ctx) => {
                     const s = ctx.status.collect();
                     return s.javaInstalled.length ? `${s.javaInstalled.length} 个 Java` : '未检测到 Java';
                 }
             },
-            { id: '2', legacy: ['81'], label: 'Java 设置（扫描 / 选择 / 自动安装）', hint: () => '换 JDK 版本' },
-            { id: '3', legacy: ['82'], label: '修改 JVM 参数（模板 a/b/c/d + 覆盖）', hint: () => '内存与 GC' },
-            { id: '4', legacy: ['83'], label: '查看系统信息', hint: () => 'OS / 内存 / Node' },
-            { id: '5', legacy: ['84'], label: '重置全部配置', hint: () => '⚠ 不可撤销' },
-            { id: '6', legacy: ['6'], label: '认证设置 (外置登录)', hint: () => 'authlib-injector' },
-            { id: '7', legacy: ['13'], label: 'Web 主题更改', hint: () => '第三方主题' }
+            { id: '2', label: '修改 JVM 参数（模板 + 覆盖）', hint: () => '内存与 GC' },
+            { id: '3', label: '查看系统信息', hint: () => 'OS / 内存 / Node' },
+            { id: '4', label: '重置全部配置', hint: () => '⚠ 不可撤销' },
+            { id: '5', label: '认证设置 (外置登录)', hint: () => 'authlib-injector' },
+            { id: '6', label: '列出已安装 Web 主题', hint: () => '主题包一览' },
+            { id: '7', label: '安装 Web 主题', hint: () => 'ZIP 包' },
+            { id: '8', label: '切换 Web 主题', hint: () => '换外观' },
+            { id: '9', label: '删除 Web 主题', hint: () => '移除主题包' }
         ]
     }
 ];
@@ -213,42 +197,34 @@ const PAGES = [
 /** 页键 → 页定义 */
 const PAGE_MAP = new Map(PAGES.map(p => [p.key, p]));
 
-/** 取一项的全部编号：本页序号 + 旧编号 */
+/** 取一项的全部编号：扁平化后只有本页顺号一个 */
 function idsOf(item) {
     if (!item) return [];
-    const legacy = Array.isArray(item.legacy) ? item.legacy : [];
-    return [String(item.id), ...legacy.map(String)];
+    return [String(item.id)];
 }
 
-/** 某页里编号命中的项（本页序号优先，其次旧编号） */
+/** 某页里编号命中的项（只认本页顺号，不再回退旧编号） */
 function itemOfPage(pageKey, id) {
     const p = PAGE_MAP.get(pageKey);
     if (!p) return null;
     const key = String(id);
-    const exact = p.items.find(it => String(it.id) === key);
-    if (exact) return exact;
-    return p.items.find(it => idsOf(it).includes(key)) || null;
+    return p.items.find(it => String(it.id) === key) || null;
 }
 
 /**
  * 编号 → 页（跨页查找用）。
  *
- * 顺序：本页序号 → 本页旧编号 → 其他页序号 → 其他页旧编号。
- * 旧编号可以在多页重复（`4` = 模组搜索下载 / 实时日志），取第一次出现的页即可——
- * 真正执行时由 dispatchMenuItem 的 case 决定做什么，这里只负责「找得到」。
+ * V3.7.4：只按本页顺号匹配。旧编号兼容已移除，`1` 在 Q 页和 W 页都是
+ * 「本页第 1 项」，不再有「敲 14 跳到陶瓦」这类猜测。
  */
 function findPageOfItem(id, currentPage) {
     const key = String(id);
     if (currentPage && PAGE_MAP.has(currentPage)) {
         const p = PAGE_MAP.get(currentPage);
         if (p.items.some(it => String(it.id) === key)) return currentPage;
-        if (p.items.some(it => idsOf(it).includes(key))) return currentPage;
     }
     for (const p of PAGES) {
         if (p.items.some(it => String(it.id) === key)) return p.key;
-    }
-    for (const p of PAGES) {
-        if (p.items.some(it => idsOf(it).includes(key))) return p.key;
     }
     return null;
 }
@@ -257,26 +233,18 @@ function findPageOfItem(id, currentPage) {
  * 编号解析（模块级，TUI 与兼容模式共用）。
  *
  * 返回 `{ page, item, functional }`，找不到返回 null。
- *   - `page`       命中项所在页（跨页命中时调用方要把 state.page 改过去）；
+ *   - `page`       命中项所在页；
  *   - `item`       命中的项（用于取 label 等）；
- *   - `functional` 稳定功能键（该项的旧编号 / 主编号），dispatchMenuItem 认这个。
+ *   - `functional` 功能键 —— 扁平化后就是本页顺号本身。
  *
- * 优先级：本页序号（界面上显示的 1 2 3…）→ 本页旧编号 → 别的页的旧编号。
- * 「到哪一页都是 1,2,3,4,5」靠第一条：同一页里序号唯一，敲几就是本页第几项。
+ * V3.7.4：只在本页内解析。编号不在本页 → null（提示「没有编号 X」），
+ * 不再跨页猜测，因为菜单现在只有一层，编号就是最终动作。
  */
 function resolveNumber(id, page) {
     const key = String(id);
-    const firstLegacy = (it) => String((Array.isArray(it.legacy) ? it.legacy : [])[0] || it.id);
-
-    let item = itemOfPage(page, key);
-    if (item) return { page, item, functional: firstLegacy(item) };
-
-    const owner = findPageOfItem(key, null);
-    if (owner) {
-        item = itemOfPage(owner, key);
-        if (item) return { page: owner, item, functional: firstLegacy(item) };
-    }
-    return null;
+    const item = itemOfPage(page, key);
+    if (!item) return null;
+    return { page, item, functional: String(item.id) };
 }
 
 // ==================== 旧接口（保持向后兼容） ====================
@@ -347,7 +315,7 @@ function clearScreen() {
     tui.clear();
 }
 
-/** 打印标题栏（二级菜单内部仍用它区分段落，保持与历史输出风格一致） */
+/** 打印标题栏（各动作函数用它区分段落，保持与历史输出风格一致） */
 function printHeader(title) {
     console.log('═'.repeat(60));
     console.log(`  ${title}`);
@@ -370,20 +338,17 @@ async function showMainMenu(options = {}, directChoice = null) {
         notice: null
     };
 
-    // 直达某项：执行完就返回，不进循环（与历史行为一致）
+    // 直达某页（'W' / 'Q' …）：进 TUI 并停在该页。
+    // V3.7.4：数字直达随旧编号一起移除 —— 数字在不同页含义不同，
+    // 没有页键就无法确定要执行什么。传数字进来直接告知用法。
     if (directChoice) {
-        const rl = createRL();
-        try {
-            const key = String(directChoice).toUpperCase();
-            if (PAGE_MAP.has(key)) {
-                // 直达某页：进 TUI 并停在该页
-                state.page = key;
-            } else {
-                await dispatchMenu(key, options, rl);
-                return;
-            }
-        } finally {
-            rl.close();
+        const key = String(directChoice).toUpperCase();
+        if (PAGE_MAP.has(key)) {
+            state.page = key;
+        } else {
+            console.log(`直接跳转只支持页键（Q/W/E/R/T/Y），收到「${directChoice}」。`);
+            console.log('请进入菜单后用数字选择本页功能。');
+            return;
         }
     }
 
@@ -430,7 +395,6 @@ async function runTuiMode(options, state) {
             items: def.items.map(it => ({
                 id: it.id,
                 label: it.label,
-                legacy: it.legacy,
                 // hint 长度也计入排版：旧编号小注 + 备注必须塞进 70 列，
                 // 最长的一条按 8 个字算（`旧 141  内网 IP / 端口`）
                 hint: typeof it.hint === 'function' ? it.hint(ctx) : it.hint,
@@ -457,12 +421,10 @@ async function runTuiMode(options, state) {
             state.notice = `没有编号 ${id} 的功能（本页 1~${(PAGE_MAP.get(state.page) || { items: [] }).items.length || 1}，Q/W/E/R/T/Y 切页）`;
             return null;
         }
-        // 跨页命中：切到那一页再执行，返回时用户停在新页
-        if (hit.page !== state.page) state.page = hit.page;
-        const functional = hit.functional;
 
-        // 启动服务器：服务端控制台会接管 stdin，必须关掉 TUI 的 readline
-        if (functional === '1') {
+        // 启动服务器（Q 页 1）：服务端控制台会接管 stdin，必须关掉 TUI 的 readline。
+        // V3.7.4 扁平化后按「页键 + 顺号」判定，不再依赖旧编号。
+        if (hit.page === 'Q' && String(hit.item.id) === '1') {
             const r = await maybeJumpToServer(options, kb, status);
             if (r.handled) return 'SERVER';
             // 服务器已在运行 / 用户拒绝启动 / 启动失败 → 停在原地重绘。
@@ -472,7 +434,7 @@ async function runTuiMode(options, state) {
             return null;
         }
 
-        // 挂起 TUI 键盘，把 stdin 让给二级菜单
+        // 挂起 TUI 键盘，把 stdin 让给当前动作的交互提问（同一个 rl，不新建）
         const io = makeIo(kb);
         if (io) await io.enter();
         let jumpServer = false;
@@ -721,8 +683,7 @@ async function runCompatMode(options, state) {
                 items: def.items.map(it => ({
                     id: it.id,
                     label: it.label,
-                    legacy: it.legacy,
-                    hint: typeof it.hint === 'function' ? it.hint(ctx) : it.hint,
+                        hint: typeof it.hint === 'function' ? it.hint(ctx) : it.hint,
                     maxHint: HINT_MAX
                 }))
             };
@@ -763,15 +724,14 @@ async function runCompatMode(options, state) {
                 return;
             }
             if (/^[0-9]+$/.test(k)) {
-                // 与 TUI 模式同一套解析：本页序号 → 本页旧编号 → 跨页旧编号
+                // 只认本页顺号（V3.7.4 起旧编号兼容已移除）
                 const hit = resolveNumber(k, state.page);
                 if (!hit) {
                     state.notice = `没有编号 ${k} 的功能（本页 1~${(PAGE_MAP.get(state.page) || { items: [] }).items.length || 1}，Q/W/E/R/T/Y 切页）`;
                     logger.warn(`无效菜单选择: ${raw}`);
                     continue;
                 }
-                if (hit.page !== state.page) state.page = hit.page;
-                if (hit.functional === '1') {
+                if (hit.page === 'Q' && String(hit.item.id) === '1') {
                     const r = await maybeJumpToServer(options, null, status, rl);
                     if (r.handled) {
                         rl.close();
@@ -798,17 +758,16 @@ async function runCompatMode(options, state) {
 }
 
 /**
- * 二级菜单的统一输入通道。
+ * 动作执行期间的统一输入通道。
  *
  * **为什么要包一层**（V3.6.3 实测教训）：
  *   TUI 的 readline 处于 raw 模式时，`rl.question()` 会重复插入触发键
- *   （按 2 进二级菜单，问题里先出现一个 2）。正确做法是先把键盘
+ *   （按 2 执行某项，问题里先出现一个 2）。正确做法是先把键盘
  *   `suspend()` 出去（TUI 的 rl 被销毁、raw 模式退出），再用干净的行读取器
  *   提问，问完 `resume()` 重建。
  *
- * 本类把这套「挂起-提问-恢复」封装起来，`dispatchMenu` 只看到统一的
- * `ask()`。外部调用方（未传 kb、直接用 dispatchMenu）拿到的是普通 rl，
- * 走原生 question。
+ * 本类把这套「挂起-提问-恢复」封装起来，各动作函数只看到统一的
+ * `ask()`。外部调用方（未传 kb）拿到的是普通 rl，走原生 question。
  */
 function makeIo(kb) {
     if (!kb) {
@@ -817,9 +776,9 @@ function makeIo(kb) {
     }
     return {
         interactive: true,
-        /** 进入二级菜单：交出键盘 */
+        /** 动作开始：交出键盘 */
         async enter() { await kb.suspend(); },
-        /** 离开二级菜单：收回键盘 */
+        /** 动作结束：收回键盘 */
         leave() { kb.resume(); },
         /** 问一行 */
         ask(prompt) {
@@ -987,110 +946,765 @@ async function maybeJumpToServer(options, kb, status, rl = null) {
  * @returns {Promise<boolean>} true = 调用方必须交出 stdin（服务端接管 / 进日志跟踪）
  */
 async function dispatchMenuItem(id, options, rl, ctx, io, opts = {}) {
-    const key = String(id);
     const page = opts.page || null;
-    // 提问统一走 io（有 TUI 时是「挂起键盘再问」的安全通道）
-    const ask2 = (prompt) => ioAsk(io, rl, prompt);
+    const key = String(id);
 
-    // 本页序号先解析成「稳定的功能键」（旧编号），再走原来的 case。
-    // 这样新增页 / 调整页内顺序时，下面的业务代码一行都不用动。
-    const item = page ? itemOfPage(page, key) : null;
-    const isPageNumber = !!(item && String(item.id) === key);
-    const functional = isPageNumber
-        ? String((Array.isArray(item.legacy) ? item.legacy : [])[0] || item.id)
-        : key;
+    // V3.7.4：菜单只有一层，id 就是本页顺号，直接映射到具名动作函数。
+    // 不再有「本页序号 → 旧编号 functional → dispatchMenu 大 switch」的中转。
+    const fn = page ? ACTION_BY_KEY.get(`${page}:${key}`) : null;
+    if (!fn) {
+        console.log(`未知菜单项: ${page || '?'} 页 ${key}`);
+        return false;
+    }
+    return fn({ options, io, rl, ctx, page });
+}
 
-    switch (functional) {
-        // ── 方案页的快捷入口（不新写业务，转调已有管理器方法）──
-        case '21': {   // 快速切换方案
-            printHeader('快速切换方案');
-            if (!options.schemeManager) { console.log('方案管理模块未加载'); return false; }
-            options.schemeManager.list();
-            const name = (await ask2( '要切换到的方案名: ')).trim();
-            if (!name) { console.log('未输入，已取消。'); return false; }
-            try {
-                await options.schemeManager.switch(name);
-                if (ctx && ctx.status) ctx.status.invalidate();
-            } catch (e) {
-                console.log(`❌ 切换失败: ${e.message}`);
-            }
+/** 页键 + 顺号 → 动作函数（与 PAGES 一一对应，模块加载时校验） */
+const ACTION_BY_KEY = new Map();
+
+/** 注册一个动作；签名 (env) => Promise<boolean> */
+function action(pageKey, itemId, fn) {
+    ACTION_BY_KEY.set(`${pageKey}:${String(itemId)}`, fn);
+    return fn;
+}
+
+// ==================== Q 页：服务器 ====================
+
+/**
+ * Q1 启动 / 停止服务器。
+ *
+ * 走 maybeJumpToServer —— 它会处理「已在运行 → 切 :mc」「未运行 → 交出 stdin
+ * 给服务端控制台」两种分支。TUI / 兼容模式各自的收尾逻辑都在那边。
+ */
+async function actionStartStop(env) {
+    const r = await maybeJumpToServer(env.options, null, env.ctx ? env.ctx.status : null, env.rl || null);
+    return r.handled;
+}
+
+action('Q', 1, (env) => actionStartStop(env));
+
+async function serverStatus(env) {
+    printHeader('服务器状态监控');
+    const { serverManager, logHandler } = env.options;
+    if (!serverManager) { console.log('服务器管理模块未加载'); return false; }
+    serverManager.status();
+    if (serverManager.isRunning() && logHandler) {
+        console.log('\n  服务端运行中：可在 T 页 3 查看实时日志，或在开服控制台按 :mc 进入。');
+    }
+    return false;
+}
+
+action('Q', 2, (env) => serverStatus(env));
+
+// ── server.properties 四个动作（Q 页与 E 页共用）──
+
+async function propsCtx() {
+    const ServerProperties = require('./config').ServerProperties;
+    let utils = null;
+    try { utils = require('./utils'); } catch (e) { utils = null; }
+    const serverDir = utils ? utils.getServerDir() : '../scheme';
+    return { props: new ServerProperties(serverDir), utils };
+}
+
+async function propsListAll() {
+    printHeader('服务端属性 (server.properties)');
+    const { props } = await propsCtx();
+    props.listAll();
+    return false;
+}
+
+async function propsSetOne(env, hintText) {
+    printHeader(hintText || '修改服务端属性');
+    const { props } = await propsCtx();
+    const key = await ioAsk(env.io, env.rl, '属性名: ');
+    if (!key) { console.log('未输入属性名，已取消。'); return false; }
+    const current = props.get(key);
+    console.log(`当前值: ${current !== null ? current : '(未设置)'}`);
+    const value = await ioAsk(env.io, env.rl, '新值: ');
+    if (value) {
+        props.set(key, value);
+        console.log(`✅ ${key} = ${value}`);
+    }
+    return false;
+}
+
+async function propsWizard(env, hintText) {
+    printHeader(hintText || '服务端属性快速向导');
+    const { props } = await propsCtx();
+    // TUI 模式下 io 存在但 rl 为 null：quickSet 内部自建临时 readline
+    // 是安全的（此时 stdin 已被 TUI suspend 让出）。绝不能传 TUI 的 rl。
+    await props.quickSet(undefined, env.io ? undefined : env.rl);
+    return false;
+}
+
+async function propsResetOne(env, hintText) {
+    printHeader(hintText || '重置服务端属性');
+    const { props } = await propsCtx();
+    const key = await ioAsk(env.io, env.rl, '要重置的属性名: ');
+    if (!key) { console.log('未输入属性名，已取消。'); return false; }
+    const result = props.reset(key);
+    console.log(`✅ ${result.key} 已重置为 ${result.value}`);
+    return false;
+}
+
+action('Q', 3, () => propsListAll());
+action('Q', 4, (env) => propsSetOne(env, '修改服务端属性'));
+action('Q', 5, (env) => propsWizard(env, '服务端属性快速向导'));
+action('Q', 6, (env) => propsResetOne(env, '重置服务端属性'));
+
+async function logAnalyze(env) {
+    printHeader('AI 分析最近日志');
+    const { logHandler } = env.options;
+    if (!logHandler) { console.log('日志处理模块未加载'); return false; }
+    await logHandler.analyze();
+    return false;
+}
+
+action('Q', 7, (env) => logAnalyze(env));
+
+action('Q', 8, ({ options }) => tailLogs(options));
+
+// Q9「联机 / 我要当房主 (陶瓦)」= R1 开房，两个入口指向同一动作
+action('Q', 9, (env) => terracottaHost(env));
+
+// ==================== W 页：方案 ====================
+
+async function schemeCreate(env) {
+    printHeader('新建方案');
+    const schemeManager = env.options.schemeManager;
+    if (!schemeManager) { console.log('方案管理模块未加载'); return false; }
+
+    // 1) 方案名
+    const sName = (await ioAsk(env.io, env.rl, '方案名称: ')).trim();
+    if (!sName) { console.log('未输入方案名，已取消。'); return false; }
+
+    // 名称校验：复用 file_manager 的跨平台校验段（拒绝路径分隔符、
+    // Windows 保留字符/保留设备名、以点或空格结尾等）
+    let fm;
+    try { fm = require('./file_manager'); } catch (e) { fm = null; }
+    if (fm && typeof fm.validateNameSegment === 'function') {
+        const check = fm.validateNameSegment(sName);
+        if (!check.ok) {
+            console.log(`❌ 方案名不合法: ${check.reason}`);
             return false;
         }
-        case '22': {   // 列出全部方案
-            printHeader('全部方案');
-            if (!options.schemeManager) { console.log('方案管理模块未加载'); return false; }
-            options.schemeManager.list();
-            return false;
-        }
-        case '23': {   // 方案信息
-            printHeader('方案信息');
-            if (!options.schemeManager) { console.log('方案管理模块未加载'); return false; }
-            options.schemeManager.list();
-            const name = (await ask2( '方案名 (回车 = 当前方案): ')).trim();
-            try {
-                options.schemeManager.status(name || undefined);
-            } catch (e) {
-                console.log(`❌ 获取失败: ${e.message}`);
-            }
-            return false;
-        }
-        case '24': return dispatchMenu('2', options, rl, { sub: '1' }, io);   // 新建方案
-        case '25': return dispatchMenu('2', options, rl, { sub: '4' }, io);   // 删除方案
-        case '26': {   // 整理资源池
-            printHeader('整理资源池（瘦身）');
-            if (!options.schemeManager) { console.log('方案管理模块未加载'); return false; }
-            const name = (await ask2( '方案名 (回车 = 当前方案): ')).trim();
-            const confirm = (await ask2( `将删除未引用的资源，确定继续? (y/N): `)).trim().toLowerCase();
-            if (confirm !== 'y') { console.log('已取消。'); return false; }
-            try {
-                await options.schemeManager.prune(name || undefined);
-                console.log('✅ 瘦身完成');
-            } catch (e) {
-                console.log(`❌ 瘦身失败: ${e.message}`);
-            }
-            return false;
-        }
-
-        // ── 内容页的模组快捷入口 ──
-        case '31': return dispatchMenu('3', options, rl, { sub: '1' }, io);
-        case '32': return dispatchMenu('3', options, rl, { sub: '4' }, io);
-        case '33': return dispatchMenu('3', options, rl, { sub: '6' }, io);
-        case '34': return dispatchMenu('3', options, rl, { sub: '7' }, io);
-
-        // ── 网络页的联机快捷入口 ──
-        case '141': return dispatchMenu('14', options, rl, { sub: '1' }, io);
-        case '142': return dispatchMenu('14', options, rl, { sub: '2' }, io);
-        case '143': return dispatchMenu('14', options, rl, { sub: '3' }, io);
-        case '144': return dispatchMenu('14', options, rl, { sub: '4' }, io);   // 我要当房客
-        case '121': return dispatchMenu('5', options, rl, { sub: '2' }, io);
-        case '122': return lanNetInfo(io, rl);
-        case '123': return dispatchMenu('5', options, rl, { sub: '1' }, io);
-
-        // ── 工具页的日志快捷入口 ──
-        case '111': return dispatchMenu('11', options, rl, { sub: '1' }, io);
-        case '112': return dispatchMenu('11', options, rl, { sub: '2' }, io);
-        case '113': return cleanLogs(io, rl);
-
-        // ── 高级页的系统设置快捷入口 ──
-        case '81': return dispatchMenu('8', options, rl, { sub: '1' }, io);
-        case '82': return dispatchMenu('8', options, rl, { sub: '2' }, io);
-        case '83': return dispatchMenu('8', options, rl, { sub: '3' }, io);
-        case '84': return dispatchMenu('8', options, rl, { sub: '4' }, io);
-
-        // 实时日志跟踪：只从「工具页第 4 项」这一处进入。
-        // 旧编号 `4` 在别的页表示「模组搜索下载」，若在这里截住会误伤——
-        // 所以要求要么是工具页的本页序号，要么显式写了旧编号 4 且当前不在内容页。
-        case '4':
-            if (page === 'T' ? isPageNumber : page !== 'E') return tailLogs(options);
-            break;
-
-        default:
-            break;
     }
 
-    // 落到原主菜单的 1~14
-    return dispatchMenu(functional, options, rl, null, io);
+    // 目录已存在则直接拒绝（避免 create 抛错后留下残缺目录）
+    if (typeof schemeManager._schemeExists === 'function' && schemeManager._schemeExists(sName)) {
+        console.log(`❌ 方案「${sName}」已存在。可用 W 页 3 查看全部方案。`);
+        return false;
+    }
+
+    // 2) 核心类型（V3.5.11：补充 neoforge——安装器层早已支持，此处补齐入口）
+    const sTypes = ['vanilla', 'forge', 'fabric', 'neoforge', 'paper', 'purpur', 'spigot', 'bukkit', 'mohist', 'leaves'];
+    console.log('\n支持的服务器类型:');
+    sTypes.forEach((t, i) => console.log(`  ${i + 1}. ${t}`));
+    const stChoice = (await ioAsk(env.io, env.rl, '\n选择类型 (默认 1 vanilla): ')).trim();
+    let type = 'vanilla';
+    if (stChoice) {
+        const stIdx = parseInt(stChoice, 10) - 1;
+        if (!(stIdx >= 0 && stIdx < sTypes.length)) {
+            console.log('类型选择无效，已取消。');
+            return false;
+        }
+        type = sTypes[stIdx];
+    }
+
+    // 3) 版本 / 构建号
+    // V3.5.11：不再单独询问模组加载器——加载器随核心类型自动确定
+    // （选 fabric 即 fabric 核心 + fabric 加载器，与 CLI -t 行为一致）
+    const sVersion = (await ioAsk(env.io, env.rl, 'Minecraft 版本 (默认 1.20.1): ')).trim() || '1.20.1';
+    const sBuild = (await ioAsk(env.io, env.rl, '构建号 (留空自动选择最新): ')).trim() || null;
+
+    // 4) 创建（务必用对象签名——旧实现曾用三个位置参数调用，
+    //    导致用户输入的版本/加载器被静默忽略，这里已修正）
+    console.log('');
+    try {
+        await schemeManager.create(sName, { type, version: sVersion, loader: type, build: sBuild });
+        console.log(`\n✅ 方案「${sName}」创建完成。`);
+        const sDir = (schemeManager.schemesDir)
+            ? path.join(schemeManager.schemesDir, sName)
+            : `scheme/${sName}`;
+        console.log(`   目录: ${sDir}`);
+        console.log('   可在 W 页 2 切换到此方案后启动服务器。');
+    } catch (e) {
+        console.log(`\n❌ 创建失败: ${e.message}`);
+    }
+    return false;
 }
+
+async function schemeSwitch(env) {
+    printHeader('切换方案');
+    const schemeManager = env.options.schemeManager;
+    if (!schemeManager) { console.log('方案管理模块未加载'); return false; }
+    schemeManager.list();
+    const name = (await ioAsk(env.io, env.rl, '要切换到的方案名: ')).trim();
+    if (!name) { console.log('未输入，已取消。'); return false; }
+    try {
+        await schemeManager.switch(name);
+        if (env.ctx && env.ctx.status) env.ctx.status.invalidate();
+    } catch (e) {
+        console.log(`❌ 切换失败: ${e.message}`);
+    }
+    return false;
+}
+
+async function schemeList() {
+    printHeader('全部方案');
+    return false;
+}
+
+async function schemeDelete(env) {
+    printHeader('删除方案');
+    const schemeManager = env.options.schemeManager;
+    if (!schemeManager) { console.log('方案管理模块未加载'); return false; }
+    schemeManager.list();
+    const name = (await ioAsk(env.io, env.rl, '要删除的方案名: ')).trim();
+    if (!name) { console.log('未输入，已取消。'); return false; }
+    const confirm = (await ioAsk(env.io, env.rl, `确定删除方案 "${name}"? (y/N): `)).trim().toLowerCase();
+    if (confirm !== 'y') { console.log('已取消。'); return false; }
+    try {
+        await schemeManager.delete(name);
+        if (env.ctx && env.ctx.status) env.ctx.status.invalidate();
+    } catch (e) {
+        console.log(`❌ 删除失败: ${e.message}`);
+    }
+    return false;
+}
+
+async function schemeInfo(env) {
+    printHeader('方案信息');
+    const schemeManager = env.options.schemeManager;
+    if (!schemeManager) { console.log('方案管理模块未加载'); return false; }
+    schemeManager.list();
+    const name = (await ioAsk(env.io, env.rl, '方案名 (回车 = 当前方案): ')).trim();
+    try {
+        schemeManager.status(name || undefined);
+    } catch (e) {
+        console.log(`❌ 获取失败: ${e.message}`);
+    }
+    return false;
+}
+
+async function schemePrune(env) {
+    printHeader('整理资源池（瘦身）');
+    const schemeManager = env.options.schemeManager;
+    if (!schemeManager) { console.log('方案管理模块未加载'); return false; }
+    const name = (await ioAsk(env.io, env.rl, '方案名 (回车 = 当前方案): ')).trim();
+    const confirm = (await ioAsk(env.io, env.rl, '将删除未引用的资源，确定继续? (y/N): ')).trim().toLowerCase();
+    if (confirm !== 'y') { console.log('已取消。'); return false; }
+    try {
+        await schemeManager.prune(name || undefined);
+        console.log('✅ 瘦身完成');
+    } catch (e) {
+        console.log(`❌ 瘦身失败: ${e.message}`);
+    }
+    return false;
+}
+
+/** 安装整合包：source = 'local' | 'url' */
+async function packInstall(env, source) {
+    printHeader(source === 'url' ? '安装整合包（远程 URL）' : '安装整合包（本地 .zip）');
+    const { packGenerator } = env.options;
+    if (!packGenerator) { console.log('整合包模块未加载'); return false; }
+    const target = source === 'url'
+        ? await ioAsk(env.io, env.rl, '整合包 URL: ')
+        : await ioAsk(env.io, env.rl, '整合包文件路径: ');
+    if (!target) { console.log('未输入，已取消。'); return false; }
+    // TUI 模式 rl 为 null → 传 undefined，让 packGenerator 自建临时 readline
+    // （此时 stdin 已被 TUI suspend 让出，安全）。绝不能传 TUI 的 rl。
+    await packGenerator.install(target, env.io ? undefined : env.rl);
+    return false;
+}
+
+async function packGenerate(env) {
+    printHeader('生成客户端整合包');
+    const { packGenerator } = env.options;
+    if (!packGenerator) { console.log('整合包模块未加载'); return false; }
+    const name = await ioAsk(env.io, env.rl, '整合包名称: ') || 'client-pack';
+    const version = await ioAsk(env.io, env.rl, 'Minecraft 版本 (默认 1.20.1): ') || '1.20.1';
+    await packGenerator.generate({ name, version });
+    return false;
+}
+
+action('W', 1, (env) => schemeCreate(env));
+action('W', 2, (env) => schemeSwitch(env));
+action('W', 3, async (env) => {
+    const r = await schemeList();
+    const sm = env.options.schemeManager;
+    if (sm) sm.list();
+    return r;
+});
+action('W', 4, (env) => schemeDelete(env));
+action('W', 5, (env) => schemeInfo(env));
+action('W', 6, (env) => packInstall(env, 'local'));
+action('W', 7, (env) => packInstall(env, 'url'));
+action('W', 8, (env) => packGenerate(env));
+action('W', 9, (env) => schemePrune(env));
+
+// ==================== E 页：模组 / 配置 ====================
+
+async function modList(env) {
+    printHeader('已安装模组');
+    const { modManager } = env.options;
+    if (!modManager) { console.log('模组管理模块未加载'); return false; }
+    const mods = modManager.listMods();
+    console.log(`\n已安装模组 (${mods.length}):`);
+    for (const mod of mods) {
+        const status = mod.enabled ? '✅' : '❌';
+        const sizeKB = (mod.size / 1024).toFixed(1);
+        console.log(`  ${status} ${mod.name} (${sizeKB} KB) [${mod.loader}/${mod.version}]`);
+    }
+    return false;
+}
+
+async function modInstall(env) {
+    printHeader('安装模组');
+    const { modManager } = env.options;
+    if (!modManager) { console.log('模组管理模块未加载'); return false; }
+    const target = (await ioAsk(env.io, env.rl, '模组 URL 或本地路径: ')).trim();
+    if (!target) { console.log('未输入，已取消。'); return false; }
+    await modManager.install(target);
+    return false;
+}
+
+async function modRemove(env) {
+    printHeader('卸载模组');
+    const { modManager } = env.options;
+    if (!modManager) { console.log('模组管理模块未加载'); return false; }
+    const mods = modManager.listMods();
+    if (!mods.length) { console.log('当前没有已安装的模组。'); return false; }
+    mods.forEach((m, i) => console.log(`  ${i + 1}. ${m.name}`));
+    const idx = parseInt(await ioAsk(env.io, env.rl, '选择要卸载的模组编号: '), 10) - 1;
+    if (idx >= 0 && idx < mods.length) {
+        modManager.remove(mods[idx].name);
+    } else {
+        console.log('编号无效，已取消。');
+    }
+    return false;
+}
+
+async function modToggle(env) {
+    printHeader('启用 / 禁用模组');
+    const { modManager } = env.options;
+    if (!modManager) { console.log('模组管理模块未加载'); return false; }
+    const mods = modManager.listMods();
+    if (!mods.length) { console.log('当前没有已安装的模组。'); return false; }
+    mods.forEach((m, i) => console.log(`  ${i + 1}. ${m.status || (m.enabled ? '✅' : '❌')} ${m.name}`));
+    const idx = parseInt(await ioAsk(env.io, env.rl, '选择要切换的模组编号: '), 10) - 1;
+    if (idx >= 0 && idx < mods.length) {
+        modManager.toggleMod(mods[idx].name);
+    } else {
+        console.log('编号无效，已取消。');
+    }
+    return false;
+}
+
+/** 模组配置文件上下文：serverDir + configEditor */
+function modConfigCtx() {
+    let utils = null;
+    try { utils = require('./utils'); } catch (e) { utils = null; }
+    const serverDir = utils ? utils.getServerDir() : '../scheme';
+    const configEditor = require('./config_editor');
+    return { utils, serverDir, configEditor };
+}
+
+async function modViewConfig(env) {
+    printHeader('查看模组配置文件');
+    const { serverDir, configEditor, utils } = modConfigCtx();
+    const files = configEditor.getConfigFiles(serverDir);
+    if (files.length === 0) { console.log('config 目录下没有配置文件'); return false; }
+    console.log(`\n配置文件 (${files.length}):`);
+    files.forEach((f, i) => console.log(`  ${i + 1}. ${f.relPath} (${f.ext}, ${utils ? utils.formatFileSize(f.size) : f.size} B)`));
+    const idx = parseInt(await ioAsk(env.io, env.rl, '\n选择要查看的文件编号: '), 10) - 1;
+    if (!(idx >= 0 && idx < files.length)) { console.log('编号无效，已取消。'); return false; }
+    const result = configEditor.readConfig(files[idx].fullPath);
+    if (!result.success) { console.log(`读取失败: ${result.error}`); return false; }
+    console.log(`\n${'═'.repeat(60)}`);
+    console.log(`文件: ${files[idx].relPath}`);
+    if (result.warning) console.log(`⚠ ${result.warning}`);
+    console.log('═'.repeat(60));
+    if (typeof result.data === 'object') {
+        console.log(JSON.stringify(result.data, null, 2));
+    } else {
+        console.log(result.data);
+    }
+    return false;
+}
+
+async function modEditConfig(env) {
+    printHeader('编辑模组配置文件');
+    const { serverDir, configEditor } = modConfigCtx();
+    const files = configEditor.getConfigFiles(serverDir);
+    const editable = files.filter(f => ['.json', '.toml', '.yml', '.yaml', '.properties', '.cfg', '.conf', '.ini'].includes(f.ext));
+    if (editable.length === 0) { console.log('没有可编辑的结构化配置文件'); return false; }
+    console.log('\n可编辑的配置文件 (JSON/TOML/YAML):');
+    editable.forEach((f, i) => console.log(`  ${i + 1}. ${f.relPath} (${f.ext})`));
+    const idx = parseInt(await ioAsk(env.io, env.rl, '\n选择要编辑的文件编号: '), 10) - 1;
+    if (!(idx >= 0 && idx < editable.length)) { console.log('编号无效，已取消。'); return false; }
+
+    const file = editable[idx];
+    const listResult = configEditor.listConfig(file.fullPath);
+    if (listResult.success) {
+        console.log(`\n当前键值 (${file.relPath}):`);
+        listResult.entries.forEach(e => console.log(`  ${e.key} = ${JSON.stringify(e.value)}`));
+    }
+    const key = (await ioAsk(env.io, env.rl, '\n输入要修改的键 (点号分隔, 如 general.enable): ')).trim();
+    const value = await ioAsk(env.io, env.rl, '输入新值: ');
+    if (!key || value === undefined) { console.log('未输入，已取消。'); return false; }
+    const setResult = configEditor.setConfigValue(file.fullPath, key, value);
+    if (setResult.success) {
+        console.log(`✅ 已设置 ${key} = ${value}`);
+        if (setResult.backupPath) console.log(`   备份已保存: ${setResult.backupPath}`);
+    } else {
+        console.log(`❌ 设置失败: ${setResult.error}`);
+    }
+    return false;
+}
+
+async function modBackupConfig() {
+    printHeader('备份模组配置文件');
+    const { serverDir, configEditor } = modConfigCtx();
+    const backupResult = configEditor.backupConfigs(serverDir);
+    if (backupResult.success) {
+        console.log(`✅ 已备份 ${backupResult.count} 个配置文件`);
+        console.log(`   备份目录: ${backupResult.backupDir}`);
+    } else {
+        console.log(`❌ 备份失败: ${backupResult.error}`);
+    }
+    return false;
+}
+
+action('E', 1, (env) => modList(env));
+action('E', 2, (env) => modInstall(env));
+action('E', 3, (env) => modRemove(env));
+action('E', 4, (env) => modToggle(env));
+action('E', 5, (env) => modViewConfig(env));
+action('E', 6, (env) => modEditConfig(env));
+action('E', 7, (env) => modBackupConfig());
+action('E', 8, () => propsListAll());
+action('E', 9, (env) => propsSetOne(env, '修改服务端属性（核心玩法）'));
+action('E', 10, (env) => propsWizard(env, '服务端属性快速向导'));
+action('E', 11, (env) => propsResetOne(env, '重置服务端属性'));
+
+// ==================== R 页：网络 / 联机 ====================
+
+async function terracottaHost(env) {
+    printHeader('开房（陶瓦联机）');
+    const Terracotta = require('./terracotta');
+    console.log('\n   powered by Terracotta | 陶瓦联机 (AGPLv3)');
+    console.log('   基于 EasyTier 的内网穿透，好友无需公网 IP 即可加入你的 Minecraft 服务端。');
+    console.log('   加入端由 PCL / HMCL / BakaXL / FCL 等启动器内置支持。\n');
+    console.log('提示：开房前请先启动 Minecraft 服务端（Q 页 1），陶瓦会自动扫描本机服务端端口。');
+    try {
+        await Terracotta.hostRoom({ promptPort: (msg) => ioAsk(env.io, env.rl, msg) });
+    } catch (e) {
+        console.error(`❌ 开房失败: ${e.message}`);
+    }
+    return false;
+}
+
+async function terracottaStatus() {
+    printHeader('陶瓦联机状态');
+    const Terracotta = require('./terracotta');
+    try {
+        const s = await Terracotta.getStatus();
+        if (!s.running) {
+            console.log('当前未开房（陶瓦未运行）。R 页 1 开房。');
+            return false;
+        }
+        console.log(`运行状态:  🟢 运行中`);
+        console.log(`角色:      ${s.mode === 'guest' ? '房客（Join Room）' : '房主（开房）'}`);
+        console.log(`本地 API:  127.0.0.1:${s.port}`);
+        console.log(`房间号:    ${s.roomCode || '(生成中)'}`);
+        if (s.player) console.log(`玩家名:    ${s.player}`);
+        console.log(`状态机:    ${s.state || '未知'}`);
+        if (s.roomCode) {
+            console.log('\n把房间号发给好友，对方在 PCL / HMCL / BakaXL / FCL 中选择「加入陶瓦房间」并输入该房间号即可联机。');
+        }
+    } catch (e) {
+        console.error(`❌ 查询失败: ${e.message}`);
+    }
+    return false;
+}
+
+async function terracottaStop() {
+    printHeader('关房（停止陶瓦）');
+    const Terracotta = require('./terracotta');
+    try {
+        await Terracotta.stopHost();
+    } catch (e) {
+        console.error(`❌ 关房失败: ${e.message}`);
+    }
+    return false;
+}
+
+async function terracottaJoin(env) {
+    printHeader('我要当房客 Join Room (陶瓦)');
+    const Terracotta = require('./terracotta');
+    // 房间号 + 玩家名都通过 ioAsk（TUI 下走挂起键盘的安全提问通道），
+    // 绝不另开 readline，避免 stdin 双消费者。
+    const roomCode = String(await ioAsk(env.io, env.rl, '请输入房间号 (由房主提供): ') || '').trim();
+    if (!roomCode) { console.log('未输入房间号，已取消。'); return false; }
+    const playerName = String(await ioAsk(env.io, env.rl, '请输入你的玩家名 (Minecraft ID): ') || '').trim();
+    if (!playerName) { console.log('未输入玩家名，已取消。'); return false; }
+    try {
+        await Terracotta.joinRoom({ roomCode, player: playerName });
+    } catch (e) {
+        console.error(`❌ 加入失败: ${e.message}`);
+    }
+    return false;
+}
+
+/** 下载管理器三项设置：field = 'mirror' | 'timeout' | 'retry' */
+async function downloadSetting(env, field) {
+    const { config } = env.options;
+    if (!config) { console.log('配置模块未加载'); return false; }
+
+    if (field === 'mirror') {
+        printHeader('下载镜像地址');
+        const cur = config.getConfig('download.mirror', 'https://bmclapi2.bangbang93.com');
+        console.log(`\n  当前镜像: ${cur}\n`);
+        console.log('  1. BMCLAPI2 (推荐) - https://bmclapi2.bangbang93.com');
+        console.log('  2. 官方源 - https://launcher.mojang.com');
+        console.log('  3. 自定义');
+        const m = (await ioAsk(env.io, env.rl, '选择: ')).trim();
+        if (m === '1') {
+            config.setConfig('download.mirror', 'https://bmclapi2.bangbang93.com');
+            console.log('✅ 镜像地址已更新');
+        } else if (m === '2') {
+            config.setConfig('download.mirror', 'https://launcher.mojang.com');
+            console.log('✅ 镜像地址已更新');
+        } else if (m === '3') {
+            const custom = (await ioAsk(env.io, env.rl, '自定义地址: ')).trim();
+            if (custom) {
+                config.setConfig('download.mirror', custom);
+                console.log('✅ 镜像地址已更新');
+            } else {
+                console.log('未输入，已取消。');
+            }
+        } else {
+            console.log('选择无效，已取消。');
+        }
+        return false;
+    }
+
+    const isTimeout = field === 'timeout';
+    printHeader(isTimeout ? '下载超时时间' : '下载重试次数');
+    const cur = isTimeout
+        ? config.getConfig('download.timeout', 30)
+        : config.getConfig('download.retry', 3);
+    console.log(`\n  当前值: ${isTimeout ? cur + 's' : cur}\n`);
+    const raw = (await ioAsk(env.io, env.rl, isTimeout ? '超时时间(秒): ' : '重试次数: ')).trim();
+    if (!raw) { console.log('未输入，已取消。'); return false; }
+    const n = parseInt(raw, 10);
+    if (!Number.isFinite(n) || n < 0) { console.log('请输入非负整数。'); return false; }
+    config.setConfig(isTimeout ? 'download.timeout' : 'download.retry', n);
+    console.log(isTimeout ? '✅ 超时时间已更新' : '✅ 重试次数已更新');
+    return false;
+}
+
+action('R', 1, (env) => terracottaHost(env));
+action('R', 2, () => terracottaStatus());
+action('R', 3, () => terracottaStop());
+action('R', 4, (env) => terracottaJoin(env));
+action('R', 5, (env) => downloadSetting(env, 'mirror'));
+action('R', 6, (env) => downloadSetting(env, 'timeout'));
+action('R', 7, (env) => downloadSetting(env, 'retry'));
+
+action('R', 8, async ({ options }) => {
+    printHeader('服务器端口与外网可见性');
+    const { config } = options;
+    if (!config) { console.log('配置模块未加载'); return false; }
+    const { props } = await propsCtx();
+    const port = props.get('server-port');
+    const online = props.get('online-mode');
+    const players = props.get('max-players');
+    console.log('\n  服务器端口:   ' + (port == null ? '(未设置，默认 25565)' : port));
+    console.log('  正版验证:     ' + (online == null ? '(默认 true)' : online));
+    console.log('  最大玩家数:   ' + (players == null ? '(默认 20)' : players));
+    console.log('\n  外网可见性取决于：路由器端口转发 / 云服务器安全组 / 运营商是否封端口。');
+    console.log('  想跳过这些限制可直接用陶瓦联机（R 页 1 开房）。');
+    return false;
+});
+
+action('R', 9, async (env) => lanNetInfo(env.io, env.rl));
+
+action('R', 10, async ({ options }) => {
+    printHeader('Web 面板启动 / 停止');
+    const Web = require('./web_service');
+    let running = false;
+    try { running = typeof Web.isRunning === 'function' ? Web.isRunning() : false; } catch (e) { running = false; }
+    if (running) {
+        const c = (await ioAsk(env.io, env.rl, '面板正在运行，是否停止? (y/N): ')).trim().toLowerCase();
+        if (c === 'y') {
+            try { await Web.stopWeb(); console.log('✅ 面板已停止'); } catch (e) { console.log(`❌ 停止失败: ${e.message}`); }
+        } else {
+            console.log('已取消。');
+        }
+    } else {
+        try {
+            const info = await Web.startWeb();
+            const url = info && info.url ? info.url : 'http://127.0.0.1:8080';
+            console.log(`✅ 面板已启动: ${url}`);
+        } catch (e) {
+            console.log(`❌ 启动失败: ${e.message}`);
+        }
+    }
+    return false;
+});
+
+// ==================== T 页：工具 ====================
+
+action('T', 1, async ({ options }) => {
+    printHeader('AI 分析最近日志');
+    const { logHandler } = options;
+    if (!logHandler) { console.log('日志处理模块未加载'); return false; }
+    await logHandler.analyze();
+    return false;
+});
+
+action('T', 2, async ({ options }) => {
+    printHeader('生成统计报告');
+    const { logHandler } = options;
+    if (!logHandler) { console.log('日志处理模块未加载'); return false; }
+    await logHandler.report();
+    return false;
+});
+
+action('T', 3, ({ options }) => tailLogs(options));
+action('T', 4, (env) => cleanLogs(env.io, env.rl));
+action('T', 5, (env) => packGenerate(env));
+action('T', 6, (env) => packInstall(env, 'local'));
+action('T', 7, (env) => packInstall(env, 'url'));
+
+// ==================== Y 页：高级 ====================
+
+async function javaSettingsEntry(env) {
+    printHeader('Java 设置');
+    const { config, utils } = env.options;
+    if (!config || !utils) { console.log('配置模块未加载'); return false; }
+    // V3.5.7：由「手填 Java 路径」升级为「扫描本机全部 Java 并列出选择」
+    // javaSettingsFlow 自己打印列表并用全角冒号问「请选择:」——那是「从列表
+    // 挑一个 Java」，不是菜单层级，保留原样。
+    await javaSettingsFlow(env.rl, config, utils);
+    return false;
+}
+
+action('Y', 1, (env) => javaSettingsEntry(env));
+
+action('Y', 2, async (env) => {
+    // V3.6.2（607 指令）：新结构 server.jvm，参数经引号感知解析器，禁用 split
+    printHeader('修改 JVM 参数');
+    const { config } = env.options;
+    if (!config) { console.log('配置模块未加载'); return false; }
+    const Jvm = require('./jvm_args');
+    const curTemplate = config.getConfig('server.jvm.template', Jvm.DEFAULT_TEMPLATE);
+    const curOverride = config.getConfig('server.jvm.override_args', []);
+    console.log(`当前模板: ${curTemplate}（可选 ${Jvm.TEMPLATE_NAMES.join(' / ')}）`);
+    console.log(`当前覆盖参数: ${curOverride.join(' ')}`);
+    const newTemplate = (await ioAsk(env.io, env.rl, `新模板 (回车保持 ${curTemplate}): `)).trim();
+    const newArgs = await ioAsk(env.io, env.rl, '新覆盖参数 (空格分隔，路径含空格用引号包裹；回车保持不变): ');
+    if (newTemplate) {
+        if (!Jvm.TEMPLATE_NAMES.includes(newTemplate)) {
+            console.log(`⚠️ 未知模板「${newTemplate}」，可用：${Jvm.TEMPLATE_NAMES.join(' / ')}`);
+        } else {
+            config.setConfig('server.jvm.template', newTemplate);
+            console.log(`✅ 模板已切换为 ${newTemplate}`);
+        }
+    }
+    if (newArgs) {
+        config.setConfig('server.jvm.override_args', Jvm.parseArgs(newArgs));
+        console.log('✅ JVM 覆盖参数已更新');
+    }
+    return false;
+});
+
+action('Y', 3, async () => {
+    printHeader('系统信息');
+    const os = require('os');
+    console.log(`\n  操作系统: ${os.type()} ${os.release()}`);
+    console.log(`  架构:     ${os.arch()}`);
+    console.log(`  内存:     ${(os.totalmem() / 1024 / 1024 / 1024).toFixed(1)} GB`);
+    console.log(`  CPU:      ${os.cpus()[0]?.model || 'Unknown'}`);
+    console.log(`  Node.js:  ${process.version}`);
+    return false;
+});
+
+action('Y', 4, async (env) => {
+    printHeader('重置全部配置');
+    const { config } = env.options;
+    if (!config) { console.log('配置模块未加载'); return false; }
+    const confirm = (await ioAsk(env.io, env.rl, '⚠ 确定重置所有配置? 此操作不可撤销 (y/N): ')).trim().toLowerCase();
+    if (confirm !== 'y') { console.log('已取消。'); return false; }
+    config.saveConfig(config.DEFAULT_CONFIG);
+    console.log('✅ 配置已重置为默认值');
+    return false;
+});
+
+async function authSettings(env) {
+    printHeader('认证设置 (外置登录)');
+    const { config } = env.options;
+    if (!config) { console.log('配置模块未加载'); return false; }
+    const authConfig = config.getConfig('auth', {});
+    console.log(`\n  外置登录: ${authConfig.enable ? '✅ 已启用' : '❌ 未启用'}`);
+    console.log(`  认证服务器: ${authConfig.server || '(未设置)'}`);
+    console.log(`  javaagent: ${authConfig.javaagent || '(自动)'}`);
+    const enable = (await ioAsk(env.io, env.rl, '\n启用外置登录? (y/N): ')).trim();
+    if (enable.toLowerCase() === 'y') {
+        config.setConfig('auth.enable', true);
+        const server = (await ioAsk(env.io, env.rl, '认证服务器地址 (默认 https://authlib-injector.yushi.moe): ')).trim();
+        if (server) config.setConfig('auth.server', server);
+        console.log('✅ 外置登录已启用，下次启动服务器时生效');
+    } else if (enable !== '') {
+        config.setConfig('auth.enable', false);
+        console.log('外置登录已禁用');
+    }
+    return false;
+}
+
+action('Y', 5, (env) => authSettings(env));
+
+/** Web 主题四项：kind = 'list' | 'install' | 'switch' | 'delete' */
+async function themeAction(env, kind) {
+    const { themeManager } = env.options;
+    const titles = { list: '列出已安装 Web 主题', install: '安装 Web 主题', switch: '切换 Web 主题', delete: '删除 Web 主题' };
+    printHeader(titles[kind] || 'Web 主题');
+    if (!themeManager) { console.log('主题管理模块未加载'); return false; }
+
+    // 注意 shareRl：TUI 模式下没有可借用的 rl（键盘已 suspend），必须传 undefined
+    // 让 themeManager 自建临时 readline，否则会与 TUI 的 rl 抢 stdin。
+    const shareRl = env.io ? undefined : env.rl;
+
+    if (kind === 'list') {
+        themeManager.list();
+        return false;
+    }
+    if (kind === 'install') {
+        const filePath = (await ioAsk(env.io, env.rl, '主题 ZIP 文件路径: ')).trim();
+        if (filePath) await themeManager.install(filePath, shareRl);
+        else console.log('未输入，已取消。');
+        return false;
+    }
+    themeManager.list();
+    if (kind === 'switch') {
+        const name = (await ioAsk(env.io, env.rl, '要切换的主题名: ')).trim();
+        if (name) await themeManager.switch(name, shareRl);
+        else console.log('未输入，已取消。');
+        return false;
+    }
+    const name = (await ioAsk(env.io, env.rl, '要删除的主题名: ')).trim();
+    if (name) themeManager.delete(name);
+    else console.log('未输入，已取消。');
+    return false;
+}
+
+action('Y', 6, (env) => themeAction(env, 'list'));
+action('Y', 7, (env) => themeAction(env, 'install'));
+action('Y', 8, (env) => themeAction(env, 'switch'));
+action('Y', 9, (env) => themeAction(env, 'delete'));
+
 
 /**
  * R 页 122：本机网络信息（纯读，不联网）。
@@ -1325,730 +1939,46 @@ async function cleanLogs(io, rl) {
     return false;
 }
 
+
 /**
- * 分发菜单选择（原始 14 个 case 的主体，V3.6.3 起编号含义不变）。
+ * 按功能键执行一个动作（**仅供外部 / 测试脚本直接调用**）。
  *
- * @param {string} choice 编号 1~14
- * @param {object} options
- * @param {object} rl 调用方的 readline（复用，不自建）
- * @param {object} [preset] 预设子菜单选择，如 { sub: '1' } 直接进「新建方案」
- * @returns {Promise<boolean>} true = 调用方必须 close rl（目前只有启动服务器）
+ * V3.7.4 扁平化后，TUI 与兼容模式都走 `dispatchMenuItem(id, …, {page})`，
+ * 直接按「页键 + 顺号」查 `ACTION_BY_KEY`。本函数保留 `dispatchMenu(choice)`
+ * 的旧调用姿势，把 `choice` 解释成**旧扁平菜单的语义键**，转调对应的具名动作，
+ * 不再弹任何 `请选择 (0-N)` 子菜单（子菜单已全部拆除）。
+ *
+ * 认的键（兼容老脚本 / 老文档）：
+ *   '1' 启动停止   '2' 新建方案   '3' 列出模组   '4' 模组搜索下载
+ *   '5' 服务端属性 '6' 认证设置   '7' 下载镜像   '8' Java 设置
+ *   '9' 安装整合包(本地) '10' 生成整合包 '11' AI 分析日志 '12' 状态监控
+ *   '13' 列出主题  '14' 开房(陶瓦)
+ *
+ * @returns {Promise<boolean>} true = 调用方必须交出 stdin
  */
-async function dispatchMenu(choice, options, rl, preset = null, io = null) {
-    // 三种调用姿势，必须分清「谁负责关 rl」：
-    //   1) TUI（io 非空、rl 为 null）：二级菜单期间 TUI 的 readline 已 suspend，
-    //      这里不能自建——新建一个会让 stdin 出现两个消费者（输入回显两遍）。
-    //      子管理器里那几个「借 rl 提问」的参数改为传 null（它们会自建临时 rl，
-    //      此时 stdin 是干净的，自建是安全的）；
-    //   2) 兼容模式 / 外部直接调：调用方的 rl 复用，ownRl=false；
-    //   3) 完全裸调（无 rl 无 io）：自建并负责关闭。
-    const borrowed = Boolean(io) && !rl;
-    const ownRl = !rl && !borrowed;
-    if (!rl && !borrowed) rl = createRL();
-    // 交给子管理器 / quickSet 用的「可借用 rl」：TUI 模式下没有可用实例
-    const shareRl = borrowed ? undefined : rl;
-    const {
-        serverManager,
-        installer,
-        modManager,
-        schemeManager,
-        themeManager,
-        packGenerator,
-        logHandler,
-        config,
-        utils,
-        mailer
-    } = options;
+async function dispatchMenu(choice, options, rl, io = null) {
+    const key = String(choice);
+    const env = { options, io, rl: rl || null, ctx: null, page: '?' };
 
-    /**
-     * 子菜单读取：有 preset 就直接用它，否则问用户。
-     * preset 让「W 页 新建方案」这类快捷入口能复用同一段业务代码。
-     */
-    const subOf = async (promptText) => {
-        if (preset && preset.sub != null) return String(preset.sub);
-        return (await ioAsk(io, rl, promptText)).trim();
-    };
-
-    try {
-        switch (choice) {
-            case '1': {
-                // 启动服务器
-                printHeader('启动服务器');
-                if (!serverManager) {
-                    console.log('服务器管理模块未加载');
-                    break;
-                }
-                if (serverManager.isRunning()) {
-                    console.log('服务器已在运行中');
-                    const subChoice = await ioAsk(io, rl, '是否停止服务器? (y/N): ');
-                    if (subChoice.toLowerCase() === 'y') {
-                        await serverManager.stop();
-                    }
-                } else {
-                    // V3.6.2（607 指令）：回车 = 不显式指定，堆大小由 JVM 模板 / 覆盖参数决定
-                    // （override_args 里的 -Xmx 优先生效，80% 物理内存红线负责拦截）
-                    const memory = await ioAsk(io, rl, '内存分配 (回车 = 使用 JVM 模板中的堆设置): ') || null;
-                    // 启动期间让出 readline，使服务器能直接读取终端输入（指令 / Ctrl+C）
-                    rl.pause();
-                    await serverManager.start(memory);
-                    rl.resume();
-                }
-                break;
-            }
-
-            case '2': {
-                // 方案管理（V3.5.x：原主菜单「新建方案」与「方案管理」合并为单一入口）
-                // 子菜单：1. 新建方案  2. 切换方案  3. 列出方案  4. 删除方案  5. 方案信息
-                printHeader('方案管理');
-                if (!schemeManager) {
-                    console.log('方案管理模块未加载');
-                    break;
-                }
-                console.log('\n  1. 新建方案');
-                console.log('  2. 切换方案');
-                console.log('  3. 列出方案');
-                console.log('  4. 删除方案');
-                console.log('  5. 方案信息');
-                console.log('  0. 返回');
-                const sub = await subOf('\n请选择 (0-5): ');
-                switch (sub) {
-                    case '1': {
-                        // 新建方案
-                        printHeader('新建方案');
-                        // 1) 方案名
-                        const sName = (await ioAsk(io, rl, '方案名称: ')).trim();
-                        if (!sName) {
-                            console.log('未输入方案名，已取消。');
-                            break;
-                        }
-
-                        // 名称校验：复用 file_manager 的跨平台校验段（拒绝路径分隔符、
-                        // Windows 保留字符/保留设备名、以点或空格结尾等）
-                        let fm;
-                        try {
-                            fm = require('./file_manager');
-                        } catch (e) { fm = null; }
-                        if (fm && typeof fm.validateNameSegment === 'function') {
-                            const check = fm.validateNameSegment(sName);
-                            if (!check.ok) {
-                                console.log(`❌ 方案名不合法: ${check.reason}`);
-                                break;
-                            }
-                        }
-
-                        // 目录已存在则直接拒绝（避免 create 抛错后留下残缺目录）
-                        if (typeof schemeManager._schemeExists === 'function'
-                            && schemeManager._schemeExists(sName)) {
-                            console.log(`❌ 方案「${sName}」已存在。可用菜单 2 → 3 查看全部方案。`);
-                            break;
-                        }
-
-                        // 2) 核心类型（V3.5.11：补充 neoforge——安装器层早已支持，此处补齐入口）
-                        const sTypes = ['vanilla', 'forge', 'fabric', 'neoforge', 'paper', 'purpur', 'spigot', 'bukkit', 'mohist', 'leaves'];
-                        console.log('\n支持的服务器类型:');
-                        sTypes.forEach((t, i) => console.log(`  ${i + 1}. ${t}`));
-                        const stChoice = (await ioAsk(io, rl, '\n选择类型 (默认 1 vanilla): ')).trim();
-                        let type = 'vanilla';
-                        if (stChoice) {
-                            const stIdx = parseInt(stChoice, 10) - 1;
-                            if (!(stIdx >= 0 && stIdx < sTypes.length)) {
-                                console.log('类型选择无效，已取消。');
-                                break;
-                            }
-                            type = sTypes[stIdx];
-                        }
-
-                        // 3) 版本 / 构建号
-                        // V3.5.11：不再单独询问模组加载器——加载器随核心类型自动确定
-                        // （选 fabric 即 fabric 核心 + fabric 加载器，与 CLI -t 行为一致）
-                        const sVersion = (await ioAsk(io, rl, 'Minecraft 版本 (默认 1.20.1): ')).trim() || '1.20.1';
-                        const sBuild = (await ioAsk(io, rl, '构建号 (留空自动选择最新): ')).trim() || null;
-
-                        // 4) 创建（务必用对象签名——旧实现曾用三个位置参数调用，
-                        //    导致用户输入的版本/加载器被静默忽略，这里已修正）
-                        console.log('');
-                        try {
-                            await schemeManager.create(sName, {
-                                type,
-                                version: sVersion,
-                                loader: type,
-                                build: sBuild
-                            });
-                            console.log(`\n✅ 方案「${sName}」创建完成。`);
-                            const sDir = (schemeManager.schemesDir)
-                                ? require('path').join(schemeManager.schemesDir, sName)
-                                : `scheme/${sName}`;
-                            console.log(`   目录: ${sDir}`);
-                            console.log('   可在菜单 2 → 2 切换到此方案后启动服务器。');
-                        } catch (e) {
-                            console.log(`\n❌ 创建失败: ${e.message}`);
-                        }
-                        break;
-                    }
-                    case '2': {
-                        // 切换方案
-                        schemeManager.list();
-                        const name = await ioAsk(io, rl, '要切换到的方案名: ');
-                        if (name) {
-                            await schemeManager.switch(name);
-                        }
-                        break;
-                    }
-                    case '3':
-                        // 列出方案
-                        schemeManager.list();
-                        break;
-                    case '4': {
-                        // 删除方案
-                        schemeManager.list();
-                        const name = await ioAsk(io, rl, '要删除的方案名: ');
-                        if (name) {
-                            const confirm = await ioAsk(io, rl, `确定删除方案 "${name}"? (y/N): `);
-                            if (confirm.toLowerCase() === 'y') {
-                                await schemeManager.delete(name);
-                            }
-                        }
-                        break;
-                    }
-                    case '5': {
-                        // 方案信息
-                        schemeManager.list();
-                        const name = await ioAsk(io, rl, '方案名: ');
-                        if (name) {
-                            schemeManager.info(name);
-                        }
-                        break;
-                    }
-                }
-                break;
-            }
-
-            case '3': {
-                // 管理模组/插件
-                printHeader('管理模组/插件');
-                if (!modManager) {
-                    console.log('模组管理模块未加载');
-                    break;
-                }
-                console.log('\n  1. 列出已安装模组');
-                console.log('  2. 安装模组');
-                console.log('  3. 卸载模组');
-                console.log('  4. 启用/禁用模组');
-                console.log('  5. 查看模组配置');
-                console.log('  6. 编辑模组配置');
-                console.log('  7. 备份模组配置');
-                console.log('  0. 返回');
-                const subChoice = await subOf('\n请选择 (0-7): ');
-
-                const serverDir = utils ? utils.getServerDir() : '../scheme';
-                const configEditor = require('./config_editor');
-
-                switch (subChoice) {
-                    case '1': {
-                        const mods = modManager.listMods();
-                        console.log(`\n已安装模组 (${mods.length}):`);
-                        for (const mod of mods) {
-                            const status = mod.enabled ? '✅' : '❌';
-                            const sizeKB = (mod.size / 1024).toFixed(1);
-                            console.log(`  ${status} ${mod.name} (${sizeKB} KB) [${mod.loader}/${mod.version}]`);
-                        }
-                        break;
-                    }
-                    case '2': {
-                        const target = await ioAsk(io, rl, '模组 URL 或本地路径: ');
-                        if (target) {
-                            await modManager.install(target);
-                        }
-                        break;
-                    }
-                    case '3': {
-                        const mods = modManager.listMods();
-                        mods.forEach((m, i) => console.log(`  ${i + 1}. ${m.name}`));
-                        const idx = parseInt(await ioAsk(io, rl, '选择要卸载的模组编号: ')) - 1;
-                        if (idx >= 0 && idx < mods.length) {
-                            modManager.remove(mods[idx].name);
-                        }
-                        break;
-                    }
-                    case '4': {
-                        const mods = modManager.listMods();
-                        mods.forEach((m, i) => console.log(`  ${i + 1}. ${m.status || (m.enabled ? '✅' : '❌')} ${m.name}`));
-                        const idx = parseInt(await ioAsk(io, rl, '选择要切换的模组编号: ')) - 1;
-                        if (idx >= 0 && idx < mods.length) {
-                            modManager.toggleMod(mods[idx].name);
-                        }
-                        break;
-                    }
-                    case '5': {
-                        const files = configEditor.getConfigFiles(serverDir);
-                        if (files.length === 0) {
-                            console.log('config 目录下没有配置文件');
-                        } else {
-                            console.log(`\n配置文件 (${files.length}):`);
-                            files.forEach((f, i) => console.log(`  ${i + 1}. ${f.relPath} (${f.ext}, ${utils ? utils.formatFileSize(f.size) : f.size} B)`));
-                            const idx = parseInt(await ioAsk(io, rl, '\n选择要查看的文件编号: ')) - 1;
-                            if (idx >= 0 && idx < files.length) {
-                                const result = configEditor.readConfig(files[idx].fullPath);
-                                if (result.success) {
-                                    console.log(`\n${'═'.repeat(60)}`);
-                                    console.log(`文件: ${files[idx].relPath}`);
-                                    if (result.warning) console.log(`⚠ ${result.warning}`);
-                                    console.log('═'.repeat(60));
-                                    if (typeof result.data === 'object') {
-                                        console.log(JSON.stringify(result.data, null, 2));
-                                    } else {
-                                        console.log(result.data);
-                                    }
-                                } else {
-                                    console.log(`读取失败: ${result.error}`);
-                                }
-                            }
-                        }
-                        break;
-                    }
-                    case '6': {
-                        const files = configEditor.getConfigFiles(serverDir);
-                        if (files.length === 0) {
-                            console.log('config 目录下没有配置文件');
-                        } else {
-                            console.log(`\n可编辑的配置文件 (JSON/TOML/YAML):`);
-                            const editable = files.filter(f => ['.json', '.toml', '.yml', '.yaml', '.properties', '.cfg', '.conf', '.ini'].includes(f.ext));
-                            editable.forEach((f, i) => console.log(`  ${i + 1}. ${f.relPath} (${f.ext})`));
-                            if (editable.length === 0) {
-                                console.log('  没有可编辑的结构化配置文件');
-                                break;
-                            }
-                            const idx = parseInt(await ioAsk(io, rl, '\n选择要编辑的文件编号: ')) - 1;
-                            if (idx >= 0 && idx < editable.length) {
-                                const file = editable[idx];
-                                // 先显示当前键值
-                                const listResult = configEditor.listConfig(file.fullPath);
-                                if (listResult.success) {
-                                    console.log(`\n当前键值 (${file.relPath}):`);
-                                    listResult.entries.forEach(e => console.log(`  ${e.key} = ${JSON.stringify(e.value)}`));
-                                }
-                                const key = await ioAsk(io, rl, '\n输入要修改的键 (点号分隔, 如 general.enable): ');
-                                const value = await ioAsk(io, rl, '输入新值: ');
-                                if (key && value !== undefined) {
-                                    const setResult = configEditor.setConfigValue(file.fullPath, key, value);
-                                    if (setResult.success) {
-                                        console.log(`✅ 已设置 ${key} = ${value}`);
-                                        if (setResult.backupPath) console.log(`   备份已保存: ${setResult.backupPath}`);
-                                    } else {
-                                        console.log(`❌ 设置失败: ${setResult.error}`);
-                                    }
-                                }
-                            }
-                        }
-                        break;
-                    }
-                    case '7': {
-                        const backupResult = configEditor.backupConfigs(serverDir);
-                        if (backupResult.success) {
-                            console.log(`✅ 已备份 ${backupResult.count} 个配置文件`);
-                            console.log(`   备份目录: ${backupResult.backupDir}`);
-                        } else {
-                            console.log(`❌ 备份失败: ${backupResult.error}`);
-                        }
-                        break;
-                    }
-                }
-                break;
-            }
-
-            case '5': {
-                // 修改服务器配置 (server.properties)
-                printHeader('修改服务器配置 (server.properties)');
-                const ServerProperties = require('./config').ServerProperties;
-                const serverDir = utils ? utils.getServerDir() : '../scheme';
-                const props = new ServerProperties(serverDir);
-
-                console.log('\n  1. 查看所有属性');
-                console.log('  2. 设置/修改单个属性');
-                console.log('  3. 快速设置向导');
-                console.log('  4. 重置属性为默认值');
-                console.log('  0. 返回');
-                const subChoice = await subOf('\n请选择 (0-4): ');
-
-                switch (subChoice) {
-                    case '1':
-                        props.listAll();
-                        break;
-                    case '2': {
-                        const key = await ioAsk(io, rl, '属性名: ');
-                        const current = props.get(key);
-                        console.log(`当前值: ${current !== null ? current : '(未设置)'}`);
-                        const value = await ioAsk(io, rl, '新值: ');
-                        if (value) {
-                            props.set(key, value);
-                            console.log(`✅ ${key} = ${value}`);
-                        }
-                        break;
-                    }
-                    case '3':
-                        await props.quickSet(undefined, shareRl);
-                        break;
-                    case '4': {
-                        const key = await ioAsk(io, rl, '要重置的属性名: ');
-                        const result = props.reset(key);
-                        console.log(`✅ ${result.key} 已重置为 ${result.value}`);
-                        break;
-                    }
-                }
-                break;
-            }
-
-            case '11': {
-                // 错误日志分析
-                printHeader('错误日志分析');
-                if (!logHandler) {
-                    console.log('日志处理模块未加载');
-                    break;
-                }
-                console.log('\n  1. AI 分析最近日志');
-                console.log('  2. 生成统计报告');
-                console.log('  3. 实时日志跟踪');
-                console.log('  0. 返回');
-                const subChoice = await subOf('\n请选择 (0-3): ');
-                switch (subChoice) {
-                    case '1':
-                        await logHandler.analyze();
-                        break;
-                    case '2':
-                        await logHandler.report();
-                        break;
-                    case '3':
-                        console.log('正在跟踪日志 (Ctrl+C 退出)...');
-                        logHandler.tail();
-                        break;
-                }
-                break;
-            }
-
-            case '6': {
-                // 认证设置
-                printHeader('认证设置 (外置登录)');
-                if (!config) {
-                    console.log('配置模块未加载');
-                    break;
-                }
-                const authConfig = config.getConfig('auth', {});
-                console.log(`\n  外置登录: ${authConfig.enable ? '✅ 已启用' : '❌ 未启用'}`);
-                console.log(`  认证服务器: ${authConfig.server || '(未设置)'}`);
-                console.log(`  javaagent: ${authConfig.javaagent || '(自动)'}`);
-                const enable = await ioAsk(io, rl, '\n启用外置登录? (y/N): ');
-                if (enable.toLowerCase() === 'y') {
-                    config.setConfig('auth.enable', true);
-                    const server = await ioAsk(io, rl, '认证服务器地址 (默认 https://authlib-injector.yushi.moe): ');
-                    if (server) config.setConfig('auth.server', server);
-                    console.log('✅ 外置登录已启用，下次启动服务器时生效');
-                } else if (enable !== '') {
-                    config.setConfig('auth.enable', false);
-                    console.log('外置登录已禁用');
-                }
-                break;
-            }
-
-            case '7': {
-                // 下载管理器设置
-                printHeader('下载管理器设置');
-                if (!config) {
-                    console.log('配置模块未加载');
-                    break;
-                }
-                const mirror = config.getConfig('download.mirror', 'https://bmclapi2.bangbang93.com');
-                const timeout = config.getConfig('download.timeout', 30);
-                const retry = config.getConfig('download.retry', 3);
-                console.log(`\n  镜像地址: ${mirror}`);
-                console.log(`  超时时间: ${timeout}s`);
-                console.log(`  重试次数: ${retry}`);
-                console.log('\n  1. 修改镜像地址');
-                console.log('  2. 修改超时时间');
-                console.log('  3. 修改重试次数');
-                console.log('  0. 返回');
-                const subChoice = await subOf('\n请选择 (0-3): ');
-                switch (subChoice) {
-                    case '1': {
-                        console.log('\n  1. BMCLAPI2 (推荐) - https://bmclapi2.bangbang93.com');
-                        console.log('  2. 官方源 - https://launcher.mojang.com');
-                        console.log('  3. 自定义');
-                        const m = await ioAsk(io, rl, '选择: ');
-                        if (m === '1') config.setConfig('download.mirror', 'https://bmclapi2.bangbang93.com');
-                        else if (m === '2') config.setConfig('download.mirror', 'https://launcher.mojang.com');
-                        else if (m === '3') {
-                            const custom = await ioAsk(io, rl, '自定义地址: ');
-                            if (custom) config.setConfig('download.mirror', custom);
-                        }
-                        console.log('✅ 镜像地址已更新');
-                        break;
-                    }
-                    case '2': {
-                        const t = await ioAsk(io, rl, '超时时间(秒): ');
-                        if (t) config.setConfig('download.timeout', parseInt(t));
-                        console.log('✅ 超时时间已更新');
-                        break;
-                    }
-                    case '3': {
-                        const r = await ioAsk(io, rl, '重试次数: ');
-                        if (r) config.setConfig('download.retry', parseInt(r));
-                        console.log('✅ 重试次数已更新');
-                        break;
-                    }
-                }
-                break;
-            }
-
-            case '9': {
-                // 安装整合包
-                printHeader('安装整合包');
-                if (!packGenerator) {
-                    console.log('整合包模块未加载');
-                    break;
-                }
-                console.log('\n  1. 从本地文件安装 (.zip)');
-                console.log('  2. 从 URL 下载安装');
-                console.log('  0. 返回');
-                const subChoice = await subOf('\n请选择 (0-2): ');
-                if (subChoice === '1') {
-                    const filePath = await ioAsk(io, rl, '整合包文件路径: ');
-                    if (filePath) {
-                        await packGenerator.install(filePath, shareRl);
-                    }
-                } else if (subChoice === '2') {
-                    const url = await ioAsk(io, rl, '整合包 URL: ');
-                    if (url) {
-                        await packGenerator.install(url, shareRl);
-                    }
-                }
-                break;
-            }
-
-            case '10': {
-                // 生成客户端整合包
-                printHeader('生成客户端整合包');
-                if (!packGenerator) {
-                    console.log('整合包模块未加载');
-                    break;
-                }
-                const name = await ioAsk(io, rl, '整合包名称: ') || 'client-pack';
-                const version = await ioAsk(io, rl, 'Minecraft 版本 (默认 1.20.1): ') || '1.20.1';
-                await packGenerator.generate({ name, version });
-                break;
-            }
-
-            case '4': {
-                // 模组/插件搜索下载
-                printHeader('模组/插件搜索下载');
-                if (!modManager) {
-                    console.log('模组管理模块未加载');
-                    break;
-                }
-                console.log('\n  1. 从 URL 下载模组');
-                console.log('  2. 从本地安装模组');
-                console.log('  0. 返回');
-                const subChoice = await subOf('\n请选择 (0-2): ');
-                if (subChoice === '1') {
-                    const url = await ioAsk(io, rl, '模组下载 URL: ');
-                    if (url) {
-                        await modManager.install(url);
-                    }
-                } else if (subChoice === '2') {
-                    const filePath = await ioAsk(io, rl, '模组文件路径: ');
-                    if (filePath) {
-                        await modManager.install(filePath);
-                    }
-                }
-                break;
-            }
-
-            case '8': {
-                // 系统设置
-                printHeader('系统设置');
-                if (!config || !utils) {
-                    console.log('配置模块未加载');
-                    break;
-                }
-                console.log('\n  1. Java 设置（扫描/选择/自动安装）');
-                console.log('  2. 修改 JVM 参数');
-                console.log('  3. 查看系统信息');
-                console.log('  4. 重置配置');
-                console.log('  0. 返回');
-                const subChoice = await subOf('\n请选择 (0-4): ');
-                switch (subChoice) {
-                    case '1': {
-                        // V3.5.7：由「手填 Java 路径」升级为「扫描本机全部 Java 并列出选择」
-                        await javaSettingsFlow(rl, config, utils);
-                        break;
-                    }
-                    case '2': {
-                        // V3.6.2（607 指令）：新结构 server.jvm，参数经引号感知解析器，禁用 split
-                        const Jvm = require('./jvm_args');
-                        const curTemplate = config.getConfig('server.jvm.template', Jvm.DEFAULT_TEMPLATE);
-                        const curOverride = config.getConfig('server.jvm.override_args', []);
-                        console.log(`当前模板: ${curTemplate}（可选 ${Jvm.TEMPLATE_NAMES.join(' / ')}）`);
-                        console.log(`当前覆盖参数: ${curOverride.join(' ')}`);
-                        const newTemplate = (await ioAsk(io, rl, `新模板 (回车保持 ${curTemplate}): `)).trim();
-                        const newArgs = await ioAsk(io, rl, '新覆盖参数 (空格分隔，路径含空格用引号包裹；回车保持不变): ');
-                        if (newTemplate) {
-                            if (!Jvm.TEMPLATE_NAMES.includes(newTemplate)) {
-                                console.log(`⚠️ 未知模板「${newTemplate}」，可用：${Jvm.TEMPLATE_NAMES.join(' / ')}`);
-                            } else {
-                                config.setConfig('server.jvm.template', newTemplate);
-                                console.log(`✅ 模板已切换为 ${newTemplate}`);
-                            }
-                        }
-                        if (newArgs) {
-                            config.setConfig('server.jvm.override_args', Jvm.parseArgs(newArgs));
-                            console.log('✅ JVM 覆盖参数已更新');
-                        }
-                        break;
-                    }
-                    case '3': {
-                        const os = require('os');
-                        console.log(`\n  操作系统: ${os.type()} ${os.release()}`);
-                        console.log(`  架构: ${os.arch()}`);
-                        console.log(`  内存: ${(os.totalmem() / 1024 / 1024 / 1024).toFixed(1)} GB`);
-                        console.log(`  CPU: ${os.cpus()[0]?.model || 'Unknown'}`);
-                        console.log(`  Node.js: ${process.version}`);
-                        break;
-                    }
-                    case '4': {
-                        const confirm = await ioAsk(io, rl, '确定重置所有配置? (y/N): ');
-                        if (confirm.toLowerCase() === 'y') {
-                            config.saveConfig(config.DEFAULT_CONFIG);
-                            console.log('✅ 配置已重置为默认值');
-                        }
-                        break;
-                    }
-                }
-                break;
-            }
-
-            case '12': {
-                // 服务器状态监控
-                printHeader('服务器状态监控');
-                if (!serverManager) {
-                    console.log('服务器管理模块未加载');
-                    break;
-                }
-                serverManager.status();
-                if (serverManager.isRunning()) {
-                    const tailChoice = await ioAsk(io, rl, '\n是否查看实时日志? (y/N): ');
-                    if (tailChoice.toLowerCase() === 'y' && logHandler) {
-                        logHandler.tail();
-                    }
-                }
-                break;
-            }
-
-            case '13': {
-                // Web 主题更改
-                printHeader('Web 主题更改');
-                if (!themeManager) {
-                    console.log('主题管理模块未加载');
-                    break;
-                }
-                console.log('\n  1. 列出已安装主题');
-                console.log('  2. 安装主题');
-                console.log('  3. 切换主题');
-                console.log('  4. 删除主题');
-                console.log('  0. 返回');
-                const subChoice = await subOf('\n请选择 (0-4): ');
-                switch (subChoice) {
-                    case '1':
-                        themeManager.list();
-                        break;
-                    case '2': {
-                        const filePath = await ioAsk(io, rl, '主题 ZIP 文件路径: ');
-                        if (filePath) {
-                            await themeManager.install(filePath, shareRl);
-                        }
-                        break;
-                    }
-                    case '3': {
-                        themeManager.list();
-                        const name = await ioAsk(io, rl, '要切换的主题名: ');
-                        if (name) {
-                            await themeManager.switch(name, shareRl);
-                        }
-                        break;
-                    }
-                    case '4': {
-                        themeManager.list();
-                        const name = await ioAsk(io, rl, '要删除的主题名: ');
-                        if (name) {
-                            themeManager.delete(name);
-                        }
-                        break;
-                    }
-                }
-                break;
-            }
-
-            case '14': {
-                // 联机 / 我要当房主（陶瓦 Terracotta）
-                printHeader('联机 / 我要当房主 (陶瓦)');
-                const Terracotta = require('./terracotta');
-                console.log('\n   powered by Terracotta | 陶瓦联机 (AGPLv3)');
-                console.log('   基于 EasyTier 的内网穿透，好友无需公网 IP 即可加入你的 Minecraft 服务端。');
-                console.log('   加入端由 PCL / HMCL / BakaXL / FCL 等启动器内置支持。\n');
-                console.log('  1. 我要当房主（开房）');
-                console.log('  2. 查看房间号 / 状态');
-                console.log('  3. 关房（停止陶瓦）');
-                console.log('  4. 我要当房客（输入房间号加入）');
-                console.log('  0. 返回');
-                const sub = await subOf('\n请选择 (0-4): ');
-                try {
-                    if (sub === '1') {
-                        console.log('提示：开房前请先启动 Minecraft 服务端（菜单 1），陶瓦会自动扫描本机服务端端口。');
-                        await Terracotta.hostRoom({ promptPort: (msg) => ioAsk(io, rl, msg) });
-                    } else if (sub === '2') {
-                        const s = await Terracotta.getStatus();
-                        if (!s.running) {
-                            console.log('当前未开房（陶瓦未运行）。选择 1 开房。');
-                        } else {
-                            console.log(`运行状态:  🟢 运行中`);
-                            console.log(`角色:      ${s.mode === 'guest' ? '房客（Join Room）' : '房主（开房）'}`);
-                            console.log(`本地 API:  127.0.0.1:${s.port}`);
-                            console.log(`房间号:    ${s.roomCode || '(生成中)'}`);
-                            if (s.player) console.log(`玩家名:    ${s.player}`);
-                            console.log(`状态机:    ${s.state || '未知'}`);
-                            if (s.roomCode) {
-                                console.log(`\n把房间号发给好友，对方在 PCL / HMCL / BakaXL / FCL 中选择「加入陶瓦房间」并输入该房间号即可联机。`);
-                            }
-                        }
-                    } else if (sub === '3') {
-                        await Terracotta.stopHost();
-                    } else if (sub === '4') {
-                        // 房客：房间号 + 玩家名都通过 ioAsk（TUI 下走挂起键盘的安全
-                        // 提问通道），绝不另开 readline，避免 stdin 双消费者。
-                        const roomCode = String(await ioAsk(io, rl, '\n请输入房间号 (由房主提供): ') || '').trim();
-                        if (!roomCode) {
-                            console.log('未输入房间号，已取消。');
-                        } else {
-                            const playerName = String(await ioAsk(io, rl, '请输入你的玩家名 (Minecraft ID): ') || '').trim();
-                            if (!playerName) {
-                                console.log('未输入玩家名，已取消。');
-                            } else {
-                                await Terracotta.joinRoom({ roomCode, player: playerName });
-                            }
-                        }
-                    }
-                } catch (e) {
-                    console.error(`❌ 操作失败: ${e.message}`);
-                }
-                break;
-            }
-
-            default:
-                console.log(`未知菜单选项: ${choice}`);
-        }
-    } catch (e) {
-        console.error(`执行菜单操作时出错: ${e.message}`);
-    } finally {
-        if (ownRl) rl.close();
+    switch (key) {
+        case '1':  return actionStartStop(env);
+        case '2':  return schemeCreate(env);
+        case '3':  return modList(env);
+        case '4':  return modInstall(env);
+        case '5':  return propsListAll();
+        case '6':  return authSettings(env);
+        case '7':  return downloadSetting(env, 'mirror');
+        case '8':  return javaSettingsEntry(env);
+        case '9':  return packInstall(env, 'local');
+        case '10': return packGenerate(env);
+        case '11': return logAnalyze(env);
+        case '12': return serverStatus(env);
+        case '13': return themeAction(env, 'list');
+        case '14': return terracottaHost(env);
+        default:
+            console.log(`未知菜单选项: ${choice}`);
+            return false;
     }
-    return false;
 }
 
 /**
@@ -2164,6 +2094,7 @@ module.exports = {
     // 主入口
     showMainMenu,
     dispatchMenu,
+    dispatchMenuItem,
     // 页面表（测试与外部工具可读）
     PAGES,
     PAGE_MAP,
@@ -2171,6 +2102,8 @@ module.exports = {
     itemOfPage,
     idsOf,
     resolveNumber,
+    // 页键 + 顺号 → 动作函数（测试用来验证「每项都有实现」）
+    ACTION_BY_KEY,
     // 兼容旧接口
     createRL,
     ask,
