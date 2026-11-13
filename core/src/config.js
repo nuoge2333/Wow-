@@ -14,7 +14,11 @@ const CONFIG_FILE = process.env.WOW_CONFIG_FILE || path.join(__dirname, '../wow.
 const DEFAULT_CONFIG = {
     language: 'zh_CN',
     server: {
-        dir: '../scheme',          // 相对于 core/ 的路径（V3.5.2：删 server/，服务器运行于方案目录）
+        // 相对于 core/ 的路径。
+        // ⚠️ 不要写 '../scheme'：那是「方案集合」根目录，不是一个方案。
+        // 未激活方案时若回退到那里，eula/配置/日志会散落在所有方案旁边，
+        // 看起来就像「方案被标记到了根目录」。这里用独立的 server/ 作为回退。
+        dir: '../server',
         jar: null,
         java: null,
         // V3.6.2（607 指令一）：JVM 参数改为「模板 + 覆盖」新结构，
@@ -79,6 +83,10 @@ const DEFAULT_CONFIG = {
         // V3.5.21：true = 放开插件注册的自定义命令经 Web 端执行。
         // 插件是第三方代码、与主程序同权限，Web 又是远程入口，两者叠加风险最高，故默认关闭。
         allow_plugins: false,
+        // [实验性 / Beta] true = 允许把插件包内的前端目录挂到同源 /plugin-web/<插件>/。
+        // 默认关闭：插件前端与主面板同源，能读 cookie/localStorage，
+        // 开启后由 plugin_web.js 强制 CSP（frame-ancestors / connect-src 限同源）。
+        allow_plugins_web: false,
         // 指令一：true = 本面板挂在 nginx / Caddy 等反向代理后面。
         // 反代到 127.0.0.1:8080 时，绑定地址、socket 来源 IP、隧道标记全都
         // 「看起来是本机」，服务端无法自行分辨；必须由管理员显式声明，

@@ -444,6 +444,45 @@ function getJrePath() {
 }
 
 /**
+ * 方案根目录（<项目根>/scheme）。
+ *
+ * 与 SchemeManager.schemesDir 必须保持同一路径：这里用 resolvePath('../scheme')
+ * 而不用 SchemeManager，是为了避免 scheme_manager -> utils -> scheme_manager 循环依赖。
+ */
+function getSchemesRoot() {
+    return path.resolve(resolvePath('../scheme'));
+}
+
+/**
+ * 判断某个路径是否就是「方案根目录」本身。
+ *
+ * 方案根目录只应存放一个个方案子目录，绝不是一个可运行的服务器目录。
+ * 历史上 server.dir 的默认值就是 ../scheme，未激活方案时会静默落到这里，
+ * 于是 eula.txt / server.properties / logs 全被写进 scheme/ 根，
+ * 看起来就像「方案被标记到了根目录」。所有路径判定都要用它兜一层。
+ */
+function isSchemesRoot(target) {
+    if (!target) return false;
+    return path.resolve(target) === getSchemesRoot();
+}
+
+/**
+ * 方案名是否可安全地拼成 scheme/<name> 单段目录。
+ *
+ * `path.join('/x/scheme', '')` 会得到 `/x/scheme` 本身，`..` 会逃到项目根，
+ * 这两个是「方案目录跑偏」最隐蔽的入口，必须在拼接前就拦住。
+ */
+function isSafeSchemeName(name) {
+    const n = String(name == null ? '' : name).trim();
+    if (!n) return false;
+    if (n === '.' || n === '..') return false;
+    if (n.includes('/') || n.includes('\\')) return false;
+    if (/^[a-zA-Z]:/.test(n)) return false;
+    if (n !== String(name == null ? '' : name)) return false; // 首尾空白一律视为非法，不做静默修正
+    return true;
+}
+
+/**
  * 获取当前激活的服务器目录
  *
  * V3.4.x 起改为「直接在方案目录内运行」：若当前激活了方案（server.scheme 配置指向
@@ -452,27 +491,36 @@ function getJrePath() {
  *   - 世界数据在 scheme 与 server 两套目录间来回复制、重复、易丢；
  *   - 切换方案时 server/ 被 _backup_ 目录堆积、且原 server/ 内容被整体清空；
  *   - 在方案目录里改了东西（配置/存档），因为实际跑的是 server/ 副本而不生效。
- * 仅当未激活任何方案时，才回退到默认 server.dir（../scheme）。
  *
- * V3.5.2 起方案目录由 core/schemes/ 迁移到项目根 scheme/，
- * 这里必须与 SchemeManager.schemesDir 保持同一路径，否则切换方案后仍会回退到根目录，
- * 导致「切了方案但 server start 找不到核心」。
+ * 未激活任何方案时回退到 server.dir。**但绝不回退到 scheme 根目录**：
+ * 那是「方案集合」，不是「一个方案」，落到那儿的后果是把 eula/配置/日志
+ * 写散在所有方案旁边，且下一次 server start 必然找不到核心。
  */
 function getServerDir() {
     const config = require('./config');
     const scheme = config.getConfig('server.scheme', null);
+    const schemesRoot = getSchemesRoot();
+
     if (scheme) {
-        // 与 SchemeManager.schemesDir 保持同一路径（根 scheme/）。
-        // 这里不用 SchemeManager，避免 scheme_manager -> utils -> scheme_manager 循环依赖；
-        // 该相对路径与 scheme_manager.js 的 resolvePath('../scheme') 等价。
-        const schemePath = resolvePath(path.join('../scheme', scheme));
-        if (fs.existsSync(schemePath)) {
-            return schemePath;
+        // 非法方案名（空串 / .. / 含分隔符 / 盘符）一律当作「无激活方案」，
+        // 绝不交给 path.join 去猜——空串会顺势得到 scheme 根。
+        if (isSafeSchemeName(scheme)) {
+            const schemePath = path.resolve(schemesRoot, String(scheme).trim());
+            // 二次防御：解析结果必须是 scheme/ 的直接子目录
+            if (path.dirname(schemePath) === schemesRoot && fs.existsSync(schemePath)) {
+                return schemePath;
+            }
         }
-        // 配置指向的方案目录已不存在，回退到根 scheme 目录
     }
-    const serverDir = config.getConfig('server.dir', '../scheme');
-    return resolvePath(serverDir);
+
+    const serverDir = config.getConfig('server.dir', '../server');
+    const resolved = path.resolve(resolvePath(serverDir));
+
+    // 兜底：即便老配置里 server.dir 仍写着 ../scheme，也不许落在方案根目录。
+    if (resolved === schemesRoot) {
+        return path.resolve(resolvePath('../server'));
+    }
+    return resolved;
 }
 
 /**
@@ -521,6 +569,9 @@ module.exports = {
     getLoaderStoragePath,
     getJrePath,
     getServerDir,
+    getSchemesRoot,
+    isSchemesRoot,
+    isSafeSchemeName,
     commandExists,
     formatFileSize,
     removeDirIfExists

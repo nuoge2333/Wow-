@@ -144,13 +144,16 @@ class PluginManager {
                     author: meta.author || '未知',
                     description: meta.description || '',
                     commands: Array.isArray(meta.commands) ? meta.commands.map(c => c.name) : [],
+                    // 声明了 web 字段的插件才可能在面板里以 iframe 呈现（默认关闭）
+                    web: typeof meta.web === 'string' && meta.web.trim() ? meta.web.trim() : null,
                     trusted: state,
                     active: state === 'trusted'
                 };
             } catch (e) {
                 return {
                     name: dirName, dirName, version: '未知', author: '未知', description: '',
-                    commands: [], trusted: 'new', active: false, error: 'plugin.json 解析失败'
+                    commands: [], web: null, trusted: 'new', active: false,
+                    error: 'plugin.json 解析失败'
                 };
             }
         });
@@ -182,7 +185,7 @@ class PluginManager {
         } catch (e) { /* 保持 new */ }
         const stateText = { trusted: '✅ 已信任', new: '⏳ 未信任（首次加载需确认）', changed: '⚠️ 内容已变更（需重新确认）' }[state];
 
-        console.log(`📦 插件: ${meta.name || dirName}`);
+        console.log(`📦 插件: ${meta.name || dirName}  [实验性 / Beta]`);
         console.log(`  作者: ${meta.author || '未知'}`);
         console.log(`  版本: ${meta.version || '未知'}`);
         console.log(`  描述: ${meta.description || '(无)'}`);

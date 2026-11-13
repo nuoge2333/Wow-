@@ -120,6 +120,99 @@
 
 ---
 
+## [待发行] — 2026-11-13（五）：方案路径隔离修复 + 插件系统防崩与扩展
+
+> 用户指令：「核心路径修复与插件系统扩展」。三块：修新建方案落错目录、
+> 插件加载/执行绝对防崩、plugin-config 持久化与插件 Web UI。
+
+### 一、方案路径：再也不会落到 `scheme/` 根目录
+
+**现象**：新建方案后，方案内容疑似被写到 `scheme/` 根目录，`server start` 找不到核心。
+
+**两个真实入口**（都已复现并封死）：
+
+1. **空方案名** —— `path.join('/x/scheme', '')` 恰好等于 `/x/scheme` 本身。
+   CLI 的 `<name>` 是必填参数，但 shell 传空串（`wow scheme create ""`）完全合法；
+   旧 `create()` 只查 `_schemeExists()`，空名判定为「不存在」，于是把 `scheme.yaml`、
+   核心、世界全写进了方案集合的根目录。
+2. **`server.dir` 默认值是 `../scheme`** —— 未激活方案时 `getServerDir()` 回退到它，
+   `start()` 先 `ensureDirSync` 再写 `eula.txt` / `logs/`，**在核心检查之前**就把
+   安装目录污染了。
+
+修复：
+
+- `_getSchemePath()` 增加两道闸：方案名必须是安全单段（非空、非 `.`/`..`、
+  无 `/` `\`、无盘符、无首尾空白），且解析结果必须是 `schemesDir` 的直接子目录。
+  非法名直接抛中文错误，不再交给 `path.join` 去猜。
+- `create()` 在建任何目录之前校验名字；目录已存在即拒绝（含残缺目录）。
+- `utils.getServerDir()` 不再返回 scheme 根：方案名非法视同无方案；
+  即便老配置里 `server.dir` 仍写着 `../scheme`，也会改用 `../server`。
+- `server.dir` 默认值 `../scheme` → `../server`。
+- `start()` 在未激活方案且目录是默认回退时**提前中止**，不再写 `eula.txt`（
+  回退目录里已有核心 jar 的「老式直放」用法仍然放行）。
+- `switch()` 瘦身旧方案时，旧方案已被删掉不再抛错；`delete()` 删当前方案从
+  静默 `return` 改为明确报错；`create()` 在 `auto_scheme: false` 且当前无方案时
+  也会登记 `server.scheme`，避免「建好了却没生效」。
+- 顺手修正核心 `in_pool` 元数据：旧实现记录的是「入池前」的判断，
+  新建方案明明已共享核心却写 `in_pool: false`。
+
+新增 `core/test/scheme_isolation.test.js`（14 项）：两个方案绝对路径不同、
+各自核心可被 `_getServerJar` 独立定位、非法名全部拒绝、`getServerDir` 永不返回 scheme 根。
+
+### 二、插件系统：坏插件绝不拖垮主程序
+
+- **加载隔离**：`loadPlugins()` 给每个插件的**整段流程**（读清单 → 指纹 → 信任 →
+  `require` → 注册命令）套 try...catch。任何未预料异常只跳过该插件并记日志。
+  此前信任指纹计算、`createContext`、`policy.registerPluginCommand` 抛错会直接中断整轮加载。
+- **执行隔离**：handler 抛错（同步或 rejected promise）时，终端/面板统一只显示
+  `插件内部错误：wow <命令> 执行失败。请查看日志或联系插件作者。`——
+  插件抛出的 message 可能含内部路径/密钥片段，不再直接呈现；完整堆栈写日志。
+- **运行期护栏**：新增 `installRejectionGuard()`。有插件成功加载后接管
+  `unhandledRejection`（Node 15+ 默认会直接终止进程），记录后继续运行。
+  只接管 Promise 拒绝，不接管 `uncaughtException`（同步栈已断，继续跑更危险）。
+  `WOW_STRICT_PROMISE=1` 可关闭。
+- **全局标识**：`wow plugin` 命令、`plugin list` / `plugin info` 输出、加载日志、
+  TUI「内容与配置」页标题、Web 设置页插件面板、`/api/plugins`（`experimental: true`）
+  与相关文档，全部加 **[实验性 / Beta]**。
+
+新增 `core/test/plugin_isolation.test.js`（10 项）。
+
+### 三、插件配置持久化（plugin-config）
+
+- `plugin.json` 新增 `config` 字段（JSON 对象）作为默认值。
+- 落盘位置 `core/plugin-config/<插件名>/config.json`，与插件目录物理隔离：
+  卸载/重装插件不丢用户配置。
+- 新增 `core/src/plugin_config.js`：`all/get/set/merge/reset`，支持点号路径。
+  - **防穿越**：插件名单段校验 + 解析结果必须在根目录内；配置键过滤
+    `__proto__` / `constructor` / `prototype`，防原型污染。
+  - **原子写**：临时文件 → `fsync` → `rename`；同进程并发写串行化。
+  - **坏文件恢复**：非法 JSON 备份为 `config.json.corrupt-<时间戳>`，退回默认值。
+- `context` 新增第 11 个能力 `pluginConfig`（懒加载，无 pluginName 时返回 `null`）。
+
+新增 `core/test/plugin_config.test.js`（14 项）。
+
+### 四、插件 Web UI（实验性 / Beta）
+
+- `plugin.json` 新增 `web` 字段（相对插件根的前端目录）。
+- **不新开端口**：挂在主面板同源 `/plugin-web/<插件名>/`。
+- 启动时把该目录复制到 `core/plugin-web/<插件名>/`，Express 只认复制品；
+  插件 `index.js`、隐藏文件、符号链接、超限文件都不会被发布。
+- **默认关闭**：新增 `web.allow_plugins_web`（文档里也叫 `allow-plugins-web`），
+  关闭时会清空 `core/plugin-web/`。
+- **强制 CSP**：`frame-ancestors 'self'; connect-src 'self';` +
+  `X-Content-Type-Options: nosniff` + `Referrer-Policy: no-referrer`。
+- 面板用 `<iframe sandbox="allow-scripts allow-forms allow-popups">` 嵌套
+  （**不给** `allow-same-origin`），插件页面读不到面板的 JWT/localStorage。
+
+新增 `core/test/plugin_web.test.js`（11 项）。
+
+### 测试
+
+`npm test`：58 个文件全绿（新增 4 个：`scheme_isolation` / `plugin_isolation` /
+`plugin_config` / `plugin_web`）。
+
+---
+
 ## [3.7.4-26.47] — 2026-11-13（四）：TUI 菜单扁平化，拆掉全部二级菜单
 
 > 用户指令：「删掉 w1,r1,t1,y1，并将其他原本从旧的二级菜单拆出的选项，进入后删掉

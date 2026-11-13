@@ -40,18 +40,18 @@ function isLoaded(modName) {
 
 console.log('\ncontext 键集合\n');
 
-check('恰好暴露 10 个模块', () => {
-    assert.strictEqual(CONTEXT_KEYS.length, 10);
+check('恰好暴露 11 个模块', () => {
+    assert.strictEqual(CONTEXT_KEYS.length, 11);
 });
 
 check('键名与预期一致', () => {
     assert.deepStrictEqual(
         [...CONTEXT_KEYS].sort(),
-        ['config', 'event', 'log', 'mail', 'mod', 'pack', 'scheme', 'server', 'theme', 'utils']
+        ['config', 'event', 'log', 'mail', 'mod', 'pack', 'pluginConfig', 'scheme', 'server', 'theme', 'utils']
     );
 });
 
-check('枚举 context 得到同样的 10 个键', () => {
+check('枚举 context 得到同样的 11 个键', () => {
     const ctx = createContext({ warn: () => {} });
     assert.deepStrictEqual(Object.keys(ctx).sort(), [...CONTEXT_KEYS].sort());
 });

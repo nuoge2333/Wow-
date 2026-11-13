@@ -210,6 +210,7 @@ wow config set web.auth_password "你的密码"
 | 方案管理 | 列出方案及当前激活方案，查看资源引用详情 |
 | 主题切换 | 列出并切换主题包 |
 | 命令执行 | 直接在面板里执行 `wow` CLI 命令，终端同步回显 `[WebCLI] ...` |
+| 插件管理 | 🧪 **[实验性 / Beta]** 列出 / 安装 / 删除 wow CLI 插件；插件声明了 `web` 且打开 `web.allow_plugins_web` 时，可「打开界面」在 sandbox iframe 里显示插件前端 |
 
 > 🎯 **面板上的每个操作，本质都是「代理发送一条 CLI 指令」**。终端会同步打印
 > `[WebCLI] wow <指令>`，方便对照与排查。CLI 优先级高于面板：面板不实现独立逻辑，
@@ -218,6 +219,22 @@ wow config set web.auth_password "你的密码"
 面板页面（静态资源）来自 `web/` 目录。启动时若 `web/` 不存在，会从当前主题包
 （`themes/<web.theme>/`，缺失则回退 `themes/default/`）复制生成；两个主题目录都没有时，
 才生成一个只有提示的最小页。切换主题是**整目录替换**，详见 [主题包开发指南](THEMES.md)。
+
+### 🧪 插件 Web UI（实验性 / Beta）
+
+插件可以在 `plugin.json` 里用 `"web": "frontend"` 声明前端目录。**默认不挂载**，
+需要 `wow.yaml`：
+
+```yaml
+web:
+  allow_plugins_web: true
+```
+
+- 挂在**同源** `/plugin-web/<插件名>/`，不新开端口；
+- 启动时把声明目录复制到 `core/plugin-web/<插件名>/`，插件 `index.js` 不会外露；
+- 响应头强制 `Content-Security-Policy: frame-ancestors 'self'; connect-src 'self';`；
+- 面板用 `sandbox="allow-scripts allow-forms allow-popups"` 的 iframe 打开
+  （**不含** `allow-same-origin`），插件页面无法读取面板的 JWT / localStorage。
 
 ---
 

@@ -54,7 +54,9 @@ check('方案目录不存在 → 返回 true 并给出准确诊断', () => {
     assert.strictEqual(ret, true, '应返回 true 表示已报告缺失');
     assert.ok(out.includes(`「${missing}」目录不存在`), '未说明方案目录不存在');
     assert.ok(out.includes('server.scheme'), '未指出配置位置');
-    assert.ok(out.includes('已回退到 scheme 根目录'), '未说明 getServerDir 的回退行为');
+    // V3.7.5：回退目标从「scheme 根目录」改为独立的 server/，
+    // 诊断必须讲清楚「不会再落到 scheme 根」，否则用户仍会以为方案还在。
+    assert.ok(out.includes('不会回退到 scheme/ 根目录'), '未说明 getServerDir 的新回退行为');
     assert.ok(out.includes('期望目录'), '未给出期望目录');
     assert.ok(!/scheme switch/.test(out), '不应再引导用户执行无效的 scheme switch');
 });
@@ -104,7 +106,11 @@ check('config 在无 wow.yaml 时可加载并生成默认配置', () => {
     // 写入默认配置再读回，模拟「首次运行自动生成」
     fs.writeFileSync(cfgPath, yaml.dump(defaults), 'utf8');
     const back = yaml.load(fs.readFileSync(cfgPath, 'utf8'));
-    assert.strictEqual(back.server.dir, '../scheme');
+    // 默认回退目录必须是独立的 server/，不能是 '../scheme'：
+    // scheme/ 是所有方案的父目录，拿它当服务器目录会把 eula/日志写散在
+    // 各方案旁边（「方案被标记到 scheme 根目录」的现场）。
+    assert.strictEqual(back.server.dir, '../server');
+    assert.notStrictEqual(back.server.dir, '../scheme');
     fs.removeSync(tmp);
 });
 

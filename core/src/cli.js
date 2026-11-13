@@ -982,7 +982,7 @@ themeCmd
 // 本命令组只负责「装 / 卸 / 查 / 信任」这些文件层操作，
 // 命令注册由 plugin_loader.js 在启动时完成（见文件末尾的 registerPlugins）。
 
-const pluginCmd = program.command('plugin').description('插件管理（外部扩展命令）');
+const pluginCmd = program.command('plugin').description('插件管理（外部扩展命令）[实验性 / Beta]');
 
 pluginCmd
     .command('list')
@@ -992,6 +992,7 @@ pluginCmd
         if (!PluginManager) return;
         const pm = new PluginManager();
         const plugins = pm.list();
+        console.log('插件系统 [实验性 / Beta]：接口可能变动，请勿在生产环境依赖。');
         console.log(`插件目录: ${pm.pluginsDir}`);
         if (plugins.length === 0) {
             console.log('  还没有安装任何插件。');

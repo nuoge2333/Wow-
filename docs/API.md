@@ -657,6 +657,8 @@ V3.5.19 新增的文本编辑器接口，参数与 `/api/files/content` 完全�
 ```json
 {
   "success": true,
+  "experimental": true,
+  "web_enabled": false,
   "plugins": [
     {
       "name": "hello",
@@ -665,6 +667,8 @@ V3.5.19 新增的文本编辑器接口，参数与 `/api/files/content` 完全�
       "author": "wow Team",
       "description": "打招呼",
       "commands": ["hello", "hello-status"],
+      "web": "frontend",
+      "web_url": null,
       "trusted": "trusted",
       "active": true
     }
@@ -672,8 +676,17 @@ V3.5.19 新增的文本编辑器接口，参数与 `/api/files/content` 完全�
 }
 ```
 
+| 字段 | 说明 |
+|------|------|
+| `experimental` | 恒为 `true`，标记插件系统整体为 **[实验性 / Beta]** |
+| `web_enabled` | `web.allow_plugins_web` 是否打开 |
+| `web` | `plugin.json` 声明的前端目录（未声明为 `null`） |
+| `web_url` | 仅在 `web_enabled === true` 且有 `web` 时给出 `/plugin-web/<name>/`，否则 `null` |
+
 `trusted` 三态：`trusted`（指纹一致）/ `new`（从未信任）/ `changed`（信任后被改过）。
 `active` 恒等于 `trusted === 'trusted'`，即「下次启动会被真正加载」。
+
+> 🧪 **插件系统为 [实验性 / Beta]**，接口字段可能变动。
 
 > ⚠️ **插件命令默认不能经 Web 端执行**（`web.allow_plugins: false`）。
 > 本接口只是列出插件，不提供执行入口；即便插件已被信任，

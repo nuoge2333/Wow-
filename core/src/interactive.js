@@ -116,7 +116,7 @@ const PAGES = [
     {
         key: 'E',
         label: '内容',
-        title: '内容与配置（模组 / 插件 / 配置文件）',
+        title: '内容与配置（模组 / 插件 [实验性·Beta] / 配置文件）',
         items: [
             {
                 id: '1', label: '列出已安装模组',

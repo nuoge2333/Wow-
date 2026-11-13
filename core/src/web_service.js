@@ -464,6 +464,22 @@ function startWeb(options = {}) {
     // 静态文件服务（主题）
     app.use(express.static(webDir));
 
+    // 插件 Web UI（实验性 / Beta）
+    // 默认关闭：web.allow_plugins_web 必须显式设为 true 才挂载。
+    // 只挂在同源 /plugin-web/<插件>/ 下，绝不新开端口。
+    // 放在主题静态之后：主题目录里同名路径优先，避免插件顶掉主面板资源。
+    try {
+        const pluginWeb = require('./plugin_web');
+        pluginWeb.mount(app, {
+            enabled: config.getConfig('web.allow_plugins_web', false) === true,
+            warn: (m) => console.warn(m),
+            info: (m) => console.log(m)
+        });
+    } catch (e) {
+        // 插件 UI 是附加能力，任何失败都不能影响主面板启动
+        console.warn(`⚠️ 插件 Web UI 挂载失败（不影响主面板）: ${e.message}`);
+    }
+
     // 解析 JSON 请求体
     // V3.5.7：默认上限由 100kb 提升到 4mb，以支持「保存文本文件」接口（其自身限 2MB）。
     // 否则 2MB 的 PUT /api/files/content 会在 body 解析阶段就被拒（且抛未捕获异常）。
@@ -2354,8 +2370,21 @@ function startWeb(options = {}) {
         try {
             const PluginManager = require('./plugin_manager');
             const pm = new PluginManager();
-            const plugins = pm.list();
-            res.json({ success: true, plugins });
+            const webEnabled = config.getConfig('web.allow_plugins_web', false) === true;
+            const plugins = pm.list().map(p => ({
+                ...p,
+                // web_url 只有在全局开关打开时才给：否则前端不该渲染「打开」按钮，
+                // 免得用户点了得到 404 却不知道为什么。
+                web_url: (p.web && webEnabled)
+                    ? `/plugin-web/${encodeURIComponent(p.name)}/`
+                    : null
+            }));
+            res.json({
+                success: true,
+                experimental: true,   // 插件系统整体标记为实验性 / Beta
+                web_enabled: webEnabled,
+                plugins
+            });
         } catch (e) {
             res.status(500).json({ success: false, error: e.message });
         }

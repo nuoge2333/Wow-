@@ -6,7 +6,7 @@
  * 插件 index.js 的处理函数签名是 `(args, context)`，本模块负责构造那个 context。
  *
  * 设计要点：
- *  1. **白名单注入**：只暴露下列 9 个模块，绝不注入 process / 内部 fs / require。
+ *  1. **白名单注入**：只暴露下列 11 个模块，绝不注入 process / 内部 fs / require。
  *     注意：这不是沙箱。require 进来的是同一个 Node 进程、同一份权限，
  *     插件照样可以通过 require('fs') 直接读写磁盘。安全边界靠三道闸：
  *       ① 首次启用确认（plugin_trust.js）
@@ -49,7 +49,19 @@ const FACTORIES = {
     scheme: () => new (require('./scheme_manager'))(),
     theme: () => new (require('./theme_manager'))(),
     mail: () => new (require('./mailer'))(),
-    pack: () => new (require('./pack_generator'))()
+    pack: () => new (require('./pack_generator'))(),
+    // 插件自己的持久化配置（core/plugin-config/<插件>/config.json）。
+    // 没有 pluginName 时返回 null：宁可让插件看到 null，也不要在配置目录里
+    // 建出一堆 "(unknown)" 垃圾目录。
+    pluginConfig: (opts) => {
+        if (!opts || !opts.pluginName) return null;
+        const PluginConfig = require('./plugin_config');
+        return new PluginConfig({
+            pluginName: opts.pluginName,
+            defaults: opts.pluginDefaults,
+            root: opts.pluginConfigRoot
+        });
+    }
 };
 
 /** 对外暴露的 key 顺序即此处顺序（object 保留插入序），用于 help / 文档展示 */
@@ -60,13 +72,20 @@ const CONTEXT_KEYS = Object.freeze(Object.keys(FACTORIES));
  * @param {object} [options]
  * @param {string} [options.pluginName] 插件名，仅用于 warn 日志定位
  * @param {function} [options.warn] 日志回调 (msg) => void，默认 console.error
- * @returns {object} 带 9 个只读属性 + _plugin 标识的上下文对象
+ * @returns {object} 带 11 个只读属性 + _plugin 标识的上下文对象
  */
 function createContext(options = {}) {
     const pluginName = options.pluginName || '(unknown)';
     const warn = typeof options.warn === 'function'
         ? options.warn
         : (msg) => console.error(msg);
+
+    // 传给各工厂的参数：只有需要「知道自己是谁」的能力（pluginConfig）会用到
+    const factoryOpts = {
+        pluginName: options.pluginName || null,
+        pluginDefaults: options.pluginDefaults,
+        pluginConfigRoot: options.pluginConfigRoot
+    };
 
     const cache = Object.create(null);
 
@@ -75,7 +94,7 @@ function createContext(options = {}) {
         if (key in cache) return cache[key];
         let value = null;
         try {
-            value = FACTORIES[key]();
+            value = FACTORIES[key](factoryOpts);
         } catch (e) {
             warn(`⚠️ 插件 ${pluginName}：context.${key} 初始化失败（返回 null）: ${e.message}`);
             value = null;

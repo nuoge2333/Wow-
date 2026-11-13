@@ -209,6 +209,13 @@ const SCHEMA = [
         advanced: true, danger: true
     },
     {
+        key: 'web.allow_plugins_web', type: 'boolean', group: 'Web 面板',
+        label: '允许挂载插件 Web UI（实验性）',
+        desc: '把插件包内声明的前端目录挂到同源 /plugin-web/<插件>/ 下（对应 allow-plugins-web）。' +
+              '⚠️ 插件前端与主面板同源，默认关闭；开启后响应头强制 frame-ancestors / connect-src 限同源。',
+        advanced: true
+    },
+    {
         key: 'web.tunnel_mirror', type: 'string', group: 'Web 面板', label: 'cloudflared 下载镜像',
         desc: '公网穿透用的 cloudflared 二进制的自定义下载源。留空 = 内置国内镜像（gh-proxy.com / ghfast.top / ghproxy.net）+ GitHub 官方兜底。可填镜像根或完整的 releases 前缀。',
         placeholder: '留空使用内置镜像', advanced: true

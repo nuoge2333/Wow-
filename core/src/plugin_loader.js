@@ -100,6 +100,13 @@ function validateManifest(meta) {
     if (!Array.isArray(meta.commands) || meta.commands.length === 0) {
         return { ok: false, reason: 'plugin.json 的 commands 必须是非空数组' };
     }
+    // config：插件默认配置（可选）。只允许纯 JSON 对象——数组/标量无法成为
+    // 「一组默认值」，而函数等非 JSON 值根本没法落盘。
+    if (meta.config !== undefined) {
+        if (!meta.config || typeof meta.config !== 'object' || Array.isArray(meta.config)) {
+            return { ok: false, reason: 'plugin.json 的 config 必须是 JSON 对象' };
+        }
+    }
     const seen = new Set();
     for (const cmd of meta.commands) {
         if (!cmd || typeof cmd !== 'object') {
@@ -243,39 +250,93 @@ function loadOne(program, pluginsDir, dirName, log) {
     }
 
     // ---- 4. 注册 ----
-    const ctx = createContext({ pluginName: result.name, warn: log.warn });
-    for (const cmd of v.commands) {
-        const name = String(cmd.name).toLowerCase();
-        const sub = program.command(name);
-        sub.description(cmd.description || `${result.name} 插件命令`);
-        for (const opt of (cmd.options || [])) {
-            try {
-                sub.option(opt.flag, opt.description || '');
-            } catch (e) {
-                log.warn(`⚠️ 插件 ${result.name} 的命令 ${name}：选项 ${opt.flag} 无效，已忽略（${e.message}）`);
-            }
-        }
-        // 运行期异常只毁这一次调用，不连带 commander / 主进程
-        sub.action(async (...actionArgs) => {
-            const args = actionArgs.slice(0, -1); // 末位是 commander 的 options 对象
-            try {
-                const ret = await mod[cmd.handler](args, ctx);
-                return ret;
-            } catch (e) {
-                const msg = e && e.message ? e.message : String(e);
-                log.error(`❌ 插件 ${result.name} 的命令 ${name} 执行失败：${msg}`);
-                if (e && e.stack && process.env.WOW_DEBUG) log.error(e.stack);
-                process.exitCode = 1;
-                return undefined;
-            }
+    // 整段注册也包在 try 里：commander 对非法 option / 重复 command 会抛错，
+    // 而这些错在插件作者那边根本看不到。一个插件注册失败，最多是它自己不可用。
+    try {
+        const ctx = createContext({
+            pluginName: result.name,
+            // plugin.json 里的 config 就是该插件的默认配置
+            pluginDefaults: (meta && typeof meta.config === 'object' && !Array.isArray(meta.config))
+                ? meta.config
+                : {},
+            warn: log.warn
         });
-        sub._wowPlugin = { plugin: result.name, dirName };
-        policy.registerPluginCommand(name);
-        result.commands.push(name);
+        for (const cmd of v.commands) {
+            const name = String(cmd.name).toLowerCase();
+            const sub = program.command(name);
+            sub.description(cmd.description || `${result.name} 插件命令`);
+            for (const opt of (cmd.options || [])) {
+                try {
+                    sub.option(opt.flag, opt.description || '');
+                } catch (e) {
+                    log.warn(`⚠️ 插件 ${result.name} 的命令 ${name}：选项 ${opt.flag} 无效，已忽略（${e.message}）`);
+                }
+            }
+            // 运行期异常只毁这一次调用，不连带 commander / 主进程。
+            // 对外（终端 / Web）统一只说「插件内部错误」：插件抛出的 message
+            // 可能包含内部路径、SQL、密钥片段，不该直接呈现在界面上；详细堆栈进日志。
+            sub.action(async (...actionArgs) => {
+                const args = actionArgs.slice(0, -1); // 末位是 commander 的 options 对象
+                try {
+                    const fn = mod[cmd.handler];
+                    if (typeof fn !== 'function') {
+                        throw new Error(`handler ${cmd.handler} 不是函数`);
+                    }
+                    return await fn(args, ctx);
+                } catch (e) {
+                    const detail = e && e.message ? e.message : String(e);
+                    log.error(`❌ 插件 ${result.name} 的命令 ${name} 执行失败（插件内部错误）：${detail}`);
+                    if (e && e.stack) log.error(String(e.stack));
+                    console.error(`插件内部错误：wow ${name} 执行失败。请查看日志或联系插件作者。`);
+                    process.exitCode = 1;
+                    return undefined;
+                }
+            });
+            sub._wowPlugin = { plugin: result.name, dirName };
+            try {
+                policy.registerPluginCommand(name);
+            } catch (e) {
+                log.warn(`⚠️ 插件 ${result.name} 的命令 ${name} 登记失败（不影响注册）: ${e.message}`);
+            }
+            result.commands.push(name);
+        }
+    } catch (e) {
+        result.reason = `注册命令失败：${e.message}`;
+        log.error(`❌ 插件 ${result.name} 注册失败，已跳过：${e.message}`);
+        return result;
     }
 
     result.ok = true;
     return result;
+}
+
+/**
+ * 运行期护栏：吞掉 unhandledRejection。
+ *
+ * 插件最常见的写法是 fire-and-forget —— `setTimeout(() => { throw x }, 0)`
+ * 或一个不 await 的 fetch。那类异常会变成 unhandledRejection，而 Node 15+
+ * 的默认行为是**直接终止进程**：用户看到的是「玩着玩着 wow 就没了」。
+ *
+ * 边界（刻意为之）：
+ *   - 只接管 unhandledRejection。不接管 uncaughtException —— 同步未捕获异常
+ *     说明调用栈已断，进程状态不可信，继续跑只会得到「一半坏掉」的实例，
+ *     比干净退出更难排查。插件命令的同步路径已由 action 内的 try/catch 覆盖。
+ *   - 进程级只装一次；`WOW_STRICT_PROMISE=1` 时不装（排查主程序自身 Promise bug）。
+ *
+ * @param {{warn:Function,error:Function}} log
+ */
+let rejectionGuardInstalled = false;
+function installRejectionGuard(log) {
+    if (rejectionGuardInstalled) return false;
+    if (process.env.WOW_STRICT_PROMISE === '1') return false;
+    rejectionGuardInstalled = true;
+
+    process.on('unhandledRejection', (reason) => {
+        const detail = reason && reason.message ? reason.message : String(reason);
+        log.error(`⚠️ 未处理的 Promise 拒绝（可能来自插件，已拦截以避免进程退出）：${detail}`);
+        if (reason && reason.stack) log.error(String(reason.stack));
+    });
+    return true;
 }
 
 /**
@@ -321,75 +382,92 @@ async function loadPlugins(program, options = {}) {
     for (const dirName of dirNames) {
         const pluginDir = path.join(pluginsDir, dirName);
 
-        // ---- 先读清单拿到展示名（信任确认要显示给人看）----
-        let meta = {};
+        // 单个插件的**任何**失败都只能影响它自己。
+        // 这里兜住整段流程（读清单、指纹、信任、加载、注册），包括我们没预料到的
+        // 第三方异常（比如指纹计算时目录权限被改）。一个坏插件换来一次跳过 +
+        // 一条日志，而不是 wow 启动失败。
         try {
-            meta = JSON.parse(fs.readFileSync(path.join(pluginDir, 'plugin.json'), 'utf8')) || {};
+            // ---- 先读清单拿到展示名（信任确认要显示给人看）----
+            let meta = {};
+            try {
+                meta = JSON.parse(fs.readFileSync(path.join(pluginDir, 'plugin.json'), 'utf8')) || {};
+            } catch (e) {
+                out.skipped.push({ dirName, name: dirName, reason: `plugin.json 解析失败：${e.message}` });
+                log.warn(`⚠️ 插件 ${dirName} 已跳过：plugin.json 解析失败`);
+                continue;
+            }
+            const displayName = meta.name ? String(meta.name) : dirName;
+
+            // ---- 信任闸 ----
+            const fp = trust.fingerprint(pluginDir);
+            const state = trust.checkTrust(displayName, fp, trustFile);
+
+            if (state !== 'trusted') {
+                const what = state === 'new' ? '首次加载' : '内容已变更';
+                const cmdNames = Array.isArray(meta.commands)
+                    ? meta.commands.map(c => `wow ${c && c.name}`).filter(s => s !== 'wow undefined')
+                    : [];
+
+                if (!canAsk) {
+                    out.pending.push({
+                        dirName, name: displayName, fingerprint: fp, state,
+                        reason: `插件 ${displayName} ${what}，当前非交互环境无法确认，已跳过`
+                    });
+                    log.warn(
+                        `⚠️ 插件 ${displayName}（${what}）未信任，非交互环境已跳过。` +
+                        `请在终端执行 \`wow plugin trust ${displayName}\`。`
+                    );
+                    continue;
+                }
+
+                const lines = [
+                    '',
+                    `📦 插件 ${displayName}${meta.version ? ` v${meta.version}` : ''} ${what}`,
+                    '   [实验性 / Beta] 插件系统仍在公测，接口可能变动，请勿用于生产环境。',
+                    meta.author ? `   作者：${meta.author}` : null,
+                    meta.description ? `   说明：${meta.description}` : null,
+                    cmdNames.length ? `   将新增命令：${cmdNames.join('、')}` : null,
+                    '   ⚠️ 插件代码与 wow 主程序同权限，可读写任意文件、发起网络请求。',
+                    '      请只启用你信任来源的插件。',
+                    `   指纹：${fp.slice(0, 23)}…`
+                ].filter(Boolean).join('\n');
+                log.info(lines);
+
+                const yes = await confirm('   启用该插件？[y/N] ');
+                if (!yes) {
+                    out.pending.push({
+                        dirName, name: displayName, fingerprint: fp, state,
+                        reason: `插件 ${displayName} 未被信任（用户拒绝）`
+                    });
+                    log.info(`   已跳过插件 ${displayName}。`);
+                    continue;
+                }
+                trust.grantTrust(displayName, fp, trustFile);
+                log.info(`   ✅ 已信任 ${displayName}。`);
+            }
+
+            // ---- 真正加载 ----
+            const r = loadOne(program, pluginsDir, dirName, log);
+            if (r.ok) {
+                out.loaded.push(r);
+                if (!quiet) {
+                    log.info(`🔌 [实验性 / Beta] 插件 ${r.name} 已加载：${r.commands.map(c => `wow ${c}`).join('、')}`);
+                }
+            } else {
+                out.skipped.push({ dirName, name: r.name, reason: r.reason });
+            }
         } catch (e) {
-            out.skipped.push({ dirName, name: dirName, reason: `plugin.json 解析失败：${e.message}` });
-            log.warn(`⚠️ 插件 ${dirName} 已跳过：plugin.json 解析失败`);
-            continue;
-        }
-        const displayName = meta.name ? String(meta.name) : dirName;
-
-        // ---- 信任闸 ----
-        const fp = trust.fingerprint(pluginDir);
-        const state = trust.checkTrust(displayName, fp, trustFile);
-
-        if (state !== 'trusted') {
-            const what = state === 'new' ? '首次加载' : '内容已变更';
-            const cmdNames = Array.isArray(meta.commands)
-                ? meta.commands.map(c => `wow ${c && c.name}`).filter(s => s !== 'wow undefined')
-                : [];
-
-            if (!canAsk) {
-                out.pending.push({
-                    dirName, name: displayName, fingerprint: fp, state,
-                    reason: `插件 ${displayName} ${what}，当前非交互环境无法确认，已跳过`
-                });
-                log.warn(
-                    `⚠️ 插件 ${displayName}（${what}）未信任，非交互环境已跳过。` +
-                    `请在终端执行 \`wow plugin trust ${displayName}\`。`
-                );
-                continue;
-            }
-
-            const lines = [
-                '',
-                `📦 插件 ${displayName}${meta.version ? ` v${meta.version}` : ''} ${what}`,
-                meta.author ? `   作者：${meta.author}` : null,
-                meta.description ? `   说明：${meta.description}` : null,
-                cmdNames.length ? `   将新增命令：${cmdNames.join('、')}` : null,
-                '   ⚠️ 插件代码与 wow 主程序同权限，可读写任意文件、发起网络请求。',
-                '      请只启用你信任来源的插件。',
-                `   指纹：${fp.slice(0, 23)}…`
-            ].filter(Boolean).join('\n');
-            log.info(lines);
-
-            const yes = await confirm('   启用该插件？[y/N] ');
-            if (!yes) {
-                out.pending.push({
-                    dirName, name: displayName, fingerprint: fp, state,
-                    reason: `插件 ${displayName} 未被信任（用户拒绝）`
-                });
-                log.info(`   已跳过插件 ${displayName}。`);
-                continue;
-            }
-            trust.grantTrust(displayName, fp, trustFile);
-            log.info(`   ✅ 已信任 ${displayName}。`);
-        }
-
-        // ---- 真正加载 ----
-        const r = loadOne(program, pluginsDir, dirName, log);
-        if (r.ok) {
-            out.loaded.push(r);
-            if (!quiet) {
-                log.info(`🔌 插件 ${r.name} 已加载：${r.commands.map(c => `wow ${c}`).join('、')}`);
-            }
-        } else {
-            out.skipped.push({ dirName, name: r.name, reason: r.reason });
+            const detail = e && e.message ? e.message : String(e);
+            out.skipped.push({ dirName, name: dirName, reason: `加载过程异常：${detail}` });
+            log.error(`❌ 插件 ${dirName} 加载异常，已跳过（不影响主程序）：${detail}`);
+            if (e && e.stack) log.error(String(e.stack));
         }
     }
+
+    // 有插件真正跑起来了，才装运行期护栏：
+    // 插件常见写法是 fire-and-forget（setTimeout / 不 await 的 fetch），
+    // 那类异常会变成 unhandledRejection，Node 默认直接终止进程。
+    if (out.loaded.length) installRejectionGuard(log);
 
     return out;
 }
@@ -435,6 +513,7 @@ module.exports = {
     validateManifest,
     findConflict,
     getPluginsDir,
+    installRejectionGuard,
     CONTEXT_KEYS,
     RESERVED_EXTRA,
     FORBIDDEN_NAMES,

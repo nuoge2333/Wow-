@@ -63,7 +63,11 @@
         <summary>高级管理 · 插件 / 模组配置库 / 主题包</summary>
         <div class="settings-grid">
             <div class="settings-section">
-                <div class="title">🔌 wow 插件 <span class="badge">扩展命令</span></div>
+                <div class="title">🔌 wow 插件 <span class="badge">扩展命令</span> <span class="badge beta">实验性 / Beta</span></div>
+                <div class="set-note">
+                    <strong>插件系统仍在公测（实验性 / Beta）。</strong>插件代码与 wow 主程序同进程同权限，
+                    接口随时可能调整，请勿在生产环境依赖。单个插件加载失败只会被跳过并记日志，不影响服务器与面板启动。
+                </div>
                 <div class="btn-row" style="margin-bottom:12px;">
                     <button class="btn btn-primary" id="plugin-install-btn">📦 安装插件</button>
                     <button class="btn btn-secondary" id="plugin-refresh-btn">🔄 刷新列表</button>
@@ -175,6 +179,24 @@
             <div class="btn-row">
                 <button class="btn btn-modal-cancel" id="plugin-install-cancel">取消</button>
                 <button class="btn btn-modal-confirm" id="plugin-install-confirm">安装</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===== 模态框：插件 Web UI（实验性 / Beta，sandbox iframe） ===== -->
+    <div class="modal-overlay" id="plugin-web-modal">
+        <div class="modal modal-wide">
+            <h3 id="plugin-web-title">插件界面 <span class="badge beta">实验性 / Beta</span></h3>
+            <div class="set-note">
+                页面由第三方插件提供，运行在 <code>sandbox</code> iframe 中：它与主面板不同源，
+                无法读取本面板的登录凭证或 localStorage。若插件功能异常，请直接联系插件作者。
+            </div>
+            <iframe id="plugin-web-frame" class="plugin-web-frame"
+                    sandbox="allow-scripts allow-forms allow-popups"
+                    referrerpolicy="no-referrer"
+                    title="插件界面"></iframe>
+            <div class="btn-row">
+                <button class="btn btn-modal-cancel" id="plugin-web-close">关闭</button>
             </div>
         </div>
     </div>
@@ -620,6 +642,35 @@
     // ==================== 插件管理 ====================
     const pluginList = $('plugin-list');
     const pluginFilter = $('plugin-filter');
+
+    // 插件 Web UI：sandbox iframe，绝不同源直嵌
+    const pluginWebModal = $('plugin-web-modal');
+    const pluginWebFrame = $('plugin-web-frame');
+    const pluginWebTitle = $('plugin-web-title');
+
+    function openPluginWeb(name, url) {
+        if (!url) return;
+        // 只允许本站相对路径，防止被篡改成外站地址
+        if (!/^\/plugin-web\/[A-Za-z0-9._~%\-\/]+$/.test(url)) {
+            showToast('插件界面地址非法', 'error');
+            return;
+        }
+        pluginWebTitle.innerHTML = escapeHtml(name) + ' <span class="badge beta">实验性 / Beta</span>';
+        pluginWebFrame.src = url;
+        pluginWebModal.classList.add('active');
+    }
+
+    function closePluginWeb() {
+        pluginWebModal.classList.remove('active');
+        // 清空 src：否则关闭后 iframe 里的脚本仍在后台运行
+        pluginWebFrame.src = 'about:blank';
+    }
+
+    $('plugin-web-close').addEventListener('click', closePluginWeb);
+    pluginWebModal.addEventListener('click', (e) => {
+        if (e.target === pluginWebModal) closePluginWeb();
+    });
+
     async function loadPlugins(filter = '') {
         try {
             const data = await apiGet('/api/plugins');
@@ -631,18 +682,21 @@
             if (!plugins.length) { pluginList.innerHTML = '<div class="empty-state">暂无插件</div>'; return; }
             pluginList.innerHTML = plugins.map(p => `<div class="plugin-item">
                 <div class="info">
-                    <span class="name">${escapeHtml(p.name)}</span>
+                    <span class="name">${escapeHtml(p.name)} <span class="badge beta">Beta</span></span>
                     <span class="meta">作者: ${escapeHtml(p.author)} v${escapeHtml(p.version)}</span>
                     <span class="meta" style="color:${p.active ? '#4CAF50' : '#667788'};">${p.active ? '已加载' : '未加载'}</span>
+                    ${p.web && !p.web_url ? '<span class="meta" style="color:#997722;">Web UI 未启用（需 allow_plugins_web）</span>' : ''}
                 </div>
                 <div class="actions">
+                    ${p.web_url ? `<button class="btn-sm blue" data-action="open" data-url="${escapeHtml(p.web_url)}" data-name="${escapeHtml(p.name)}">打开界面</button>` : ''}
                     <button class="btn-sm ${p.active ? 'inactive' : 'active'}" data-action="toggle" data-name="${escapeHtml(p.name)}">${p.active ? '禁用' : '启用'}</button>
                     <button class="btn-sm danger" data-action="delete" data-name="${escapeHtml(p.name)}">删除</button>
                 </div>
             </div>`).join('');
             pluginList.querySelectorAll('[data-action]').forEach(el => {
                 el.addEventListener('click', async () => {
-                    const { action, name } = el.dataset;
+                    const { action, name, url } = el.dataset;
+                    if (action === 'open') { openPluginWeb(name, url); return; }
                     try {
                         if (action === 'delete') {
                             if (!confirm(`确定要删除插件 "${name}" 吗？`)) return;

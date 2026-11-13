@@ -59,7 +59,7 @@ wow set server.dir ./my_server
 
 | 字段 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
-| `dir` | string | `../scheme` | 服务器实例目录（相对 `core/`；V3.5.2 起默认指向根目录 `scheme/`） |
+| `dir` | string | `../server` | 未激活方案时的回退目录（相对 `core/`）。🔺 **V3.7.5 起改为 `../server`**：旧默认值 `../scheme` 是「所有方案的父目录」，拿它当服务器目录会把 `eula.txt` / `logs/` / `server.properties` 写散在各方案旁边，表现为「方案被标记到 scheme 根目录」。即使老配置仍写着 `../scheme`，`getServerDir()` 也会拦下并改用 `../server` |
 | `jar` | string | `null` | 指定服务端 jar 文件名（`null` 自动检测） |
 | `java` | string | `null` | Java 可执行文件路径（`null` 自动检测或下载） |
 | `jvm_args` | array | `["-Xmx2G", "-Xms2G", "-XX:+UseG1GC"]` | 默认 JVM 参数 |
@@ -70,7 +70,7 @@ wow set server.dir ./my_server
 **示例：**
 ```yaml
 server:
-  dir: ../scheme
+  dir: ../server
   jar: null
   java: null
   jvm_args:
@@ -202,6 +202,7 @@ backup:
 | `allow_scheme_ops` | boolean | `false` | 🔺 **V3.5.7** 放开 `scheme create/switch/delete/edit/pull/prune/register/export/import` |
 | `allow_remote_install` | boolean | `false` | 🔺 **V3.5.7** 放开 `install <http(s)://...>` 远程下载（等同任意代码执行入口） |
 | `allow_plugins` | boolean | `false` | 🔺 **V3.5.21** 放开插件注册的自定义命令经 Web 端执行（插件是第三方任意代码） |
+| `allow_plugins_web` | boolean | `false` | 🧪 **V3.7.5** 允许把插件包内 `web` 目录挂到同源 `/plugin-web/<插件>/`（文档里也叫 `allow-plugins-web`）。不新开端口；响应头强制 CSP；关闭时会清空 `core/plugin-web/` |
 | `trust_proxy` | boolean | `false` | 🔺 **V3.7.0** 面板挂在 nginx / Caddy 等反向代理后面时置 `true`。反代到 `127.0.0.1` 时服务端分辨不出真实来源，只能靠这个声明位强制登录并保持危险开关锁定 |
 | `tunnel_mirror` | string | `''` | 🔺 **V3.5.22** cloudflared 二进制下载源。留空 = 内置三家国内镜像 + GitHub 官方兜底 |
 
@@ -219,6 +220,7 @@ web:
   allow_scheme_ops: false
   allow_remote_install: false
   allow_plugins: false
+  allow_plugins_web: false
   trust_proxy: false
   tunnel_mirror: ''
 ```

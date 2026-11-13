@@ -68,8 +68,12 @@ class SchemeManager {
             fromPack = null  // 从整合包导入
         } = options;
 
-        if (this._schemeExists(name)) {
-            throw new Error(`方案 ${name} 已存在`);
+        // 0. 方案名安全校验（必须在建任何目录之前）
+        //    空名会让 path.join 落到 scheme 根、`..` 会逃到项目根，
+        //    两者都会造成「方案目录不在 scheme/<名字>」的经典事故。
+        const schemePath = this._getSchemePath(name);
+        if (fs.existsSync(schemePath)) {
+            throw new Error(`方案 ${name} 已存在（目录: ${schemePath}）`);
         }
 
         console.log(`📦 创建方案: ${name}`);
@@ -77,8 +81,7 @@ class SchemeManager {
         console.log(`  加载器: ${loader}`);
         console.log(`  核心类型: ${type}`);
 
-        // 1. 创建方案目录
-        const schemePath = this._getSchemePath(name);
+        // 1. 创建方案目录（严格隔离在 scheme/<名字>/ 内）
         fs.ensureDirSync(schemePath);
         fs.ensureDirSync(path.join(schemePath, 'world'));
         fs.ensureDirSync(path.join(schemePath, 'config'));
@@ -130,12 +133,17 @@ class SchemeManager {
         }
 
         // 3. 检查核心是否在pool中
-        const coreInPool = this._isResourceInPool(coreHash);
+        //    注意：必须把「原本就在池中」和「刚刚入池」区分开再合并成最终状态，
+        //    旧实现只记录入池前的判断，导致新建方案明明已共享核心、元数据却写
+        //    in_pool: false，后续 prune/cleanPool 的引用计数对不上。
+        const coreWasInPool = this._isResourceInPool(coreHash);
 
         // 4. 复制核心到pool（如果不在）
-        if (!coreInPool) {
+        if (!coreWasInPool) {
             await this._addToPool(corePath, 'cores', `${type}/${version}`, coreHash, coreRel);
         }
+        const coreInPool = true; // 执行到这里，核心一定已在池中
+        const corePoolRel = this.poolIndex.resources[coreHash] || null;
 
         // 5. 收集模组列表（初始为空）
         const mods = [];
@@ -177,9 +185,7 @@ class SchemeManager {
                     file: coreRel || path.basename(corePath),
                     hash: coreHash,
                     in_pool: coreInPool,
-                    pool_path: coreInPool
-                        ? `pool/cores/${type}/${version}/${coreRel || path.basename(corePath)}`
-                        : null
+                    pool_path: corePoolRel
                 },
                 mods: [],
                 plugins: []
@@ -229,6 +235,15 @@ class SchemeManager {
         // 自动切换到新方案（如果auto_scheme启用）
         if (this.autoScheme) {
             await this.switch(name);
+        } else if (!config.getConfig('server.scheme', null)) {
+            // 没开自动接管、但当前压根没有激活方案（首次使用）。
+            // 此时若不登记，server start 会因为没有方案而落到回退目录，
+            // 用户看到的就是「刚建好的方案没生效、核心找不到」。
+            // 只写指向关系，不做补齐/瘦身（那是 auto_scheme 的职责）。
+            this.currentScheme = name;
+            config.setConfig('server.scheme', name);
+            config.setConfig('server.version', version);
+            console.log(`📌 已登记为当前方案（auto_scheme 关闭，未做资源补齐）: ${name}`);
         }
 
         return name;
@@ -286,6 +301,13 @@ class SchemeManager {
         }
 
         if (this.currentScheme === name) {
+            // 幂等：内存说是当前方案，但 wow.yaml 可能被手改/回滚过。
+            // 旧实现直接 return，配置与磁盘就此长期不一致，start 时按配置走会找错目录。
+            if (config.getConfig('server.scheme', null) !== name) {
+                config.setConfig('server.scheme', name);
+                config.setConfig('server.version', this._loadSchemeMeta(name).version);
+                console.log(`已修正 wow.yaml: server.scheme => ${name}`);
+            }
             console.log(`已是当前方案: ${name}`);
             return;
         }
@@ -313,8 +335,19 @@ class SchemeManager {
         console.log(`✅ 已切换到方案: ${name}`);
 
         // 4. 如果auto_scheme启用，瘦身旧方案
-        if (this.autoScheme && oldScheme) {
-            await this._pruneScheme(oldScheme);
+        //    旧方案可能已经被手工删掉 / 目录被挪走，而 wow.yaml 仍指向它。
+        //    这种情况绝不能让 switch 抛错——切换的目标是「能用新方案」，
+        //    清理旧方案只是副作用。
+        if (this.autoScheme && oldScheme && oldScheme !== name) {
+            if (!this._schemeExists(oldScheme)) {
+                console.log(`⚠️  旧方案 ${oldScheme} 已不存在，跳过瘦身`);
+            } else {
+                try {
+                    await this._pruneScheme(oldScheme);
+                } catch (e) {
+                    console.log(`⚠️  旧方案 ${oldScheme} 瘦身失败（不影响切换）: ${e.message}`);
+                }
+            }
         }
 
         // 5. 自动清理pool中未被引用的资源
@@ -332,8 +365,9 @@ class SchemeManager {
         }
 
         if (this.currentScheme === name) {
-            console.log(`当前方案 ${name} 正在使用，请先切换`);
-            return;
+            // 不静默返回：静默会让调用方以为删掉了，而 wow.yaml 仍指向它，
+            // 下一次 start 就落到回退目录（曾经表现为「方案目录跑到 scheme 根」）。
+            throw new Error(`方案 ${name} 正在使用中，请先切换到其它方案再删除`);
         }
 
         console.log(`🗑️ 删除方案: ${name}`);
@@ -597,8 +631,36 @@ class SchemeManager {
 
     // ==================== 内部方法 ====================
 
+    /**
+     * 方案名 → 绝对目录。
+     *
+     * ⚠️ 这里曾经是最隐蔽的「方案目录跑偏」入口：
+     *   - `create('')`：`path.join(schemesDir, '')` === schemesDir，
+     *     于是 scheme.yaml / 核心 / 世界全被写进 scheme 根目录，
+     *     用户看到的就是「新建方案后 server start 找不到核心」；
+     *   - `create('..')`：直接逃到项目根，更糟。
+     * 现在两道闸：名字本身必须是安全单段，且解析结果必须是 schemesDir 的直接子目录。
+     *
+     * @param {string} name
+     * @returns {string} 绝对路径
+     */
     _getSchemePath(name) {
-        return path.join(this.schemesDir, name);
+        const base = path.resolve(this.schemesDir);
+        const raw = String(name == null ? '' : name);
+
+        if (!utils.isSafeSchemeName(raw)) {
+            throw new Error(
+                `方案名「${raw}」不合法：不能为空、不能是 . 或 ..、` +
+                '不能包含 / \\ 或盘符，也不能以空白开头/结尾'
+            );
+        }
+
+        const abs = path.resolve(base, raw);
+        // 二次防御：`path.resolve` 已吃掉 ..，但保留这一层以防未来改实现时静默失守
+        if (path.dirname(abs) !== base) {
+            throw new Error(`方案名「${raw}」不合法：会逃出方案根目录 ${base}`);
+        }
+        return abs;
     }
 
     /**
@@ -617,7 +679,12 @@ class SchemeManager {
     }
 
     _schemeExists(name) {
-        const schemePath = this._getSchemePath(name);
+        let schemePath;
+        try {
+            schemePath = this._getSchemePath(name);
+        } catch (e) {
+            return false; // 名字非法 = 一定不存在；由 create/switch 各自给出明确报错
+        }
         return fs.existsSync(schemePath) && fs.existsSync(path.join(schemePath, 'scheme.yaml'));
     }
 

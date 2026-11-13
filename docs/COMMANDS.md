@@ -526,6 +526,9 @@ wow theme info <name>
 
 ## 五之二、插件管理 (7 个)
 
+> 🧪 **[实验性 / Beta]** 插件系统仍在公测，接口可能变动，不建议在生产环境依赖。
+> 公测期承诺只有一条：坏插件不会拖垮主程序（加载/执行全程隔离，失败只跳过并记日志）。
+
 > 📌 这里的「插件」指 **wow 自身的 CLI 扩展插件**（`wow-plugins/` 目录），
 > 不是 Minecraft 服务端的 Bukkit/Paper 插件。开发指南见 [WOW-PLUGINS.md](WOW-PLUGINS.md)。
 >

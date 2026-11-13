@@ -191,7 +191,7 @@ async function capture(fn) {
             await programB.parseAsync(['node', 'wow', 'hello-ctx']);
         });
         const keys = out.match(/CTX_KEYS:(.*)/)[1].split(',');
-        assert.deepStrictEqual(keys.sort(), ['config', 'event', 'log', 'mail', 'mod', 'pack', 'scheme', 'server', 'theme', 'utils']);
+        assert.deepStrictEqual(keys.sort(), ['config', 'event', 'log', 'mail', 'mod', 'pack', 'pluginConfig', 'scheme', 'server', 'theme', 'utils']);
         assert.match(out, /CTX_HAS_PROCESS:false/);
         // context.config 必须是真正的 config 模块
         assert.match(out, /CTX_LANG:(zh_CN|en_US|unknown)/);

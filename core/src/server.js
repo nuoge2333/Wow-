@@ -1031,13 +1031,42 @@ class ServerManager {
         console.error(`当前配置指向的方案「${schemeName}」目录不存在`);
         console.error('配置位置: core/wow.yaml -> server.scheme');
         console.error(`期望目录: ${schemeDir}`);
-        console.error(`当前实际使用: ${this.serverDir}（已回退到 scheme 根目录）`);
+        console.error(`当前实际使用: ${this.serverDir}`);
+        console.error('注意：不会回退到 scheme/ 根目录——那是所有方案的父目录，不是可运行的实例。');
         console.error('');
         console.error('常见原因：换了新的解压目录（旧方案仍在旧目录里），或方案已删除。');
         console.error(`若方案在旧目录：复制 ${path.join('旧目录', 'scheme', schemeName)} 到 ${path.join('本目录', 'scheme', schemeName)}`);
         console.error(`若需重新建方案: scheme create ${schemeName} --type <类型> --version <MC版本>`);
         logger.erro(`启动服务器失败：方案目录不存在（方案=${schemeName}，期望目录=${schemeDir}）`);
         return true;
+    }
+
+    /**
+     * 当前服务器目录是不是「没有方案时的默认回退目录」。
+     *
+     * 未激活方案时 getServerDir() 会回退到 server.dir（默认 ../server）。
+     * 这种目录**不是方案**：往里写 eula.txt / logs/ 只会污染安装目录，
+     * 而且下次 start 依然找不到核心。除非用户显式把核心丢进了这个目录
+     * （老式「直接把 jar 放 server/ 跑」的用法），否则应直接拒绝启动。
+     *
+     * @returns {boolean}
+     */
+    _isFallbackServerDir() {
+        if (utils.isSchemesRoot(this.serverDir)) return true;
+
+        // 逃生门：回退目录里已经躺着可运行的核心，说明用户是有意这么用的
+        try {
+            if (fs.existsSync(this.serverDir)) {
+                const hasCore = fs.readdirSync(this.serverDir).some(f => {
+                    const lf = String(f).toLowerCase();
+                    return lf.endsWith('.jar') && !lf.includes('installer') && !lf.includes('authlib-injector');
+                });
+                if (hasCore) return false;
+            }
+        } catch (e) { /* 读不了就当没有 */ }
+
+        const raw = String(this.config.getConfig('server.dir', '../server') || '').trim();
+        return !raw || raw === '../server' || raw === '../scheme';
     }
 
     /**
@@ -1344,6 +1373,18 @@ class ServerManager {
             } catch (e) {
                 console.warn(`⚠️ 方案补齐检查失败（将尝试直接启动）: ${e.message}`);
             }
+        } else if (this._isFallbackServerDir()) {
+            // 没有任何激活方案，且目录是默认回退 —— 绝不能在 scheme 根上继续：
+            // 下面的 ensureDir / EULA 写入会立刻把 eula.txt、logs/ 撒进
+            // 「所有方案的父目录」，这就是「方案被标记到 scheme 根目录」的现场。
+            console.error('');
+            console.error('当前未激活任何方案，已取消启动。');
+            console.error('请先创建并切换到某个方案（方案目录应形如 scheme/<名字>/）：');
+            console.error('  wow scheme create <名称> --type <类型> --version <MC版本>');
+            console.error('  wow scheme switch <名称>');
+            console.error('');
+            logger.erro('启动服务器失败：未激活任何方案');
+            return false;
         }
 
         fs.ensureDirSync(this.serverDir);
