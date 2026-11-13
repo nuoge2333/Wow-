@@ -246,6 +246,77 @@ check('每页渲染都不超过 70 列（去掉「旧 xx」后列宽更宽松）
     }
 });
 
+console.log('\n— 动作函数签名：不得引用未解构的 env（R10 历史 bug）—');
+
+/**
+ * 取 action('X', n, ...) 注册的函数源码。
+ *
+ * 不能用一个 `action\(.*?\);` 的正则去抓：单行箭头函数
+ * `action('R', 9, (env) => lanNetInfo(env.io, env.rl));` 里的 `env.rl))`
+ * 会让非贪婪匹配在 `)` 处提前收尾，构造出非法正则。
+ * 改为「定位起止下标」：从 `action('P', n,` 开始，到下一个顶层 action / 行情分隔为止。
+ */
+function actionSrc(pageKey, itemId) {
+    const head = `action('${pageKey}', ${itemId},`;
+    const i = itvSrc.indexOf(head);
+    if (i < 0) return '';
+    // 结束点：下一个同级 action( 或「==== 」分节注释，取先出现者
+    const rest = itvSrc.slice(i + head.length);
+    // 结束点：① 函数体收尾的顶层 `});`（多行写法）；② 下一处 action(
+    const bodyEnd = rest.search(/\n\}\);/);
+    const nextAction = rest.search(/\r?\naction\('/);
+    const stops = [bodyEnd >= 0 ? bodyEnd + 4 : -1, nextAction].filter(n => n >= 0);
+    if (!stops.length) return head + rest;
+    return head + rest.slice(0, Math.min(...stops));
+}
+
+check('R10（Web 面板启停）的解构参数里带 env', () => {
+    const src = actionSrc('R', 10);
+    assert.ok(src.length > 0, '未找到 R10 注册');
+    assert.ok(/action\('R', 10, async \(env\)/.test(src),
+        'R10 必须是 async (env) =>，否则 ioAsk(env.io…) 会 ReferenceError');
+});
+
+check('每个 action 的形参能覆盖它自己那一行/块里的引用', () => {
+    // 只检查「注册表达式本身」（到 => 为止 + 单行体内的引用），
+    // 不跟进具名函数（如 terracottaHost(env) 的 env.options 是另一个作用域）。
+    const bad = [];
+    for (const p of itv.PAGES) {
+        for (const it of p.items) {
+            const body = actionSrc(p.key, it.id);
+            if (!body) continue;
+            const arrow = body.indexOf('=>');
+            if (arrow < 0) continue;
+            const sig = body.slice(0, arrow);
+            const inline = body.slice(arrow + 2, body.indexOf('\n', arrow + 2) + 1 || body.length);
+            // 多行块里的引用属于函数体，形参已在 sig 里；这里只挑「单行箭头」的体内引用
+            if (/\{/.test(inline)) continue;
+            if (/\benv\./.test(inline) && !/\benv\b/.test(sig)) bad.push(`${p.key}${it.id}(env)`);
+            if (/\boptions\./.test(inline) && !/\boptions\b/.test(sig)) bad.push(`${p.key}${it.id}(options)`);
+        }
+    }
+    assert.deepStrictEqual(bad, [], `这些动作在单行体内引用了未声明的形参：${bad.join(', ')}`);
+});
+
+check('R10 用 webStatus() 判状态（能识别别的进程起的面板）', () => {
+    const src = actionSrc('R', 10);
+    assert.ok(/Web\.webStatus\(\)/.test(src), 'R10 未用 webStatus()，跨进程会误判为未运行');
+    assert.ok(!/Web\.isRunning\(\)/.test(src), 'R10 仍在用只反映本进程内存的 isRunning()');
+});
+
+check('R10 启动后等 listening 事件再读 address()', () => {
+    const src = actionSrc('R', 10);
+    assert.ok(/server\.once\('listening'/.test(src), '未监听 listening 事件，address() 可能为 null');
+    assert.ok(/server\.address\(\)/.test(src), '未读 server.address()');
+    assert.ok(!/info\.url/.test(src), '仍在读 startWeb() 返回值上的 .url（该函数返回 http.Server）');
+});
+
+check('R8 展示绑定地址与监听范围判定', () => {
+    const src = actionSrc('R', 8);
+    assert.ok(/server-ip/.test(src), 'R8 未读 server-ip');
+    assert.ok(/监听范围/.test(src), 'R8 未输出监听范围判定');
+});
+
 // ─────────────────────────────────────────────
 console.log(`\n${'='.repeat(46)}`);
 console.log(`✅ 通过 ${passed} 项，失败 ${failed} 项`);

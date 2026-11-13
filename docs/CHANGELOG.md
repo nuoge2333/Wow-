@@ -180,11 +180,29 @@
 `dispatchMenuItem` 只做一次 `Map.get()`，不再有 `functional` 中转和 20+ 条
 `case '21' / '141' / '84'` 的 LEGACY_ROUTES。
 
+### 四之二、修复 R8 / R10 两处指向错误
+
+- **R10「Web 面板启动 / 停止」按了没反应**：注册写成 `async ({ options }) => { … ioAsk(env.io …) }`，
+  形参表里没有 `env`，一按就 `ReferenceError: env is not defined`，被 `runItem` 的
+  catch 吞成「执行出错」。改为 `async (env) =>`。
+- **R10 状态误判**：原来用 `Web.isRunning()`，它只反映**本进程内存**；面板若是
+  `wow web start` 单独起的进程，会被判成「未运行」→ 再点一次撞 `EADDRINUSE`。
+  改用 `webStatus()`（先查 `.web.pid`，再回退内存）。
+- **R10 启动地址永远显示 fallback**：`startWeb()` 是同步函数、返回 `http.Server`，
+  原来读 `info.url` 恒为空。改为等 `listening` 事件后读 `server.address()`。
+- **R8「服务器端口与外网可见性」没做判定**：补读 `server-ip`，输出「监听范围」
+  （未设置 = 所有网卡 / 回环 = 仅本机 / 指定网卡），并明确「Web 面板绑定地址
+  不是服务器端口，别混」。
+
+**踩坑记录（写进测试防回退）**：`menu_flat.test.js` 新增 5 项断言，其中
+「每个 action 的形参能覆盖它自己那一行/块里的引用」是通用型检查——以后谁再把
+`env` 写在解构里却用 `env.`，或反过来，测试直接红。
+
 ### 五、新增测试
 
 | 文件 | 项数 | 内容 |
 |---|---|---|
-| `core/test/menu_flat.test.js`（新） | 22 | 零子菜单、零 legacy、编号 1..N 连续、每项都有动作实现、每页渲染 ≤70 列 |
+| `core/test/menu_flat.test.js`（新） | 27 | 零子菜单、零 legacy、编号 1..N 连续、每项都有动作实现、每页渲染 ≤70 列 |
 | `core/test/tui_mode.test.js` | 73 | 项数改新值、删跨页断言、加「每项都能在 ACTION_BY_KEY 找到」 |
 | `core/test/interactive_menu.test.js` | 67 | 断言从「case 2 有子菜单」改为「具名函数齐备、子菜单彻底消失」 |
 | `core/test/terracotta_guest.test.js` | 19 | 改为断言 R1~R4 各自接到 hostRoom/getStatus/stopHost/joinRoom |

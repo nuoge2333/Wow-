@@ -1521,36 +1521,104 @@ action('R', 8, async ({ options }) => {
     const port = props.get('server-port');
     const online = props.get('online-mode');
     const players = props.get('max-players');
+    const bindIp = props.get('server-ip');
     console.log('\n  服务器端口:   ' + (port == null ? '(未设置，默认 25565)' : port));
+    console.log('  绑定地址:     ' + (bindIp == null || bindIp === '' ? '(未设置 = 监听所有网卡)' : bindIp));
     console.log('  正版验证:     ' + (online == null ? '(默认 true)' : online));
     console.log('  最大玩家数:   ' + (players == null ? '(默认 20)' : players));
+
+    // 真正判定「这台机器上的 MC 监听在哪」：未设 server-ip = 全网卡，设了回环才只本机
+    const loopback = (v) => ['127.0.0.1', 'localhost', '::1', '[::1]'].includes(String(v || '').trim().toLowerCase());
+    const scope = (bindIp == null || bindIp === '')
+        ? '所有网卡（本机 + 局域网 + 路由器映射后可达公网）'
+        : (loopback(bindIp) ? '仅本机（外部无法连接）' : `仅指定网卡 ${bindIp}`);
+    console.log('  监听范围:     ' + scope);
+
     console.log('\n  外网可见性取决于：路由器端口转发 / 云服务器安全组 / 运营商是否封端口。');
+    console.log('  Web 面板的绑定地址不是服务器端口，别把两者搞混（面板见本页 10）。');
     console.log('  想跳过这些限制可直接用陶瓦联机（R 页 1 开房）。');
     return false;
 });
 
 action('R', 9, async (env) => lanNetInfo(env.io, env.rl));
 
-action('R', 10, async ({ options }) => {
+/**
+ * R10 Web 面板启动 / 停止。
+ *
+ * 历史 bug：这个动作原本写成 `async ({ options }) => { ... ioAsk(env.io, ...) }`，
+ * 解构里没有 `env`，一按停止就 ReferenceError，被 runItem 的 catch 吞成
+ * 「执行出错: env is not defined」，看起来像「点了没反应」。
+ * 现在统一用 `async (env) =>`。
+ *
+ * 另外两个坑一并修掉：
+ *   - `isRunning()` 只反映**本进程内存**里的状态（PID 文件那条路不查），
+ *     所以面板是 `wow web start` 单独起的进程时会被误判为「未运行」，
+ *     再点一次就撞 EADDRINUSE。改为用 webStatus() 先查 PID 文件。
+ *   - `startWeb()` 是回调式启动：listen 成功后才把 isRunning 置 true，
+ *     函数本身立即返回 undefined，原来那句 `info.url` 永远是 fallback。
+ *     改为启动后读 webStatus() 拿真实 host / port。
+ */
+action('R', 10, async (env) => {
     printHeader('Web 面板启动 / 停止');
     const Web = require('./web_service');
-    let running = false;
-    try { running = typeof Web.isRunning === 'function' ? Web.isRunning() : false; } catch (e) { running = false; }
-    if (running) {
+
+    // 1) 状态判定：先查 PID 文件（跨进程），再回退内存标记
+    let status = { running: false };
+    try { status = Web.webStatus() || { running: false }; } catch (e) { status = { running: false }; }
+
+    if (status.running) {
+        const url = status.host && status.port ? `http://${status.host}:${status.port}` : '';
+        if (url) console.log(`\n  当前地址: ${url}${status.pid ? `  (PID: ${status.pid})` : ''}`);
         const c = (await ioAsk(env.io, env.rl, '面板正在运行，是否停止? (y/N): ')).trim().toLowerCase();
         if (c === 'y') {
-            try { await Web.stopWeb(); console.log('✅ 面板已停止'); } catch (e) { console.log(`❌ 停止失败: ${e.message}`); }
+            try {
+                await Web.stopWeb();
+                console.log('✅ 面板已停止');
+            } catch (e) {
+                console.log(`❌ 停止失败: ${e.message}`);
+            }
         } else {
             console.log('已取消。');
         }
-    } else {
-        try {
-            const info = await Web.startWeb();
-            const url = info && info.url ? info.url : 'http://127.0.0.1:8080';
-            console.log(`✅ 面板已启动: ${url}`);
-        } catch (e) {
-            console.log(`❌ 启动失败: ${e.message}`);
+        return false;
+    }
+
+    // 2) 启动：startWeb 是同步函数，返回 http.Server（失败时返回 undefined 并已自行打印原因）
+    let server = null;
+    try {
+        server = Web.startWeb();
+    } catch (e) {
+        console.log(`❌ 启动失败: ${e.message}`);
+        return false;
+    }
+    if (!server) {
+        // EADDRINUSE / 未设 auth_token 等，startWeb 内部已给出人话提示，这里不重复刷屏
+        console.log('面板未启动，请查看上方提示。');
+        return false;
+    }
+
+    // 3) 等 listening 事件拿真实地址（server.listen 是异步的，返回时 address() 可能还是 null）
+    const addr = await new Promise((resolve) => {
+        const done = () => {
+            try { resolve(server.address()); } catch (e) { resolve(null); }
+        };
+        if (typeof server.listening === 'boolean' && server.listening) return done();
+        let settled = false;
+        const once = () => { if (!settled) { settled = true; done(); } };
+        server.once('listening', once);
+        // 兜底：极端情况下 listening 已错过事件，1.5s 后直接读 address()
+        setTimeout(once, 1500);
+    });
+
+    if (addr && addr.port) {
+        const rawHost = addr.address === '::' ? '0.0.0.0' : addr.address;
+        const showHost = (rawHost === '0.0.0.0') ? '127.0.0.1' : rawHost;
+        console.log(`✅ 面板已启动: http://${showHost}:${addr.port}`);
+        if (rawHost === '0.0.0.0') {
+            console.log('   绑定所有网卡：局域网 / 公网可直接访问（务必确认已设 auth_token）');
         }
+    } else {
+        console.log('✅ 面板已启动（未取到监听地址，可用 `wow web status` 查看）');
     }
     return false;
 });
