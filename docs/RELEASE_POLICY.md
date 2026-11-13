@@ -130,6 +130,28 @@ git push origin main
 - 全量回归：`npm test` **54 个文件全绿**（75.9s），`WOW_PTY_STRICT=1` 严格模式
   13 项全过。
 
+### 本版发行进度（v3.7.4-26.47，2026-11-13）
+
+| 步骤 | 状态 |
+|------|------|
+| 升版本号（cli.js / package.json / package-lock.json / tui.js 注释 / docs/TUI.md） | ✅ `3.7.4-26.47` |
+| CHANGELOG 四条 `[待发行]` 合并为 `[3.7.4-26.47]`，版本表更新 | ✅ 「待发行」字样清零 |
+| 全量回归 54 文件 | ✅ 75.9s 全绿 |
+| pty 严格回归 | ✅ `WOW_PTY_STRICT=1` 13 项全过，4 场景 `peak<=1 violations=0` |
+| commit + tag | ✅ `dbafb9f` / `v3.7.4-26.47` |
+| 双端推送 | ✅ GitHub（`http.version=HTTP/1.1` + `postBuffer` 绕开 GnuTLS 重置）、Gitee 均成功 |
+| 打包 `wow-v3.7.4-26.47.zip` | ✅ 910,626 B，包内 version 已核对 |
+| GitHub Release + 附件 | ✅ id 直读 `releases/latest` 校验，zip + SHA256SUMS 双附件 |
+| Gitee Release + 附件 | ✅ id `1305652`，zip + SHA256SUMS 双附件（新建时须带 `target_commitish`） |
+| SHA256SUMS 生成 | ✅ 187 B；GitHub 归档经 gh-proxy / ghfast 两镜像复算一致 |
+| 端到端下载核对 | ✅ 两端 zip 同为 `3cc40dd9…`；两端清单字节相同（`4de437dc…`）；两端 `latest` 已指向本版 |
+
+> 🕳 **Gitee token 的坑（本版踩到）**：git remote 里内嵌的是**登录密码**（17 位），
+> `POST /releases` 会返回 `401 Access token does not exist`。
+> 建 Release / 传附件必须用**勾了 `projects` + `releases` 权限的私人令牌**
+> （32 位十六进制），且 `POST /releases` 必须带 `target_commitish`，否则
+> 返回 `400 target_commitish is missing`。
+
 ### 本版发行进度（v3.7.3-26.46，2026-11-09）
 
 | 步骤 | 状态 |
