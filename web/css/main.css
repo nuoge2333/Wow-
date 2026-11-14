@@ -29,12 +29,18 @@ body {
     overflow-x: hidden;
     -webkit-overflow-scrolling: touch;
     overscroll-behavior: contain;
+    /* V3.8.0：内容页统一留白，避免卡片 / 表格 / 标题紧贴 iframe 边缘。
+       只作用于内容页：主框架 shell 与 no-scroll 由下方规则排除；
+       left / right / login 在自己的 <style> 里显式写 padding: 0 保持原样；
+       mods / props / modcfg 等已有 body padding 的页面由后加载规则覆盖。 */
+    padding: 20px 24px;
 }
 
-/* 主框架外壳 / 侧边栏：自己维护内部滚动容器，body 不要滚 */
+/* 主框架外壳 / 侧边栏：自己维护内部滚动容器，body 不要滚、也不要留白 */
 body.no-scroll,
 body.shell {
     overflow: hidden;
+    padding: 0;
 }
 
 /* body 滚动条（iframe 内的 ::-webkit-scrollbar 只作用于 iframe 元素本身，管不到这里） */
@@ -239,6 +245,12 @@ table td {
 .status-dot.gray { background: #666; }
 
 /* ========== 响应式（基础） ========== */
+/* 移动端顶栏与遮罩：桌面端隐藏，仅 ≤768px 显示（见下方 media query） */
+#mobile-topbar,
+#mobile-backdrop {
+    display: none;
+}
+
 @media (max-width: 1024px) {
     #menu-frame {
         width: 180px;
@@ -249,28 +261,131 @@ table td {
         min-width: 240px;
     }
 }
+
+/* ========== 移动端（≤768px）：侧栏改为可滑出的抽屉 ==========
+   桌面三栏布局在窄屏会被压成「菜单 50px + 内容 + 便签 40px」的竖排，
+   而 #menu-frame 带 scrolling="no"，10 个导航项直接被裁掉、无法滚动，
+   用户找不到任何调出菜单的入口。这里把左菜单 / 右便签改成默认滑出视口、
+   由顶部 ☰ / 💬 按钮唤出的抽屉，并加遮罩点击关闭。 */
 @media (max-width: 768px) {
     #app {
-        flex-direction: column;
+        display: block;
+        height: 100vh;
+        width: 100vw;
     }
-    #menu-frame {
-        width: 100%;
+
+    /* 顶部操作条：始终可见，承载菜单 / 便签入口（z 高于抽屉与遮罩） */
+    #mobile-topbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
         height: 50px;
-        min-height: 50px;
-        min-width: 0;
+        padding: 0 12px;
+        background: #1a1a2e;
+        border-bottom: 1px solid #2a3a5e;
+        z-index: 90;
     }
-    #main-content {
+    #mobile-menu-btn,
+    #mobile-notify-btn {
+        flex-shrink: 0;
+        background: transparent;
+        border: none;
+        color: #ccc;
+        font-size: 22px;
+        line-height: 1;
+        cursor: pointer;
+        padding: 6px 8px;
+    }
+    #mobile-menu-btn:active,
+    #mobile-notify-btn:active {
+        color: #fff;
+    }
+    #mobile-title {
         flex: 1;
-        height: calc(100% - 50px - 40px);
-    }
-    #notify-frame {
-        width: 100%;
-        height: 40px;
-        min-height: 40px;
         min-width: 0;
+        text-align: center;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        color: #4CAF50;
+        font-size: 15px;
+        font-weight: 400;
     }
+
+    /* 主内容占满整屏，顶部让出 50px 给操作条 */
+    #main-content {
+        width: 100%;
+        margin-top: 50px;
+        height: calc(100vh - 50px);
+    }
+    #content-frame {
+        height: 100%;
+    }
+
+    /* 左菜单：默认滑出视口左侧，点击 ☰ 滑入 */
+    #menu-frame {
+        position: fixed;
+        top: 50px;
+        left: 0;
+        width: 80%;
+        max-width: 300px;
+        height: calc(100vh - 50px);
+        min-width: 0;
+        transform: translateX(-100%);
+        transition: transform 0.25s ease;
+        z-index: 70;
+        box-shadow: 2px 0 12px rgba(0, 0, 0, 0.5);
+    }
+    body.menu-open #menu-frame {
+        transform: translateX(0);
+    }
+
+    /* 右便签：默认滑出视口右侧，点击 💬 滑入 */
+    #notify-frame {
+        position: fixed;
+        top: 50px;
+        right: 0;
+        width: 85%;
+        max-width: 340px;
+        height: calc(100vh - 50px);
+        min-width: 0;
+        transform: translateX(100%);
+        transition: transform 0.25s ease;
+        z-index: 70;
+        box-shadow: -2px 0 12px rgba(0, 0, 0, 0.5);
+    }
+    body.notify-open #notify-frame {
+        transform: translateX(0);
+    }
+    /* 中和桌面态 .collapsed 在移动端的影响：抽屉模式下始终全宽 */
     #notify-frame.collapsed {
-        height: 40px;
-        min-height: 40px;
+        width: 85%;
+        max-width: 340px;
+        min-width: 0;
+        height: calc(100vh - 50px);
+    }
+
+    /* 遮罩：任一抽屉打开时显示，点击关闭（位于操作条之下，保证按钮可点） */
+    #mobile-backdrop {
+        display: block;
+        position: fixed;
+        top: 50px;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0, 0, 0, 0.45);
+        z-index: 65;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.25s ease;
+    }
+    body.menu-open #mobile-backdrop,
+    body.notify-open #mobile-backdrop {
+        opacity: 1;
+        pointer-events: auto;
     }
 }

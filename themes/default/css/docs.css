@@ -1,0 +1,262 @@
+/* ============================================================
+ * Web 面板内置帮助文档抽屉（纯展示，作用域全部以 docs- 前缀隔离）
+ * - 顶层覆盖整个面板（抽屉放在 index.html，不受 iframe 裁剪）
+ * - 右侧滑出，桌面 72vw，手机全屏
+ * - 左侧目录 + 右侧 Markdown 渲染区，渲染区独立滚动条
+ * ============================================================ */
+
+.docs-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 9000;
+    display: flex;
+    justify-content: flex-end;
+    background: rgba(0, 0, 0, 0.55);
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.25s ease, visibility 0.25s ease;
+}
+.docs-overlay.open {
+    opacity: 1;
+    visibility: visible;
+}
+
+.docs-drawer {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    width: 72vw;
+    max-width: 1100px;
+    min-width: 320px;
+    height: 100vh;
+    background: #0f0f1a;
+    border-left: 1px solid #2a3a5e;
+    box-shadow: -8px 0 32px rgba(0, 0, 0, 0.5);
+    transform: translateX(100%);
+    transition: transform 0.28s ease;
+}
+.docs-overlay.open .docs-drawer {
+    transform: translateX(0);
+}
+
+/* ── 顶部标题栏 ── */
+.docs-drawer-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-shrink: 0;
+    padding: 14px 20px;
+    border-bottom: 1px solid #2a3a5e;
+    background: #141e2b;
+}
+.docs-drawer-title {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    min-width: 0;
+}
+.docs-drawer-title > span:first-child { font-size: 18px; }
+.docs-drawer-title h3 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+    color: #eee;
+}
+.docs-drawer-sub {
+    font-size: 12px;
+    color: #666;
+    font-family: monospace;
+}
+.docs-close-btn {
+    flex-shrink: 0;
+    width: 32px;
+    height: 32px;
+    border: 1px solid #2a3a5e;
+    border-radius: 6px;
+    background: transparent;
+    color: #aaa;
+    font-size: 15px;
+    line-height: 1;
+    cursor: pointer;
+    transition: background 0.2s, color 0.2s;
+}
+.docs-close-btn:hover { background: #2a3a5e; color: #fff; }
+
+/* ── 主体：左侧目录 + 右侧渲染区 ── */
+.docs-body {
+    display: flex;
+    flex: 1;
+    min-height: 0;   /* 关键：让子元素能自己滚动，而不是撑爆抽屉 */
+}
+.docs-sidebar {
+    width: 232px;
+    flex-shrink: 0;
+    overflow-y: auto;
+    padding: 14px 0 24px;
+    border-right: 1px solid #2a3a5e;
+    background: #12141f;
+}
+.docs-nav-group { margin-bottom: 10px; }
+.docs-nav-group-title {
+    padding: 6px 18px;
+    font-size: 11px;
+    letter-spacing: 1px;
+    color: #5f718f;
+    text-transform: uppercase;
+}
+.docs-nav-item {
+    display: block;
+    width: 100%;
+    padding: 8px 18px;
+    border: none;
+    border-left: 3px solid transparent;
+    background: transparent;
+    color: #b9c4d4;
+    font-size: 13px;
+    text-align: left;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+}
+.docs-nav-item:hover { background: #1e2637; color: #fff; }
+.docs-nav-item.active {
+    background: #1e3050;
+    border-left-color: #4CAF50;
+    color: #fff;
+}
+.docs-nav-empty {
+    padding: 16px 18px;
+    font-size: 13px;
+    color: #f44336;
+}
+
+/* 渲染区：独立的滚动条，绝不撑爆抽屉 */
+.docs-content {
+    flex: 1;
+    min-width: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 24px 34px 60px;
+    color: #d5dbe5;
+    font-size: 14px;
+    line-height: 1.75;
+    word-wrap: break-word;
+}
+.docs-content::-webkit-scrollbar,
+.docs-sidebar::-webkit-scrollbar { width: 8px; }
+.docs-content::-webkit-scrollbar-track,
+.docs-sidebar::-webkit-scrollbar-track { background: transparent; }
+.docs-content::-webkit-scrollbar-thumb,
+.docs-sidebar::-webkit-scrollbar-thumb { background: #2a3a5e; border-radius: 4px; }
+
+.docs-loading, .docs-error, .docs-plain {
+    color: #9aa6b8;
+}
+.docs-error {
+    padding: 14px 16px;
+    border: 1px solid #5a2b2b;
+    border-radius: 6px;
+    background: #241a1a;
+    color: #ff8a80;
+}
+.docs-plain {
+    white-space: pre-wrap;
+    font-family: monospace;
+    font-size: 13px;
+}
+
+/* ── Markdown 排版（全部限定在渲染区内） ── */
+.docs-content h1, .docs-content h2, .docs-content h3,
+.docs-content h4, .docs-content h5, .docs-content h6 {
+    margin: 26px 0 12px;
+    color: #f0f3f8;
+    font-weight: 600;
+    line-height: 1.35;
+    scroll-margin-top: 16px;
+}
+.docs-content h1 { font-size: 25px; border-bottom: 1px solid #2a3a5e; padding-bottom: 10px; }
+.docs-content h2 { font-size: 20px; border-bottom: 1px solid #23324c; padding-bottom: 8px; }
+.docs-content h3 { font-size: 17px; }
+.docs-content h4 { font-size: 15px; }
+.docs-content p { margin: 10px 0; }
+.docs-content ul, .docs-content ol { margin: 10px 0; padding-left: 26px; }
+.docs-content li { margin: 4px 0; }
+.docs-content li > ul, .docs-content li > ol { margin: 4px 0; }
+.docs-content strong { color: #fff; }
+.docs-content em { color: #c9d4e4; }
+.docs-content hr { margin: 22px 0; border: none; border-top: 1px solid #2a3a5e; }
+.docs-content a { color: #6ec1ff; text-decoration: none; border-bottom: 1px dashed #3c6a92; }
+.docs-content a:hover { color: #a5dcff; border-bottom-style: solid; }
+.docs-content a.docs-link-external::after { content: ' ↗'; font-size: 11px; color: #6ec1ff; }
+.docs-content blockquote {
+    margin: 12px 0;
+    padding: 8px 16px;
+    border-left: 3px solid #4CAF50;
+    background: #16202e;
+    color: #b9c4d4;
+}
+.docs-content blockquote p { margin: 4px 0; }
+.docs-content code {
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: #1b2740;
+    color: #ffd479;
+    font-family: 'SFMono-Regular', Consolas, monospace;
+    font-size: 0.92em;
+}
+.docs-content pre {
+    margin: 14px 0;
+    padding: 14px 16px;
+    border: 1px solid #2a3a5e;
+    border-radius: 6px;
+    background: #0b1120;
+    overflow-x: auto;
+}
+.docs-content pre code { padding: 0; background: transparent; color: #c8e1ff; }
+.docs-content table {
+    display: block;
+    width: 100%;
+    margin: 14px 0;
+    border-collapse: collapse;
+    overflow-x: auto;
+}
+.docs-content th, .docs-content td {
+    padding: 8px 12px;
+    border: 1px solid #2a3a5e;
+    text-align: left;
+}
+.docs-content th { background: #16233a; color: #dce6f5; font-weight: 600; }
+.docs-content tr:nth-child(even) td { background: #121a2a; }
+.docs-content img { max-width: 100%; height: auto; border-radius: 4px; }
+
+/* 抽屉内的轻提示（未开放文档 / 降级提示） */
+.docs-toast {
+    position: absolute;
+    left: 50%;
+    bottom: 24px;
+    transform: translateX(-50%) translateY(12px);
+    max-width: 80%;
+    padding: 9px 16px;
+    border: 1px solid #3a4a6e;
+    border-radius: 6px;
+    background: #1b2740;
+    color: #e6edf8;
+    font-size: 13px;
+    box-shadow: 0 4px 18px rgba(0, 0, 0, 0.45);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease, transform 0.2s ease;
+}
+.docs-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+/* ── 响应式：手机端全屏 ── */
+@media (max-width: 768px) {
+    .docs-drawer { width: 100vw; max-width: 100vw; min-width: 0; }
+    .docs-sidebar { width: 150px; }
+    .docs-nav-item { padding: 8px 10px; font-size: 12px; }
+    .docs-nav-group-title { padding: 6px 10px; }
+    .docs-content { padding: 18px 16px 48px; }
+}
+@media (max-width: 480px) {
+    .docs-sidebar { width: 118px; }
+    .docs-drawer-sub { display: none; }
+}

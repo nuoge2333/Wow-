@@ -268,6 +268,186 @@ check('下载不再直落共享池，改为 mod install 提交到方案', () => 
     assert.ok(downHtml.includes("activateTab('queue')"), '提交后应切到下载队列 Tab');
 });
 
+console.log('\n🧩 内容页统一留白（不贴边）\n');
+
+const mainCss = fs.readFileSync(path.join(ROOT, 'web', 'css', 'main.css'), 'utf8');
+const toolHtml = fs.readFileSync(path.join(ROOT, 'web', 'tool.html'), 'utf8');
+const loginHtml = fs.readFileSync(path.join(ROOT, 'web', 'login.html'), 'utf8');
+const lanHtml = fs.readFileSync(path.join(ROOT, 'web', 'lan.html'), 'utf8');
+
+check('main.css: 内容页 body 有统一留白 padding', () => {
+    assert.ok(/body\s*\{[^}]*padding:\s*20px\s+24px/s.test(mainCss),
+        '内容页 body 未设置 20px 24px 留白');
+});
+
+check('main.css: web 与 default 主题两份一致', () => {
+    assert.strictEqual(mainCss,
+        fs.readFileSync(path.join(ROOT, 'themes/default/css/main.css'), 'utf8'),
+        'main.css 两份不一致');
+});
+
+check('main.css: shell / no-scroll 排除留白（否则 #app 的 100vw 会溢出）', () => {
+    const m = mainCss.match(/body\.no-scroll\s*,\s*body\.shell\s*\{([^}]*)\}/);
+    assert.ok(m, '找不到 shell 排除规则');
+    assert.ok(/padding:\s*0/.test(m[1]), 'shell 未清零 padding');
+});
+
+check('down.html: 零散水平 margin 已清掉，改由 body 统一留白', () => {
+    assert.ok(!/margin:\s*15px/.test(downHtml), '.page-header 仍有 15px 全向 margin');
+    assert.ok(!/margin:\s*14px/.test(downHtml), '.tab-bar 仍有 14px 全向 margin');
+    assert.ok(!/margin-left:\s*14px/.test(downHtml), '.search-bar 仍有左 margin');
+    assert.ok(!/margin-right:\s*14px/.test(downHtml), '.btn-search 仍有右 margin');
+});
+
+check('tool.html: 标题不再用 10px 全向 margin 模拟留白', () => {
+    assert.ok(!/margin:10px/.test(toolHtml), '工具页 h2 仍是 margin:10px');
+});
+
+check('login.html / lan.html: 不重复留白', () => {
+    assert.ok(/body\s*\{[^}]*padding:\s*0/s.test(loginHtml), '登录页未显式排除 body 留白');
+    assert.ok(!/lan-wrap\s*\{[^}]*padding:\s*20px\s+24px/.test(lanHtml),
+        'lan-wrap 会与 body 留白叠加成双倍');
+});
+
+console.log('\n📖 内置帮助文档抽屉（纯前端展示 + 安全读取）\n');
+
+const docsCss = fs.readFileSync(path.join(ROOT, 'web', 'css', 'docs.css'), 'utf8');
+const indexHtml = fs.readFileSync(path.join(ROOT, 'web', 'index.html'), 'utf8');
+const viewerJs = fs.readFileSync(path.join(ROOT, 'web', 'js', 'docs_viewer.js'), 'utf8');
+const leftHtml = fs.readFileSync(path.join(ROOT, 'web', 'left.html'), 'utf8');
+const rightHtml = fs.readFileSync(path.join(ROOT, 'web', 'right.html'), 'utf8');
+const docsBackend = fs.readFileSync(path.join(SRC, 'web_docs.js'), 'utf8');
+
+check('index.html: 引入本地 vendor 与 docs 样式/脚本，顺序正确且无 CDN', () => {
+    assert.ok(indexHtml.includes('/css/docs.css'));
+    assert.ok(indexHtml.includes('/js/vendor/marked.min.js'));
+    assert.ok(indexHtml.includes('/js/vendor/purify.min.js'));
+    assert.ok(indexHtml.includes('/js/docs_viewer.js'));
+    const iM = indexHtml.indexOf('/js/vendor/marked.min.js');
+    const iP = indexHtml.indexOf('/js/vendor/purify.min.js');
+    const iV = indexHtml.indexOf('/js/docs_viewer.js');
+    assert.ok(iM < iV && iP < iV, '渲染库必须在 viewer 之前加载');
+    assert.ok(!/cdn\.|cdnjs|jsdelivr|unpkg/i.test(indexHtml), '渲染库不得从 CDN 加载（离线要能防 XSS）');
+});
+
+check('index.html: 抽屉 DOM 完整（遮罩 / 目录 / 渲染区 / 关闭 / 提示）', () => {
+    for (const id of ['docs-overlay', 'docs-drawer', 'docs-close-btn', 'docs-nav',
+        'docs-content', 'docs-toast']) {
+        assert.ok(indexHtml.includes(`id="${id}"`), `缺少 ${id}`);
+    }
+    assert.ok(indexHtml.includes('role="dialog"') && indexHtml.includes('aria-modal="true"'));
+});
+
+check('docs.css: 右侧滑出 72vw、手机全屏、渲染区独立滚动', () => {
+    assert.ok(/\.docs-overlay\s*\{[^}]*position:\s*fixed/s.test(docsCss));
+    assert.ok(/\.docs-drawer\s*\{[^}]*width:\s*72vw/s.test(docsCss));
+    assert.ok(/\.docs-drawer\s*\{[^}]*transform:\s*translateX\(100%\)/s.test(docsCss));
+    assert.ok(/@media\s*\(max-width:\s*768px\)[\s\S]*?\.docs-drawer\s*\{[^}]*width:\s*100vw/.test(docsCss),
+        '手机端未设为全屏');
+    assert.ok(/\.docs-content\s*\{[^}]*overflow-y:\s*auto/s.test(docsCss), '渲染区必须独立滚动');
+});
+
+check('docs_viewer.js: marked 渲染后必经 DOMPurify 清洗，全文件仅一处 innerHTML', () => {
+    assert.ok(viewerJs.includes('window.marked.parse'), '未用 marked 渲染');
+    assert.ok(viewerJs.includes('window.DOMPurify.sanitize'), '未经 DOMPurify 清洗');
+    assert.ok(viewerJs.includes('FORBID_TAGS'), '未禁用 script/style 等标签');
+    const writes = (viewerJs.match(/\.innerHTML\s*=/g) || []).length;
+    assert.strictEqual(writes, 1, `innerHTML 写入点应只有清洗后 1 处，实际 ${writes}`);
+    assert.ok(/textContent = String\(md \|\| ''\)/.test(viewerJs), '库缺失时未降级为纯文本');
+});
+
+check('docs_viewer.js: 外链强制 target=_blank + rel=noopener noreferrer', () => {
+    assert.ok(viewerJs.includes("setAttribute('target', '_blank')"));
+    assert.ok(viewerJs.includes("setAttribute('rel', 'noopener noreferrer')"));
+    assert.ok(viewerJs.includes("addEventListener('click', onContentClick)"), '渲染区未做点击委托拦截');
+});
+
+check('docs_viewer.js: 内部 .md 链接在抽屉内切换，未开放文档不外跳', () => {
+    assert.ok(viewerJs.includes('resolveDocName'));
+    assert.ok(viewerJs.includes('selectDoc(target'));
+    assert.ok(viewerJs.includes('该文档未开放'));
+    assert.ok(viewerJs.includes('preventDefault()'));
+});
+
+check('docs_viewer.js: 危险协议兜底 + 相对图片重写到受控 asset 接口', () => {
+    assert.ok(/javascript\|vbscript\|data/.test(viewerJs), '未拦截 javascript:/data: 协议');
+    assert.ok(viewerJs.includes("ASSET_URL + '?name='"));
+    assert.ok(viewerJs.includes('/api/docs/asset'));
+});
+
+check('docs_viewer.js: Esc / 遮罩 / X 三种关闭 + postMessage 同源校验', () => {
+    assert.ok(/Escape/.test(viewerJs) && viewerJs.includes('keydown'));
+    assert.ok(viewerJs.includes('e.target === overlay'));
+    assert.ok(viewerJs.includes('e.origin !== window.location.origin'));
+    assert.ok(viewerJs.includes("type === 'open-docs'"));
+});
+
+check('docs_viewer.js: 目录标题用 textContent，API 只传文档名', () => {
+    assert.ok(viewerJs.includes('btn.textContent = d.title'));
+    assert.ok(viewerJs.includes("'/api/docs/list'"));
+    assert.ok(viewerJs.includes("'/api/docs/content?name='"));
+    assert.ok(!viewerJs.includes('name=../../'), '前端不得拼路径');
+});
+
+check('left.html / right.html: 双入口 + postMessage 打开顶层抽屉', () => {
+    assert.ok(leftHtml.includes('id="docs-open-btn-left"'));
+    assert.ok(rightHtml.includes('id="docs-open-btn"'));
+    assert.ok(leftHtml.includes("type: 'open-docs'"));
+    assert.ok(rightHtml.includes("type: 'open-docs'"));
+    assert.ok(rightHtml.includes('e.stopPropagation()'), '右上角按钮必须阻止冒泡，否则会误折叠便签栏');
+});
+
+check('web_service.js: 三条只读 docs 路由 + 非法 name 走 403', () => {
+    assert.ok(webSrc.includes("app.get('/api/docs/list'"));
+    assert.ok(webSrc.includes("app.get('/api/docs/content'"));
+    assert.ok(webSrc.includes("app.get('/api/docs/asset'"));
+    assert.ok(/r\.reason === 'forbidden' \? 403 : 404/.test(webSrc));
+    assert.ok(webSrc.includes("require('./web_docs')"));
+});
+
+check('web_docs.js: 后端白名单写死，用户输入不参与路径拼接', () => {
+    assert.ok(docsBackend.includes('const DOC_DEFS'));
+    assert.ok(docsBackend.includes('path.resolve(REPO_ROOT, def.rel)'));
+    assert.ok(!docsBackend.includes('path.join(REPO_ROOT, name)'), '禁止用 name 拼路径');
+    assert.ok(docsBackend.includes('FORBIDDEN_PATTERNS'));
+});
+
+check('主题副本：docs.css / docs_viewer.js / 两份 vendor 逐字节一致', () => {
+    for (const rel of ['css/docs.css', 'js/docs_viewer.js',
+        'js/vendor/marked.min.js', 'js/vendor/purify.min.js']) {
+        const a = path.join(ROOT, 'web', rel);
+        const b = path.join(ROOT, 'themes/default', rel);
+        assert.ok(fs.existsSync(b), `主题缺少 ${rel}`);
+        assert.strictEqual(fs.readFileSync(a, 'utf8'), fs.readFileSync(b, 'utf8'), `${rel} 未同步`);
+    }
+});
+
+console.log('\n📱 移动端菜单抽屉（☰ 唤出左菜单 / 💬 唤出右便签）\n');
+
+check('index.html: 移动端顶栏 + 遮罩四要素齐全', () => {
+    const idx = fs.readFileSync(path.join(ROOT, 'web/index.html'), 'utf8');
+    for (const id of ['mobile-topbar', 'mobile-menu-btn', 'mobile-notify-btn', 'mobile-backdrop']) {
+        assert.ok(idx.includes(`id="${id}"`), `缺少 #${id}`);
+    }
+});
+
+check('index.html: ☰/💬/遮罩 接线（menu-open / notify-open / 关闭）', () => {
+    const idx = fs.readFileSync(path.join(ROOT, 'web/index.html'), 'utf8');
+    assert.ok(idx.includes("toggle('menu-open')"), '菜单按钮未接 menu-open');
+    assert.ok(idx.includes("toggle('notify-open')"), '便签按钮未接 notify-open');
+    assert.ok(idx.includes("classList.remove('menu-open', 'notify-open')"), '遮罩/切换未关闭抽屉');
+});
+
+check('main.css: 移动端把侧栏改成可滑出抽屉（≤768px）', () => {
+    const css = fs.readFileSync(path.join(ROOT, 'web/css/main.css'), 'utf8');
+    assert.ok(/@media\s*\(max-width:\s*768px\)/.test(css), '缺少 768px 媒体查询');
+    assert.ok(css.includes('#mobile-topbar') && css.includes('display: flex'), '顶栏未 display:flex');
+    assert.ok(/#menu-frame[\s\S]*?translateX\(-100%\)/.test(css), '左菜单默认应滑出视口');
+    assert.ok(css.includes('body.menu-open #menu-frame'), 'menu-open 未唤出左菜单');
+    assert.ok(css.includes('body.notify-open #notify-frame'), 'notify-open 未唤出右便签');
+    assert.ok(css.includes('#mobile-backdrop'), '缺少遮罩元素样式');
+});
+
 console.log('\n📋 主题副本一致性\n');
 
 check('default 主题与 web 目录的页面全部一致', () => {

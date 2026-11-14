@@ -78,6 +78,18 @@
         .menu-footer .logout:hover {
             color: #ff7961;
         }
+        .menu-footer .docs-link {
+            color: #4CAF50;
+            cursor: pointer;
+        }
+        .menu-footer .docs-link:hover {
+            color: #81c784;
+            text-decoration: underline;
+        }
+        .menu-footer .sep {
+            margin: 0 8px;
+            color: #444;
+        }
     </style>
 </head>
 <body>
@@ -120,6 +132,8 @@
     </nav>
 
     <div class="menu-footer">
+        <span class="docs-link" id="docs-open-btn-left" title="帮助文档">📖 帮助文档</span>
+        <span class="sep">·</span>
         <span class="logout" id="logout-btn">退出登录</span>
     </div>
 
@@ -163,6 +177,13 @@
                     // 跳转到登录页
                     window.parent.location.href = '/login.html';
                 }
+            });
+
+            // 帮助文档（左下角次入口）：通知父框架打开顶层抽屉
+            document.getElementById('docs-open-btn-left').addEventListener('click', function() {
+                try {
+                    window.parent.postMessage({ type: 'open-docs' }, window.location.origin);
+                } catch (e) { /* 父框架不可达时忽略 */ }
             });
 
             // 接收父框架的菜单同步（V3.5.19）

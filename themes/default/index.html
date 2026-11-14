@@ -6,6 +6,8 @@
     <title>wow Minecraft 服务器管理</title>
     <!-- 全局样式 -->
     <link rel="stylesheet" href="/css/main.css" />
+    <!-- 内置帮助文档抽屉样式 -->
+    <link rel="stylesheet" href="/css/docs.css" />
 </head>
 <body class="shell">
     <!-- 整个页面使用 flex 布局 -->
@@ -21,6 +23,40 @@
         <!-- 右侧便签栏 iframe（聊天室，以登录邮箱为发言人） -->
         <iframe id="notify-frame" src="/right.html" scrolling="no"></iframe>
     </div>
+
+    <!-- ===== 移动端顶栏 + 遮罩（≤768px 显示，用于唤出左菜单 / 右便签抽屉） ===== -->
+    <div id="mobile-topbar">
+        <button id="mobile-menu-btn" type="button" aria-label="打开菜单" title="菜单">☰</button>
+        <span id="mobile-title">wow 服务器管理</span>
+        <button id="mobile-notify-btn" type="button" aria-label="打开便签" title="便签">便签</button>
+    </div>
+    <div id="mobile-backdrop"></div>
+
+    <!-- ===== 内置帮助文档抽屉（顶层覆盖整个面板，不受 iframe 裁剪） ===== -->
+    <div id="docs-overlay" class="docs-overlay" aria-hidden="true">
+        <aside id="docs-drawer" class="docs-drawer" role="dialog" aria-modal="true" aria-label="帮助文档">
+            <header class="docs-drawer-head">
+                <div class="docs-drawer-title">
+                    <span>📖</span>
+                    <h3>帮助文档</h3>
+                    <span class="docs-drawer-sub">docs/</span>
+                </div>
+                <button id="docs-close-btn" class="docs-close-btn" type="button" title="关闭（Esc）" aria-label="关闭">✕</button>
+            </header>
+            <div class="docs-body">
+                <nav id="docs-nav" class="docs-sidebar" aria-label="文档目录"></nav>
+                <main id="docs-content" class="docs-content">
+                    <div class="docs-loading">正在加载文档…</div>
+                </main>
+            </div>
+            <div id="docs-toast" class="docs-toast" role="status" aria-live="polite"></div>
+        </aside>
+    </div>
+
+    <!-- Markdown 渲染依赖：本地 vendor，离线可用，绝不走 CDN -->
+    <script src="/js/vendor/marked.min.js"></script>
+    <script src="/js/vendor/purify.min.js"></script>
+    <script src="/js/docs_viewer.js"></script>
 
     <!-- 全局 JavaScript -->
     <script src="/js/main.js"></script>
@@ -55,7 +91,36 @@
                                 { type: 'set-active', page: page }, window.location.origin
                             );
                         } catch (e) { /* 菜单尚未加载完成，忽略 */ }
+                        // 移动端：选中菜单项后自动收起左抽屉，露出内容
+                        document.body.classList.remove('menu-open');
                     }
+                });
+
+                // ===== 移动端：顶栏 ☰ / 💬 与遮罩，用于唤出左菜单 / 右便签抽屉 =====
+                const mobileMenuBtn = document.getElementById('mobile-menu-btn');
+                const mobileNotifyBtn = document.getElementById('mobile-notify-btn');
+                const mobileBackdrop = document.getElementById('mobile-backdrop');
+                function closeDrawers() {
+                    document.body.classList.remove('menu-open', 'notify-open');
+                }
+                if (mobileMenuBtn) {
+                    mobileMenuBtn.addEventListener('click', function() {
+                        const open = document.body.classList.toggle('menu-open');
+                        if (open) document.body.classList.remove('notify-open');
+                    });
+                }
+                if (mobileNotifyBtn) {
+                    mobileNotifyBtn.addEventListener('click', function() {
+                        const open = document.body.classList.toggle('notify-open');
+                        if (open) document.body.classList.remove('menu-open');
+                    });
+                }
+                if (mobileBackdrop) {
+                    mobileBackdrop.addEventListener('click', closeDrawers);
+                }
+                // 按 Esc 关闭任意已打开的抽屉
+                document.addEventListener('keydown', function(e) {
+                    if (e.key === 'Escape') closeDrawers();
                 });
 
                 // 监听来自 right.html 的通知栏关闭/展开消息（可选）

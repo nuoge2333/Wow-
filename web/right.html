@@ -40,6 +40,27 @@
         .notes-header .toggle-btn.collapsed {
             transform: rotate(-90deg);
         }
+        /* 右上角「帮助文档」入口（与折叠按钮并列） */
+        .notes-header-actions {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .docs-open-btn {
+            padding: 3px 8px;
+            border: 1px solid #2a3a5e;
+            border-radius: 6px;
+            background: transparent;
+            color: #4CAF50;
+            font-size: 14px;
+            line-height: 1.2;
+            cursor: pointer;
+            transition: background 0.2s, border-color 0.2s;
+        }
+        .docs-open-btn:hover {
+            background: #2a3a5e;
+            border-color: #4CAF50;
+        }
         .notes-body {
             flex: 1;
             overflow-y: auto;
@@ -188,7 +209,10 @@
 <body>
     <div class="notes-header" id="notes-header">
         <span class="title">💬 便签</span>
-        <span class="toggle-btn" id="toggle-btn">▶</span>
+        <span class="notes-header-actions">
+            <button class="docs-open-btn" id="docs-open-btn" type="button" title="帮助文档" aria-label="帮助文档">📖</button>
+            <span class="toggle-btn" id="toggle-btn">▶</span>
+        </span>
     </div>
     <div class="notes-body" id="notes-body">
         <div class="notes-empty" id="notes-empty">暂无便签，来说第一句吧～</div>
@@ -229,6 +253,20 @@
                 localStorage.setItem('notifyCollapsed', collapsed);
                 if (!collapsed) scrollToBottom();
             });
+
+            // 右上角「📖 帮助文档」：通知父框架打开顶层抽屉。
+            // 按钮位于整个 notes-header 的折叠热区内，必须阻止冒泡，
+            // 否则点帮助会顺带把便签栏折叠掉。
+            const docsOpenBtn = document.getElementById('docs-open-btn');
+            if (docsOpenBtn) {
+                docsOpenBtn.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    try {
+                        window.parent.postMessage({ type: 'open-docs' }, window.location.origin);
+                    } catch (err) { /* 父框架不可达时忽略 */ }
+                });
+            }
 
             function getToken() {
                 try {

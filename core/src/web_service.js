@@ -2395,6 +2395,38 @@ function startWeb(options = {}) {
         }
     });
 
+    // ==================== Web 面板内置文档查看（只读白名单） ====================
+    // 三条红线：①前端只能传「文档名」，真实路径写死在 web_docs.js 白名单里，
+    //   用户输入绝不参与路径拼接；②非法 name 一律 403；③读取失败返回友好 JSON。
+    // 纯展示能力，不新开端口、不写任何文件、不碰开服逻辑；继承既有认证包装层。
+    const WebDocs = require('./web_docs');
+
+    /** GET /api/docs/list —— 允许查看的文档清单（不返回任何文件路径） */
+    app.get('/api/docs/list', (req, res) => {
+        res.json({ success: true, ...WebDocs.list() });
+    });
+
+    /** GET /api/docs/content?name=COMMANDS —— 白名单校验后返回 Markdown 原文 */
+    app.get('/api/docs/content', (req, res) => {
+        const r = WebDocs.read(req.query.name);
+        if (!r.ok) {
+            // 越权 / 路径穿越 → 403；文件被删 / 权限不足 → 404 + 友好文案
+            const status = r.reason === 'forbidden' ? 403 : 404;
+            return res.status(status).json({ success: false, error: r.error });
+        }
+        res.json({
+            success: true,
+            name: r.name, title: r.title, group: r.group, content: r.content
+        });
+    });
+
+    /** GET /api/docs/asset?name=&file= —— 文档内相对图片（严格白名单 + 图片扩展名） */
+    app.get('/api/docs/asset', (req, res) => {
+        const r = WebDocs.resolveAsset(req.query.name, req.query.file);
+        if (!r.ok) return res.status(r.reason === 'forbidden' ? 403 : 404).end();
+        res.sendFile(r.abs);
+    });
+
     // ==================== V3.8.0 P1：玩家管理 ====================
     // 名单写入统一由 player_manager 按铁律①分发：运行态走服务器指令
     // （中继队列优先，stdin 兜底），停服态才直接改 whitelist.json /
