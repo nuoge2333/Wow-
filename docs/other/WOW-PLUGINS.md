@@ -1,9 +1,5 @@
 # 🔌 wow 插件开发指南
 
-> 🧪 **[实验性 / Beta]** 插件系统仍在公测。接口（`plugin.json` 字段、`context` 能力）
-> 可能在小版本内调整，文档随代码同步更新。**不建议在生产环境依赖插件**。
-> 公测期的承诺只有一条：**坏插件不会拖垮主程序**（见「崩溃隔离」）。
-
 > ✅ **插件系统已实装（V3.5.21-26.3c 起）**
 > 本文描述的是**当前可用**的行为，不是设计草案。
 > 命令清单可直接对照 `wow plugin --help` 与 `wow plugin path`。
@@ -160,8 +156,6 @@ wow hello --name Steve
 | `description` | ❌ | 简短描述，`plugin list` / 确认提示里会显示 |
 | `compatible` | ❌ | 兼容的 wow 版本，仅作文档用途，**当前不做运行时校验** |
 | `commands` | ✅ | 命令数组，**必须非空** |
-| `config` | ❌ | 默认配置对象（JSON），见 [插件配置持久化](#插件配置持久化plugin-config) |
-| `web` | ❌ | 前端资源目录（相对插件根），见 [插件 Web UI](#插件-web-ui实验性--beta) |
 
 ### `commands[]`
 
@@ -229,7 +223,7 @@ async greet(args, context) {
 
 ### `context` 提供的能力
 
-只注入下面 11 个，全部**只读**、**懒加载**（不读就不初始化）：
+只注入下面 10 个，全部**只读**、**懒加载**（不读就不初始化）：
 
 | key | 类型 | 说明 |
 |-----|------|------|
@@ -243,7 +237,6 @@ async greet(args, context) {
 | `context.theme` | `ThemeManager` 实例 | `list` / `switch` / `install` |
 | `context.mail` | `Mailer` 实例 | 验证码 / 日志邮件 |
 | `context.pack` | `PackGenerator` 实例 | 整合包生成 |
-| `context.pluginConfig` | `PluginConfig` 实例 | 本插件自己的持久化配置：`all()` / `get(k)` / `set(k,v)` / `merge(obj)` / `reset()` |
 
 ```javascript
 async status(args, context) {
@@ -275,135 +268,6 @@ async status(args, context) {
 
 ---
 
-## 插件配置持久化（plugin-config）
-
-插件可以在 `plugin.json` 里用 `config` 声明默认配置，wow 会把它落到
-**`core/plugin-config/<插件名>/config.json`**——注意是 `core/` 下，不在插件目录里。
-这样插件目录被整体删除/重装，用户配置仍然保留。
-
-```json
-{
-  "name": "hello",
-  "version": "1.1.0",
-  "config": {
-    "greeting": "你好",
-    "limit": 5,
-    "nested": { "enabled": true }
-  },
-  "commands": [{ "name": "hello", "handler": "hello" }]
-}
-```
-
-```javascript
-module.exports = {
-    async hello(args, context) {
-        const cfg = context.pluginConfig;      // 没有 pluginName 时为 null，记得判空
-        if (!cfg) return;
-
-        console.log(`${cfg.get('greeting', 'hi')}，限制 ${cfg.get('limit')}`);
-        await cfg.set('limit', 10);            // 原子写盘，返回 Promise
-        await cfg.merge({ nested: { enabled: false } });  // 深合并
-    }
-};
-```
-
-API：
-
-| 方法 | 说明 |
-|------|------|
-| `all()` | 当前生效配置（默认值 ← 磁盘值，深合并） |
-| `get('a.b', fallback)` | 点号路径取值 |
-| `set('a.b', value)` | 点号路径写入，**原子**落盘 |
-| `merge(obj)` | 深合并一批键 |
-| `reset()` | 恢复 `plugin.json` 里的默认值 |
-| `exists()` | 是否已有落盘文件 |
-| `file` | 配置文件绝对路径（只读） |
-
-四条实现约束（`core/src/plugin_config.js`）：
-
-1. **路径不许穿越**。插件名必须是单段名称（`..`、`/`、`\`、盘符一律拒绝），
-   解析结果还必须严格落在 `core/plugin-config/` 之内。
-   配置键也过滤 `__proto__` / `constructor` / `prototype`，防原型污染。
-2. **写入原子**。同目录临时文件 → `fsync` → `rename` 覆盖。
-   `rename` 在同一文件系统内是原子的：断电后你只会看到旧内容或新内容，
-   不会看到写了一半的 JSON。同一进程内的并发 `set` 会串行执行。
-3. **坏文件不拖垮插件**。`config.json` 被手改成非法 JSON 时，
-   原文件会被备份成 `config.json.corrupt-<时间戳>`，读取退回默认值。
-4. **默认值随代码走**。插件升级新增了默认键，用户旧配置里没有，
-   `all()` 会自动补上（磁盘值优先）。
-
----
-
-## 插件 Web UI（实验性 / Beta）
-
-插件可以在 `plugin.json` 里用 `web` 声明一个前端目录：
-
-```json
-{
-  "name": "hello",
-  "web": "frontend",
-  "commands": [{ "name": "hello", "handler": "hello" }]
-}
-```
-
-**默认不启用**。需要在 `wow.yaml` 里显式打开：
-
-```yaml
-web:
-  allow_plugins_web: true      # 对应文档里的 allow-plugins-web
-```
-
-或 `wow config set web.allow_plugins_web true`，然后在 Web 面板「设置 → 高级管理 → 插件」里
-点该插件的「打开界面」。
-
-### 它是怎么挂上的
-
-| 环节 | 行为 |
-|------|------|
-| 端口 | **绝不新开端口**。挂在主面板同源 `/plugin-web/<插件名>/` |
-| 复制 | 启动时把 `frontend/` 复制到 `core/plugin-web/<插件名>/`，**全量重建** |
-| 静态根 | Express 只认复制出来的目录，插件目录本身从不对外 |
-| 默认值 | `web.allow_plugins_web: false`，关掉时会清空 `core/plugin-web/` |
-
-为什么必须复制：插件目录里同时躺着 `index.js` 和可能的密钥文件。
-直接把插件目录当静态根，等于把服务端代码当静态资源发出去。
-
-复制时还会跳过：**符号链接**（防链到 `/etc/passwd`）、**隐藏文件**（`.env` / `.git`）、
-单文件 > 5MB、单插件总量 > 20MB、层级 > 8 层。超限只跳过对应文件/插件并记日志。
-
-### 强制 CSP
-
-`/plugin-web/*` 的所有响应都带：
-
-```
-Content-Security-Policy: frame-ancestors 'self'; connect-src 'self';
-X-Content-Type-Options: nosniff
-Referrer-Policy: no-referrer
-```
-
-- `frame-ancestors 'self'`：插件页面不能被外站 iframe 嵌套（防点击劫持）；
-- `connect-src 'self'`：页面里的 `fetch` / `XHR` / `WebSocket` 只能打到本站，
-  没法把登录 Token 发到第三方。
-
-### 面板里的 iframe 必须带 sandbox
-
-主面板打开插件界面时用的是：
-
-```html
-<iframe src="/plugin-web/hello/"
-        sandbox="allow-scripts allow-forms allow-popups"
-        referrerpolicy="no-referrer"></iframe>
-```
-
-**没有** `allow-same-origin`：iframe 里是 opaque origin，读不到父页面的
-`localStorage` / cookie / JWT。插件前端若需要数据，请让用户重新登录，
-或通过 `postMessage` 与父页面约定协议（父页面自行校验来源）。
-
-> ⚠️ `sandbox` 只在面板的 iframe 里生效。用户直接在新标签页打开
-> `/plugin-web/hello/` 时它是同源的——这正是 `allow_plugins_web` 默认关闭的原因。
-
----
-
 ## 目录结构
 
 除根目录必须有 `plugin.json` 和 `index.js` 外，其余结构完全自由。
@@ -414,18 +278,8 @@ hello/
 ├── index.js             # 必需（入口）
 ├── lib/                 # 可选，随便组织
 │   └── helper.js
-├── assets/
-│   └── data.json
-└── frontend/            # 可选，声明 "web": "frontend" 后才对外
-    └── index.html
-```
-
-插件运行后会涉及三个**独立于插件目录**的位置：
-
-```bash
-core/plugin-config/hello/config.json   # 插件配置（卸载插件也不删）
-core/plugin-web/hello/                 # 复制出来的前端资源（每次启动重建）
-core/.plugins.trust.json               # 信任表（内容指纹）
+└── assets/
+    └── data.json
 ```
 
 ```javascript
@@ -517,27 +371,18 @@ CLI 每次启动时：
 | 崩溃点 | 表现 |
 |---|---|
 | `plugin.json` 不是合法 JSON | 跳过该插件，warn 一行 |
-| `index.js` require 时抛错 / 语法错误 | `❌ 插件 X 崩溃，已跳过：<原因>`，其它插件照常加载 |
+| `index.js` require 时抛错 | `❌ 插件 X 崩溃，已跳过：<原因>` |
 | handler 名对不上 | `❌ 插件 X 崩溃，已跳过：index.js 缺少处理函数：a, b` |
-| 注册阶段抛错（非法 option、重复命令） | `❌ 插件 X 注册失败，已跳过` |
-| handler 运行期同步抛错 / `await` 到的 reject | 终端只显示 `插件内部错误：wow Y 执行失败。请查看日志或联系插件作者。`；详细堆栈写日志，进程继续，退出码置 1 |
-| 信任指纹计算抛错（目录权限等） | `❌ 插件 X 加载异常，已跳过（不影响主程序）`，整轮加载不中断 |
+| handler 运行期同步抛错 / `await` 到的 reject | `❌ 插件 X 的命令 Y 执行失败：<原因>`，进程继续，退出码置 1 |
 | 命令名冲突 | `⚠️ 插件 X 已跳过：命令名冲突：...` |
 
-**整轮加载用 try...catch 兜住每个插件**，包括我们没预料到的第三方异常。
-一个坏插件换来的是一次跳过 + 一条日志，而不是 wow 启动失败。
-
-**对外只说「插件内部错误」**：插件抛出的 message 可能带内部路径、SQL、密钥片段，
-不该直接呈现在终端或 Web 面板上；完整堆栈只进日志。
-
-**上表只覆盖「加载期」和「handler 执行期」。** 插件是同进程 `require` 的，
+**上表只覆盖「加载期」和「handler 同步执行期」。** 插件是同进程 `require` 的，
 所以下面这些**兜不住**——它们不是被隔离，而是根本不在被监视的栈上：
 
 | 兜不住的情况 | 后果 |
 |---|---|
-| `process.exit()` / `process.abort()` | **主程序立刻退出**，退出码就是插件给的值 |
-| `setTimeout` / 事件回调里**同步** throw | 被全局 `uncaughtException` 钩子接住，记一条 `ERRO` 后进程继续。**但那次操作已经半途而废** |
-| 未 `await` 的 Promise 被 reject | V3.7.5 起由 `installRejectionGuard()` 接管：记日志，**进程不退出**（Node 15+ 默认会直接终止）。`WOW_STRICT_PROMISE=1` 可关掉护栏 |
+| `process.exit()` / `process.abort()` | **主程序立刻退出**，退出码就是插件给的值。`log.js` 的 `uncaughtException` 钩子拦不住主动退出 |
+| 逃出 `await` 链的异步抛错（`setTimeout` / `setInterval` / 事件回调 / 未 `await` 的 Promise） | 被全局 `uncaughtException` 钩子接住，记一条 `ERRO` 后进程继续。**但那次操作已经半途而废**，插件内部状态可能不一致 |
 | 死循环 / 长时间同步阻塞 | 整个 wow 卡死，面板与 CLI 一起无响应 |
 | 内存泄漏 | 拖着主程序一起 OOM |
 | 改 `global` / `process.env` / 内置原型 | 直接污染主程序和其它插件，且**无法回滚** |
@@ -573,18 +418,6 @@ web:
 > 面板对外暴露时必须配合强密码/HTTPS，且只装你自己审过的插件。
 
 打开后 `web_service` 启动时会打印一条警告（见 `auditDangerousConfig`）。
-
-**插件 Web UI 是另一个独立开关**，默认也关闭：
-
-```yaml
-web:
-  allow_plugins_web: true      # 对应 allow-plugins-web
-```
-
-打开后，「设置 → 高级管理 · 插件」里声明了 `web` 的插件会多出一个「打开界面」按钮，
-点击后在 sandbox iframe 里打开 `/plugin-web/<插件名>/`。关闭时该目录会被清空，
-避免旧版本的页面继续可访问。详见
-[插件 Web UI（实验性 / Beta）](#插件-web-ui实验性--beta)。
 
 ### 开服控制台
 

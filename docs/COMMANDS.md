@@ -1,9 +1,9 @@
 # 📋 完整命令参考
 
-> wow~ 所有命令按类别分组，共计 60 个命令
+> wow~ 所有命令按类别分组，共计 60 个命令。
 
 > 📌 **命令引导词说明（重要）**
-> 本文档中的命令有两种写法：带前缀的（`wow server start`）与只写主干的（`### server start`）。无论哪种，**实际执行时都要加上启动脚本前缀**：
+> 本文档中的命令有两种写法：带前缀的（`wow server start`）与只写主干的（### server start）。无论哪种，除非是长命令模式，**实际执行时都要加上启动脚本前缀**：
 >
 > | 操作系统 | 文档写法 | 实际执行 |
 > |----------|----------|----------|
@@ -14,41 +14,18 @@
 
 ---
 
-> 📌 **V3.5.9 起 `--help` 只显示核心命令**
-> 为保持核心帮助信息极简，以下非核心命令已用 Commander 的 `_hidden = true` 从帮助菜单隐藏——**命令本身全部照常可用**，只是不出现在 `wow --help` 列表里：
->
-> | 隐藏的命令 | 原用途 |
-> |-----------|--------|
-> | `set` | 快速设置配置项（等价 `config set`） |
-> | `down` | 裸 URL 文件下载器 |
-> | `pack` | 客户端整合包安装 / 生成 |
-> | `logs` | 日志查看与 AI 分析 |
-> | `mail` | 邮件测试 / 验证码 / 崩溃报告 |
-> | `theme` | 主题包管理 |
-> | `install` | 彩蛋与 URL 下载（V3.3.10 起已隐藏） |
->
-> 帮助菜单中保留的是核心工作流命令：`init` / `server` / `scheme` / `pool` / `mod` / `plugin` / `web` / `lan` / `config` / `L`。
->
-> 📌 **V3.5.21 起 `plugin` 进入帮助菜单**：插件系统实装后它不再是占位命令，
-> 而是「扩展 wow 命令」的唯一入口，属于核心工作流的一环（详见第五节之二）。
-
----
-
-> 💡 **开服控制台三视图切换（V3.4.0+）**
-> 在 `wow server start` 的交互终端里，除了 MC 服务端管理员指令（如 `/stop`、`op Steve`），还可以直接输入 **wow 服务端指令**与**陶瓦联机指令**。终端内置三个控制台视图，默认停留在 Minecraft 服务端控制台：
+> 💡 **开服控制台三视图切换**
+> 在 `wow server start` 的交互终端里，不仅可以输入 MC 服务端指令，还能直接输入 **wow 服务端指令**与**陶瓦联机指令**。终端内置三个控制台视图，默认停留在 Minecraft 服务端控制台：
 >
 > | 视图 | 切换指令 | 说明 |
 > |------|----------|------|
-> | 🎮 Minecraft 服务端控制台 | `:mc`（或 `:minecraft` `:1` `:服务端`） | 收发 MC 服务端指令 |
-> | 🧩 wow 指令控制台 | `:wow`（或 `:2`） | **进入 M 模式 TUI**（七页界面）；查看 wow 日志请用 `:wowlog` |
-> | 🏠 陶瓦联机控制台 | `:lan`（或 `:terracotta` `:taowa` `:3` `:陶瓦`） | 开房 / 查房间 / 关房，显示陶瓦 HTTP API 返回 |
+> | 🎮 Minecraft 服务端控制台 | `:mc` | 收发 MC 服务端指令 |
+> | 🧩 wow 指令控制台 | `:wow` | **进入 M 模式 TUI** |
+> | 🏠 陶瓦联机控制台 | `:lan` | 开房 / 查房间 / 关房 |
 >
 > - 输入 `:mc` / `:lan` 会**清屏并显示该视图最后 10 条日志**。
-> - 输入 `:wow` 进入 M 模式界面（详见 [TUI.md](./TUI.md)）；从界面返回必落在 `:wow`，此时仍可用 `:mc` / `:lan` 切视图。
-> - 输入「不属于当前视图」的指令会提示「不支持」并引导切到对应控制台（例：在 Minecraft 视图输入 `lan host` → 提示先输入 `:lan`）。
-> - 元指令：`:wowlog` 显示 wow 视图最后 10 条日志，`:log` 重新显示当前视图最后 10 条日志，`:help` 显示控制台帮助。
-> - **不可用**：会修改运行中的方案文件的指令（`scheme create`、各种 `install`/`switch` 等）、`server start/restart`、`web start`、`logs tail` —— 这些会提示「请另开终端执行」。其余无法识别的输入一律当作 MC 指令转发给服务端。
-- **M 模式入口**：直接运行 `wow`（无参数）即进入；`wow m` 是同一界面的等价入口（双击 `wow.bat` / `./wow.sh` 走的就是它）。在长命令 REPL 里输入 `m` 也会回到菜单。界面说明见 [TUI.md](./TUI.md)。
+> - 输入「不属于当前视图」的指令会提示「不支持」并引导切换。
+> - 无法识别的输入一律当作 MC 指令转发给服务端。
 
 ---
 
@@ -86,7 +63,7 @@ wow server start --memory 4G
 wow server start --memory 6G --jvm-args "-XX:+UseG1GC"
 ```
 
-**交互终端（V3.4.0+）**：启动后进入三视图控制台，默认在 Minecraft 服务端控制台。可随时用 `:mc` / `:wow` / `:lan` 切换（切换即清屏 + 显示该视图最后 10 条日志），输入非本视图指令会提示切换。详见上方「开服控制台三视图切换」说明。
+**交互终端**：启动后进入三视图控制台，默认在 Minecraft 服务端控制台。可随时用 `:mc` / `:wow` / `:lan` 切换。
 
 ---
 
@@ -158,10 +135,8 @@ wow scheme create <name> [options]
 | 选项 | 说明 |
 |------|------|
 | `-v, --version <version>` | Minecraft 版本 (默认: 1.20.1) |
-| `-t, --type <type>` | 核心类型: vanilla/forge/fabric/neoforge/quilt/paper/purpur/leaves/mohist/catserver（spigot/bukkit 暂不支持），模组加载器随类型自动确定，不再单独询问 |
+| `-t, --type <type>` | 核心类型: vanilla/forge/fabric/neoforge/quilt/paper/purpur/leaves/mohist/catserver，模组加载器随类型自动确定 |
 | `-b, --build <id>` | 构建号（仅 Mohist 等需要） |
-
-> 💡 V3.4.1 起 `--loader` 已移除；**V3.5.11 起引导菜单与 Web 方案表单同样不再询问加载器**——统一由核心类型自动确定（如 `-t fabric` 即 fabric 核心 + fabric 加载器，且自动装配 Fabric API）。
 
 **示例：**
 ```bash
@@ -260,15 +235,13 @@ wow scheme prune survival
 
 ### `scheme status [name]`
 
-查看方案的结构化状态：状态（minimal / partial / full）、版本、加载器、核心，
-以及模组 / 插件的「共享 vs 独占」统计。
+查看方案的结构化状态：状态（minimal / partial / full）、版本、加载器、核心，以及模组 / 插件的「共享 vs 独占」统计。
 
 ```bash
 wow scheme status survival
 ```
 
-与 `scheme info` 的区别：`info` 偏元数据（创建时间、兼容性 Java 版本），
-`status` 偏资源分布（有多少资源真正复用自池）。
+与 `scheme info` 的区别：`info` 偏元数据，`status` 偏资源分布。
 
 ---
 
@@ -291,27 +264,14 @@ wow scheme clone-client ~/.minecraft/versions/1.20.1-forge-47.2.0 [options]
 | `--extra-client-mods <list>` | 追加的客户端模组 modid，逗号分隔 |
 | `--keep-mods <list>` | 强制保留的模组 modid，逗号分隔（优先级最高） |
 
-**九步流程：** 定位实例 → 建方案骨架 → 白名单复制 → 核心装配 → 存档迁移 →
-模组清洗 → 平台兜底 → 入池登记 → 输出报告。
-
 **关键行为：**
 
 - **产物是方案**，克隆完成后 `scheme list` / `switch` / `server start` 全套可用
-- 核心走方案的**核心装配流程**（installer 模块），Forge/NeoForge 会跑官方安装器
-- **不删除任何文件**：客户端核心改名 `.client-jar.bak`、模组移到 `mods-disabled/`、
-  `world/` 冲突时挪成 `.bak`
-- 关键文件（`world/level.dat`、`mods/*.jar`、`config/`）复制失败时**中止并回滚**方案目录
-- 模组判定：`force_keep_mods` > 元数据 > 名单
+- 核心走方案的**核心装配流程**，Forge/NeoForge 会跑官方安装器
+- **不删除任何文件**：客户端核心改名 `.client-jar.bak`、模组移到 `mods-disabled/`、`world/` 冲突时挪成 `.bak`
+- 关键文件复制失败时**中止并回滚**方案目录
 
-```bash
-# 先看看能不能识别
-wow scheme clone-client ~/.minecraft --dry-run
-
-# 全自动，保留 jei
-wow scheme clone-client ~/.minecraft -n mysrv --save 生存世界 --keep-mods jei --yes
-```
-
-详见 [`CLONE_CLIENT.md`](CLONE_CLIENT.md)。
+详见 [`CLONE_CLIENT.md`](scheme/CLONE_CLIENT.md)。
 
 ---
 
@@ -325,12 +285,7 @@ wow scheme clone-client ~/.minecraft -n mysrv --save 生存世界 --keep-mods je
 wow pool stats
 ```
 
-输出资源总数、被方案引用的数量、仅存于池中的数量、占用体积（同名文件只计一次）
-以及按类型（cores / mods / plugins）的分类计数。与 Web 面板 `GET /api/pool/stats` 同一口径。
-
-> 📌 `pool prune`（清理未引用资源）尚未提供；`auto_scheme: true` 时随方案切换自动清理。
-
----
+输出资源总数、被方案引用的数量、仅存于池中的数量、占用体积（同名文件只计一次）以及按类型的分类计数。
 
 ---
 
@@ -399,36 +354,16 @@ wow mod client-filter [options]
 | `--dry-run` | 只列出将会被隔离的模组，不实际移动 |
 | `--list <modid>` | 检查单个 modid 是否在内置名单里 |
 | `--show` | 列出隔离区里有什么，不做任何改动 |
-| `--restore [file]` | 把隔离区里的模组挪回 `mods/`（不填 = 全部恢复） |
+| `--restore [file]` | 把隔离区里的模组挪回 `mods/`（不填 ` 全部恢复） |
 
 **行为说明：**
 
-- 读取 jar 内部元数据（`fabric.mod.json` / `mods.toml` / `mcmod.info`）判断真正的 modid
-- 元数据声明「纯客户端」（`environment: client`，或 entrypoints 只有 `client`）
-  或 modid 命中内置名单时，把 `jar` 移到 `mods_client_disabled/`
+- 读取 jar 内部元数据判断真正的 modid
+- 元数据声明「纯客户端」或 modid 命中内置名单时，把 `jar` 移到 `mods_client_disabled/`
 - **只移动不删除**，需要恢复时用 `--restore` 挪回来
-- 目标重名时不覆盖，改名为 `xxx.<时间戳>.jar`
-- 原版 / 纯插件端（vanilla / paper / purpur / spigot / bukkit / leaves）直接跳过
+- 原版 / 纯插件端直接跳过
 
 **开服时会自动执行**（受 `mod.client_only.enabled` 控制），一般无需手动运行。
-
-```bash
-# 先看看会动哪些文件
-wow mod client-filter --dry-run
-
-# 查某个模组在不在内置名单里
-wow mod client-filter --list sodium
-
-# 看看隔离区里有什么
-wow mod client-filter --show
-
-# 全部恢复 / 只恢复一个
-wow mod client-filter --restore
-wow mod client-filter --restore sodium.jar
-```
-
-自定义名单：在 `wow.yaml` 的 `mod.client_only.extra` 里每行写一个 modid，
-`xxx` 表示额外隔离，`-xxx` 表示从内置名单里剔除。
 
 ---
 
@@ -526,11 +461,7 @@ wow theme info <name>
 
 ## 五之二、插件管理 (7 个)
 
-> 🧪 **[实验性 / Beta]** 插件系统仍在公测，接口可能变动，不建议在生产环境依赖。
-> 公测期承诺只有一条：坏插件不会拖垮主程序（加载/执行全程隔离，失败只跳过并记日志）。
-
-> 📌 这里的「插件」指 **wow 自身的 CLI 扩展插件**（`wow-plugins/` 目录），
-> 不是 Minecraft 服务端的 Bukkit/Paper 插件。开发指南见 [WOW-PLUGINS.md](WOW-PLUGINS.md)。
+> 📌 这里的「插件」指 **wow 自身的 CLI 扩展插件**（`wow-plugins/` 目录），不是 Minecraft 服务端的 Bukkit/Paper 插件。开发指南见 [WOW-PLUGINS.md](other/WOW-PLUGINS.md)。
 >
 > ⚠️ 插件与主程序同权限，不是沙箱。首次启用需确认，内容改动后需重新确认。
 
@@ -542,17 +473,7 @@ wow theme info <name>
 wow plugin list
 ```
 
-输出示例：
-
-```
-插件目录: /path/to/wow/wow-plugins
-
-  hello v1.0.0  [✅ 已信任]
-    打招呼 + 查看服务器状态
-    命令: wow hello、wow hello-status
-```
-
-信任状态三态：`✅ 已信任` / `⏳ 未信任`（从没同意过）/ `⚠️ 已变更`（同意过后文件被改过）。
+信任状态三态：`✅ 已信任` / `⏳ 未信任` / `⚠️ 已变更`。
 
 ---
 
@@ -576,8 +497,7 @@ wow plugin install ./hello          # 目录形态
 wow plugin install ./hello.zip -f   # 覆盖同名插件
 ```
 
-安装只做两件事：断言文件是 ZIP（文件头 `PK`）、断言包内有合法的 `plugin.json`。
-**不验证来源、不验证签名**——是否信任由你决定，见 `plugin trust`。
+安装只做两件事：断言文件是 ZIP（文件头 `PK`）、断言包内有合法的 `plugin.json`。**不验证来源、不验证签名**——是否信任由你决定。
 
 ---
 
@@ -599,9 +519,6 @@ wow plugin remove hello
 wow plugin trust hello
 ```
 
-> ⚠️ 只对你自己审查过的插件执行这个命令。建议先 `wow plugin info hello` 看一眼它注册了哪些命令，
-> 再去 `wow-plugins/hello/index.js` 里读一遍它到底做了什么。
-
 ---
 
 ### `plugin untrust <name>`
@@ -616,23 +533,10 @@ wow plugin untrust hello
 
 ### `plugin path`
 
-打印插件目录与信任表位置，并给出目录结构示意。排查「我插件放对地方了吗」时用它。
+打印插件目录与信任表位置，并给出目录结构示意。
 
 ```bash
 wow plugin path
-```
-
-输出示例：
-
-```
-插件目录: /path/to/wow/wow-plugins
-信任表:   /path/to/wow/core/.plugins.trust.json
-
-插件目录结构:
-  wow-plugins/
-    hello/
-      plugin.json   （命令清单）
-      index.js      （处理函数实现）
 ```
 
 ---
@@ -645,16 +549,11 @@ wow plugin path
 wow hello --name Steve
 ```
 
-这些命令：
-
 | 场景 | 行为 |
 |------|------|
-| CLI 终端 | ✅ 正常执行（执行前会 `require` 插件的 `index.js`） |
+| CLI 终端 | ✅ 正常执行 |
 | **Web 面板** | ❌ 默认禁止。需在配置中打开 `web.allow_plugins: true` |
-| **开服控制台**（`wow server start` 里） | ❌ 显式拒绝，不会转发给 Minecraft 服务端 |
-
-最后一项是有意为之：插件命令是运行期才知道的名字，如果不显式拦截，
-它会被当成 MC 指令转发，表现成「游戏里报 unknown command」，非常难排查。
+| **开服控制台** | ❌ 显式拒绝，不会转发给 Minecraft 服务端 |
 
 ---
 
@@ -672,54 +571,29 @@ wow web start [options]
 |------|------|
 | `-p, --port <port>` | 端口 (默认: 8080) |
 | `--host <host>` | 绑定地址 (默认: 127.0.0.1) |
-| `--public` | 🔺 **V3.5.16** 等价于 `--host 0.0.0.0`，局域网 / 公网可访问 |
-| `--tunnel` | 🔺 **V3.5.16** 同时建立 Cloudflare 快速隧道，生成公网 https 地址 |
+| `--public` | 等价于 `--host 0.0.0.0`，局域网 / 公网可访问 |
+| `--tunnel` | 同时建立 Cloudflare 快速隧道，生成公网 https 地址 |
 
 **示例：**
 ```bash
 # 允许远程访问（需先配置认证凭据，否则会被拒绝启动）
 wow web start --host 0.0.0.0 --port 8080
 
-# 等价写法
-wow web start --public
-
 # 一步到位：对外暴露 + 公网 https 地址
 wow web start --public --tunnel
 ```
 
-> 🛡️ **强制安全闸门**（V3.5.16）
->
-> 绑定地址非回环且 `web.auth_token` 为空时，**直接拒绝启动**：
-> `❌ 拒绝启动：暴露公网必须设置 auth_token 或管理员密码！`
-> 检查发生在 `server.listen()` 之前，不占端口。
+> 🛡️ **强制安全闸门**
+> 绑定地址非回环且 `web.auth_token` 为空时，**直接拒绝启动**。检查发生在 `server.listen()` 之前。
 
-> ☁️ **`--tunnel` 说明**
->
-> - 首次使用会自动下载 `cloudflared` 到 `core/tunnel/`（约 20~40MB，GitHub 慢时自动切换镜像）；
-> - 成功后高亮打印 `https://xxx.trycloudflare.com`，该地址**每次启动都会变化**；
-> - `web stop` 或进程退出时自动关闭隧道，不留孤儿进程；
-> - 起不来时会回显 cloudflared 的真实输出，日志在 `core/tunnel/cloudflared.log`。
-
-> 🖥️ **终端不再被占用**（V3.5.19）
->
-> `wow web start` 启动面板后**不会阻塞 CLI**，而是自动进入等价于 `wow L` 的**长命令模式**：
->
-> ```text
-> 💡 已进入长命令模式（等价 `wow L`）：可直接输入 wow 指令，无需再来一个终端。
->    面板与本终端共用同一个 wow 进程；输入 exit 会同时关闭面板。
-> wow>
-> ```
->
-> - 面板与终端共用同一个 wow 进程，敲指令不用加 `wow` 前缀；
-> - Web 端发来的指令会以 `[WebCLI]` 前缀回显在终端，不会把你正在输入的那行顶乱；
-> - `exit` / `quit` 退出长命令模式，同时关闭面板；
-> - 非交互终端（如 `nohup`、CI）下仍然常驻运行，按 Ctrl+C 结束。
+> 🖥️ **终端不再被占用**
+> `wow web start` 启动面板后**不会阻塞 CLI**，而是自动进入等价于 `wow L` 的长命令模式，可直接输入 wow 指令，无需再来一个终端。
 
 ---
 
 ### `web tunnel`
 
-🔺 **V3.5.16** 为**已经在运行**的面板单独建立 Cloudflare 隧道。
+为**已经在运行**的面板单独建立 Cloudflare 隧道。
 
 ```bash
 wow web tunnel [-p <port>]
@@ -759,7 +633,7 @@ wow web status
 
 ## 六之三、跨设备方案同步 (3 个)
 
-> 详见 [SYNC.md](SYNC.md)。控制端推送方案到跑 `wow web start` 的执行端，单向、增量、断点续传。
+> 详见 [SYNC.md](scheme/SYNC.md)。控制端推送方案到跑 `wow web start` 的执行端，单向、增量、断点续传。
 
 ### `sync login <url>`
 
@@ -784,15 +658,7 @@ wow sync push http://your-vps:8080 [options]
 | `--with-world` | 连存档一起同步（默认不带） |
 | `--with-config` | 允许覆盖执行端 `server.properties`/`eula.txt`（先备份 `.bak`） |
 
-**示例：**
-```bash
-# 首次：登录再推
-wow sync login http://your-vps:8080 -p mypass
-wow sync push http://your-vps:8080 --scheme 生存服 --with-config
-
-# 断了重跑同一条命令即可续传（增量上传，已就位的文件自动跳过）
-wow sync push http://your-vps:8080 --scheme 生存服 --with-config
-```
+---
 
 ### `sync list`
 
@@ -844,56 +710,9 @@ wow logs report
 
 ---
 
-### 崩溃时的本地初级诊断（V3.5.18，自动触发）
+### 崩溃时的本地初级诊断（自动触发）
 
-**不是命令**——服务器非正常退出（退出码非 0）时自动运行，无需手动调用。
-
-与上面两条的分工：
-
-| 方式 | 是否联网 | 用途 |
-|------|----------|------|
-| 崩溃自动诊断 | ❌ 纯本地 | 已知高频崩溃类型的即时定位，毫秒级 |
-| `logs report` | ❌ | 仅计数，无诊断结论 |
-| `logs analyze` | ✅ 需 API Key | 覆盖不到的类型、需要深度推理时 |
-
-输出示例：
-
-```
-❌ 服务器异常退出，退出码: 1
-============================================================
-🔍 正在进行本地初级诊断...
-------------------------------------------------------------
-
-🚨 【明确报错】模组: sodium
-   原因: 该模组只在客户端生效（渲染、UI、光影等），放进服务端会在初始化阶段直接抛错。
-   上下文:
-     > java.lang.NoClassDefFoundError: net/minecraft/client/MinecraftClient
-       at net.caffeinemc.mods.sodium.client.SodiumClientMod.onInitialize(...)
-
-🕵️  【疑似冲突】伴随模组: iris, lithium, sodium
-   👉 警告: 多个渲染/优化类模组同时存在，极易导致底层冲突。
-
-💡 【wow 建议】
-   1. 移除该客户端模组：`wow mod remove sodium`；
-   2. 若移除后依然崩溃，请尝试 `wow mod sync` 重新同步服务端环境。
-============================================================
-```
-
-可识别的错误类型：
-
-| 类型 | 典型日志特征 | 归属 |
-|------|--------------|------|
-| Java 版本不对 | `UnsupportedClassVersionError` | 环境 |
-| 内存溢出 | `OutOfMemoryError` / `java heap space` | 环境 |
-| 端口被占用 | `BindException` / `Address already in use` | 环境 |
-| 未同意 EULA | `You need to agree to the EULA` | 环境 |
-| 客户端模组误装 | 报错涉及 `net.minecraft.client` | 模组 |
-| 缺前置 | `Missing mandatory dependencies` | 模组 |
-| Mixin 冲突/失败 | `Mixin apply failed` / `Mixin conflict` | 模组 |
-| 找不到类 | `NoClassDefFoundError` | 模组 |
-
-> 定位不到具体模组时，末尾会提示改用 `wow logs analyze` 做 AI 深度解析。
-> 环境类错误（前四项）不会这样提示——它们本来就和模组无关。
+**不是命令**——服务器非正常退出（退出码非 0）时自动运行，无需手动调用。纯本地，毫秒级给出归因与修复建议（如 Java 版本错误、内存溢出、客户端模组误装等）。
 
 ---
 
@@ -909,20 +728,16 @@ wow config set web.auth_token 一串足够长的随机字符
 wow config set web.auth_password 你的密码      # 离线密码登录
 ```
 
-> 🔐 **凭据类键不回显明文**：`auth_token` / `auth_password` / `api_key` /
-> `token` / `password` / `secret` 结尾的键，设置后只提示「已设置，长度 N」，
-> 避免密码留在终端录屏或截图里。
+> 🔐 **凭据类键不回显明文**：设置后只提示「已设置，长度 N」，避免密码留在终端录屏或截图里。
 
 ---
 
 ### `config get <key>`
 
-读取启动器配置。凭据类键打码显示（`ab******op（已设置，长度 16）`），
-未设置时统一显示 `null`。
+读取启动器配置。凭据类键打码显示，未设置时统一显示 `null`。
 
 ```bash
 wow config get server.memory
-wow config get web.auth_token
 ```
 
 ---
@@ -933,18 +748,6 @@ wow config get web.auth_token
 
 ```bash
 wow config unset web.auth_token
-```
-
----
-
-### `config wow <key> [value]`
-
-> ⚠️ **历史写法**，等价于 `config get` / `config set`，保留是为了不破坏老脚本。
-> 名字容易误会成「wow 的配置」，实际是「启动器配置」——新写的脚本请用 `config set`。
-
-```bash
-wow config wow server.dir
-wow config wow server.dir ./my_server
 ```
 
 ---
@@ -1078,7 +881,7 @@ wow mail crash "测试崩溃消息"
 
 ## 十、联机 / 内网穿透 (3 个)
 
-> 基于陶瓦 (Terracotta) 的联机方案，详见 [联机 / 内网穿透](LAN_TERRACOTTA.md)。
+> 基于陶瓦 (Terracotta) 的联机方案，详见 [联机 / 内网穿透](net/LAN_TERRACOTTA.md)。
 
 ### `lan host`
 
@@ -1092,19 +895,9 @@ wow lan host [options]
 |------|------|
 | `-r, --room <code>` | 指定固定房间号（留空则自动生成） |
 
-> 🌐 **与 Web 面板联动**（V3.5.16）
->
-> 若 `lan host` 时 Web 面板已在运行（或反之），控制台会提示本机的
-> **EasyTier 虚拟局域网 IP（10.144.x.x）**，好友在同一个房间里可以直接用它访问面板：
->
-> ```
-> 🌐 检测到联机网络已开启，你可以通过虚拟局域网 IP 访问面板。
->    虚拟局域网 IP: 10.144.7.23  (网卡 easytier0)
->    面板地址:      http://10.144.7.23:8080
-> ```
->
-> 注意：面板默认绑定 `127.0.0.1`，虚拟 IP 访问不到。要用这个地址，
-> 需以 `wow web start --host 0.0.0.0`（或 `--public`）启动，并配置好认证凭据。
+> 🌐 **与 Web 面板联动**
+> 若 `lan host` 时 Web 面板已在运行（或反之），控制台会提示本机的 **EasyTier 虚拟局域网 IP（10.144.x.x）**。
+> 注意：面板默认绑定 `127.0.0.1`，虚拟 IP 访问不到。要用这个地址，需以 `wow web start --host 0.0.0.0`（或 `--public`）启动，并配置好认证凭据。
 
 ### `lan stop`
 
@@ -1133,12 +926,11 @@ wow 有两个常驻交互界面，**可以互相切换**：
 | **M 模式**（七页 TUI） | 双击 `wow.bat` / `./wow.sh`；或 `wow m` | `Q`/`W`/`E`/`R`/`T`/`Y` 切页，数字输入后回车执行 | 按 `L` → L 模式 |
 | **L 模式**（长命令） | `wow L`；或 M 界面按 `L` | 逐条敲完整指令（无 `wow` 前缀） | 输入 `m` → M 模式 |
 
-> M 模式的完整按键与页面说明见 [TUI.md](./TUI.md)。
 > 非 TTY 环境（管道 / `cron`）自动降级为「数字 + 回车」的兼容模式，功能一致。
 
 ### `m`
 
-M 模式界面（V3.6.1 恢复；别名 `M`）。与双击批处理进入的是**同一个界面**。
+M 模式界面。与双击批处理进入的是**同一个界面**。
 
 ```bash
 wow m
@@ -1153,24 +945,7 @@ wow m
 | `wow L` | 进入交互式 REPL，逐条输入长命令（无需 `wow` 前缀，`exit` / `quit` 退出，输入 `m` 回菜单） |
 | `wow L server start` | 直接执行单条长命令后退出，适合脚本调用 |
 
-```bash
-# 交互式 REPL
-wow L
-
-# 单条执行
-wow L server status
-wow L scheme list
-```
-
-> 💡 **M ↔ L 切换**：L 模式里输入 `m` 回到菜单（不退出程序、不关 Web 面板）；
-> 菜单里选 `15` 进入 L 模式。
->
-> 📋 **日志跟踪（V3.6.2）**：L 模式常驻时，若服务器由 **Web 面板**启动
-> （或在进入 L 之前就已在运行），终端会自动进入日志跟踪，实时回显 MC 输出；
-> 服务器停止后自动退出跟踪。跟踪期间可照常输入 wow 指令。
-> 在 L 里直接敲 `server start` 不走跟踪——那种情况由开服控制台接管终端
-> （支持 MC 指令直发与三视图切换），功能更全。
->
+> 💡 **M ↔ L 切换**：L 模式里输入 `m` 回到菜单；菜单里选 `15` 进入 L 模式。
 > ⚠️ REPL 会独占终端 stdin，**不能在开服控制台内使用**（控制台输入 `L` 会被拒绝并提示）。
 
 ---
@@ -1193,8 +968,7 @@ wow down <url> [options]
 
 ### `install <target> [version]`
 
-> **V3.5.4 起**：服务端核心安装已统一改为 `scheme create`，`install` 仅保留
-> 通用文件下载与隐藏彩蛋 `install party`。
+> 服务端核心安装已统一改为 `scheme create`，`install` 仅保留通用文件下载与隐藏彩蛋 `install party`。
 
 ```bash
 # 下载任意 URL 文件到指定目录
@@ -1208,7 +982,6 @@ wow install party
 
 ```bash
 wow scheme create <方案名> -t <核心类型> -v <MC版本>
-# 例：wow scheme create survival -t paper -v 1.20.1
 ```
 
 ---
@@ -1227,7 +1000,7 @@ wow init
 
 ### `set <key> <value>`
 
-快捷设置配置项（同 `config wow`）。
+快捷设置配置项（同 `config set`）。
 
 ```bash
 wow set server.dir ./my_server
@@ -1244,7 +1017,3 @@ wow set web.port 9000
 wow help
 wow server --help
 ```
-
----
-
-

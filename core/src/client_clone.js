@@ -1148,7 +1148,7 @@ function buildReport(r) {
         L.push(`⏭️  按白名单跳过 ${r.copyStats.skipped.length} 项（客户端资源 / 缓存 / 存档等）`);
         const shown = r.copyStats.skipped.slice(0, 8);
         for (const s of shown) L.push(`   - ${s.path}`);
-        if (r.copyStats.skipped.length > 8) L.push(`   …… 其余 ${r.copyStats.skipped.length - 8} 项见 docs/CLONE_CLIENT.md`);
+        if (r.copyStats.skipped.length > 8) L.push(`   …… 其余 ${r.copyStats.skipped.length - 8} 项见 docs/scheme/CLONE_CLIENT.md`);
     }
     if (r.copyStats && r.copyStats.failed.length > 0) {
         L.push('');

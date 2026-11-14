@@ -14,7 +14,8 @@ core/jre/
 core/node/
 core/lan/
 core/tunnel/
-scheme/
+# 仅忽略仓库根的运行时方案数据目录；不要写成 `scheme/`，否则会误伤 docs/scheme/ 文档子目录
+/scheme/
 core/down/
 core/temp/
 core/wow.yaml
@@ -56,3 +57,7 @@ desktop.ini
 *.pem
 *.key
 *.crt
+
+# V3.7.4：TUI.md 内容已并入 docs/COMMANDS.md（第十一节 M/L 模式），
+# 独立副本仅留作本地参考，不进入 git tag 源码归档（发行包）。
+.docs-legacy/

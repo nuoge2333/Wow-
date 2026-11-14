@@ -261,7 +261,7 @@ wow config server server-port 25566
 wow config server online-mode false
 ```
 
-> 外置登录（authlib-injector）场景见 [CONFIG.md · auth](CONFIG.md#auth--外置登录设置-authlib-injector)。
+> 外置登录（authlib-injector）场景见 [CONFIG.md · auth](../CONFIG.md#auth--外置登录设置-authlib-injector)。
 
 ---
 
@@ -392,7 +392,7 @@ brew install openjdk@21
 ```
 
 > wow 会按 `server.version` 自动挑选匹配的 Java（含 LTS 向上兼容规则），
-> 详见 [CONFIG.md · jre](CONFIG.md#jre--jre-设置)。
+> 详见 [CONFIG.md · jre](../CONFIG.md#jre--jre-设置)。
 
 ---
 

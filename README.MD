@@ -144,29 +144,29 @@ wow/
 
 - [快速开始](docs/QUICKSTART.md)
 - [完整命令参考](docs/COMMANDS.md)
-- [方案管理详解 (模板模式)](docs/SCHEMES.md)
-- [主题包开发指南](docs/THEMES.md)
-- [插件开发指南](docs/WOW-PLUGINS.md)
-- [Web 面板使用说明](docs/WEB_PANEL.md)
-- [联机 / 内网穿透（陶瓦）](docs/LAN_TERRACOTTA.md)
-- [陶瓦联机实测报告](docs/LAN_TERRACOTTA-TEST-REPORT.md)
+- [方案管理详解 (模板模式)](docs/scheme/SCHEMES.md)
+- [主题包开发指南](docs/net/THEMES.md)
+- [插件开发指南](docs/other/WOW-PLUGINS.md)
+- [Web 面板使用说明](docs/net/WEB_PANEL.md)
+- [联机 / 内网穿透（陶瓦）](docs/net/LAN_TERRACOTTA.md)
+- [陶瓦联机实测报告](docs/other/LAN_TERRACOTTA-TEST-REPORT.md)
 - [配置参考](docs/CONFIG.md)
-- [Web API 参考](docs/API.md)
+- [Web API 参考](docs/net/API.md)
 - [术语解释](docs/TERMS.md)
-- [Android 已知限制说明](docs/ANDROID_LIMITATIONS.md)
-- [更新日志](docs/CHANGELOG.md)
+- [Android 已知限制说明](docs/other/ANDROID_LIMITATIONS.md)
+- [更新日志](docs/other/CHANGELOG.md)
 ## 🛠 故障排除
-- [Windows 故障排除](docs/TROUBLE_WINDOWS.md)
-- [MacOS故障排除](docs/TROUBLE_MACOS.md)
+- [Windows 故障排除](docs/trouble/TROUBLE_WINDOWS.md)
+- [MacOS故障排除](docs/trouble/TROUBLE_MACOS.md)
 ### Linux
-- [Debian/Ubuntu 故障排除](docs/TROUBLE_DEBIAN.md)
-- [Arch/Manjaro 故障排除](docs/TROUBLE_ARCH.md)
+- [Debian/Ubuntu 故障排除](docs/trouble/TROUBLE_DEBIAN.md)
+- [Arch/Manjaro 故障排除](docs/trouble/TROUBLE_ARCH.md)
 
 ---
 
 ## 📵 不支持 Android
 
-Android 设备无法运行 wow~ 服务端（网络沙箱限制，详见 [Android 已知限制说明](docs/ANDROID_LIMITATIONS.md)）。
+Android 设备无法运行 wow~ 服务端（网络沙箱限制，详见 [Android 已知限制说明](docs/other/ANDROID_LIMITATIONS.md)）。
 手机可以作为**联机客户端**通过陶瓦加入房间，也可以用浏览器访问跑在电脑 / VPS 上的 Web 面板。
 
 ---
@@ -180,7 +180,7 @@ Android 设备无法运行 wow~ 服务端（网络沙箱限制，详见 [Android
 | Node.js | 自动下载便携版，无需手动安装 |
 | 浏览器 | Chrome 90+, Firefox 88+, Edge 90+, Safari 15+ |
 > 注：Windows 7 无法保证能够稳定运行，建议升级到 Windows 10+。
-> 注：**不支持 Android**。Android 的网络沙箱使服务端无法对外暴露端口，详见 [Android 已知限制说明](docs/ANDROID_LIMITATIONS.md)。
+> 注：**不支持 Android**。Android 的网络沙箱使服务端无法对外暴露端口，详见 [Android 已知限制说明](docs/other/ANDROID_LIMITATIONS.md)。
 ---
 
 ## 🤝 参与贡献

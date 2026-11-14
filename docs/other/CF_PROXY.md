@@ -136,7 +136,7 @@ wow cf status
 
 | 方式 | 适合 | 入口 |
 |------|------|------|
-| **Cloudflare Workers**（推荐） | 不想管服务器、有 CF 账号 | [`deploy/cfproxy-worker/`](../deploy/cfproxy-worker/README.md) |
+| **Cloudflare Workers**（推荐） | 不想管服务器、有 CF 账号 | [`deploy/cfproxy-worker/`](../../deploy/cfproxy-worker/README.md) |
 | Docker 自托管 | 有 VPS / NAS | 见下方 |
 
 ### 方式一：Cloudflare Workers（免服务器）
@@ -151,7 +151,7 @@ wow cf status
 - `GET /__health` 自检端点，返回 Key 数量与健康状况（Key 打码）
 - CORS 自动处理
 
-部署步骤见 [`deploy/cfproxy-worker/README.md`](../deploy/cfproxy-worker/README.md)，
+部署步骤见 [`deploy/cfproxy-worker/README.md`](../../deploy/cfproxy-worker/README.md)，
 大致就五步：建 Worker → 粘贴代码 → 加 `CF_API_KEYS` 变量 → Deploy → 填到 wow。
 
 ```bash

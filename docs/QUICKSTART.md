@@ -45,10 +45,10 @@ chmod +x wow.sh
 
 首次运行会询问是否下载 Node.js，输入 `y` 确认。
 
-> 💡 **不带参数直接运行启动脚本即进入 M 模式界面**（V3.5.8 起）。
+> 💡 **不带参数直接运行启动脚本即进入 M 模式界面**
 > 顶部 `Q W E R T Y` 切页、数字输入后回车执行，
 > 可完成启动服务器、新建方案、管理模组等大部分日常操作。
-> 完整按键与页面说明见 [TUI.md](./TUI.md)；熟悉命令后按 `L` 进入长命令模式。
+> 完整按键与页面说明见 [COMMANDS.md](./COMMANDS.md)（第十一节「M / L 两种交互模式」）；熟悉命令后按 `L` 进入长命令模式。
 
 ---
 
@@ -275,8 +275,8 @@ wow server start --memory 6G
 
 ## 下一步
 
-- 📖 [完整命令参考](COMMANDS.md)
-- 📦 [方案管理详解](SCHEMES.md)
-- 🎨 [主题包开发指南](THEMES.md)
-- 🔌 [插件开发指南](WOW-PLUGINS.md)
-- 🛠️ [故障排除](TROUBLE_WINDOWS.md)（[macOS](TROUBLE_MACOS.md) / [Debian·Ubuntu](TROUBLE_DEBIAN.md) / [Arch](TROUBLE_ARCH.md) / [Android 已知限制说明](ANDROID_LIMITATIONS.md)）
+- 📖 [完整命令参考](./COMMANDS.md)
+- 📦 [方案管理详解](scheme/SCHEMES.md)
+- 🎨 [主题包开发指南](net/THEMES.md)
+- 🔌 [插件开发指南](other/WOW-PLUGINS.md)
+- 🛠️ [故障排除](trouble/TROUBLE_WINDOWS.md)（[macOS](trouble/TROUBLE_MACOS.md) / [Debian·Ubuntu](trouble/TROUBLE_DEBIAN.md) / [Arch](trouble/TROUBLE_ARCH.md) / [Android 已知限制说明](other/ANDROID_LIMITATIONS.md)）

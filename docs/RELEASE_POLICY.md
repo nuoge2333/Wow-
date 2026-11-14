@@ -64,7 +64,7 @@ git push origin main
 
 按顺序执行，不要跳步：
 
-1. **确定版本号**，规则见 `docs/CHANGELOG.md` 顶部说明
+1. **确定版本号**，规则见 `other/CHANGELOG.md` 顶部说明
    （语义版本 + 年份后两位 + 十六进制发行包序号，例：`3.5.24-26.40`）
 2. **一次性升版本号**：`core/src/cli.js`、`core/package.json`
    （`core/package-lock.json` 在 `.gitignore` 里，改不改都不影响仓库，建议同步改保持一致）
@@ -134,7 +134,7 @@ git push origin main
 
 | 步骤 | 状态 |
 |------|------|
-| 升版本号（cli.js / package.json / package-lock.json / tui.js 注释 / docs/TUI.md） | ✅ `3.7.4-26.47` |
+| 升版本号（cli.js / package.json / package-lock.json / tui.js 注释） | ✅ `3.7.4-26.47` |
 | CHANGELOG 四条 `[待发行]` 合并为 `[3.7.4-26.47]`，版本表更新 | ✅ 「待发行」字样清零 |
 | 全量回归 54 文件 | ✅ 75.9s 全绿 |
 | pty 严格回归 | ✅ `WOW_PTY_STRICT=1` 13 项全过，4 场景 `peak<=1 violations=0` |
@@ -156,7 +156,7 @@ git push origin main
 
 | 步骤 | 状态 |
 |------|------|
-| 升版本号（cli.js / package.json / tui.js 注释 / docs/TUI.md） | ✅ `3.7.3-26.46`（`package-lock.json` 被 gitignore，不入库） |
+| 升版本号（cli.js / package.json / tui.js 注释） | ✅ `3.7.3-26.46`（`package-lock.json` 被 gitignore，不入库） |
 | CHANGELOG 新增 3.7.3 章节 + 版本表更新 | ✅ 含「一条被证伪的隐患」记录 |
 | 全量回归 40 文件 | ✅ 37.4s 全绿 |
 | 浏览器实测三项 | ✅ `/api/files` 重复 scheme → 200；props 页 19 项中文翻译 100%；仪表盘 CPU/内存/时长正常 |
@@ -172,18 +172,18 @@ git push origin main
 
 | 内容 | 文档 | 测试 |
 |------|------|------|
-| M 模式画面独占：`tui.markScreenActive()` 闸门 | `docs/TUI.md` | `core/test/tui_screen_gate.test.js`（10 项） |
-| 菜单期间摘掉 Ctrl+C 停服、退出时装回 | `docs/TUI.md` | 同上 |
+| M 模式画面独占：`tui.markScreenActive()` 闸门 | `docs/COMMANDS.md` | `core/test/tui_screen_gate.test.js`（10 项） |
+| 菜单期间摘掉 Ctrl+C 停服、退出时装回 | `docs/COMMANDS.md` | 同上 |
 | 退出确认 `toUpperCase() === 'Y'` | — | 同上 |
-| `/api/files` 重复 scheme → `withScheme` 幂等 + 后端 `pickParam()` | `docs/CHANGELOG.md` | 实测 `?scheme=A&scheme=A` 三连均 200 |
-| 实例配置页 47 键中文翻译（`props_docs.js`） | `docs/CHANGELOG.md` | 浏览器实测覆盖 100% |
-| 仪表盘指标归零：`stdio` 改 pipe + 手动写 logStream | `docs/CHANGELOG.md` | 实测 `cpu 0.1% / mem 3.7MB / uptime 2m17s` |
+| `/api/files` 重复 scheme → `withScheme` 幂等 + 后端 `pickParam()` | `other/CHANGELOG.md` | 实测 `?scheme=A&scheme=A` 三连均 200 |
+| 实例配置页 47 键中文翻译（`props_docs.js`） | `other/CHANGELOG.md` | 浏览器实测覆盖 100% |
+| 仪表盘指标归零：`stdio` 改 pipe + 手动写 logStream | `other/CHANGELOG.md` | 实测 `cpu 0.1% / mem 3.7MB / uptime 2m17s` |
 
 ### 本版发行进度（v3.7.2-26.45，2026-11-08）
 
 | 步骤 | 状态 |
 |------|------|
-| 升版本号（cli.js / package.json / tui.js 注释 / docs/TUI.md） | ✅ `3.7.2-26.45`（`package-lock.json` 被 gitignore，不入库） |
+| 升版本号（cli.js / package.json / tui.js 注释） | ✅ `3.7.2-26.45`（`package-lock.json` 被 gitignore，不入库） |
 | CHANGELOG 新增 3.7.2 章节 + 版本表更新 | ✅ |
 | 全量回归 39 文件 | ✅ 连跑三次均 37.1~37.3s，全绿 |
 | pty 逐键实测 | ✅ 六页顺号 / 跨页旧编号 / 非法编号 / 日志跟踪 / 一次回车返回 |
@@ -198,10 +198,10 @@ git push origin main
 
 | 内容 | 文档 | 测试 |
 |------|------|------|
-| M 模式每页编号改为 1,2,3… 顺号（`legacy` 兼容旧编号） | `docs/TUI.md` | `core/test/tui_mode.test.js`（72 项） |
-| `resolveNumber()` 三层解析（本页序号 → 本页旧编号 → 跨页旧编号） | `docs/TUI.md` | 同上 |
-| 70 列内排版：标签/备注按预算截断，编号列完整 | `docs/TUI.md` | pty 逐页宽度实测 |
-| `askLine` 前 `stdin.resume()`，修「返回要按两次回车」 | `docs/TUI.md` | pty 实测 |
+| M 模式每页编号改为 1,2,3… 顺号（`legacy` 兼容旧编号） | `docs/COMMANDS.md` | `core/test/tui_mode.test.js`（72 项） |
+| `resolveNumber()` 三层解析（本页序号 → 本页旧编号 → 跨页旧编号） | `docs/COMMANDS.md` | 同上 |
+| 70 列内排版：标签/备注按预算截断，编号列完整 | `docs/COMMANDS.md` | pty 逐页宽度实测 |
+| `askLine` 前 `stdin.resume()`，修「返回要按两次回车」 | `docs/COMMANDS.md` | pty 实测 |
 | 编号相关两条旧断言同步到新编号 | — | `core/test/interactive_menu.test.js` |
 
 ### 序号纪律
@@ -211,5 +211,5 @@ git push origin main
 
 - 下一个是 `47`，之后 `48` … — 正常十六进制递增，**不要跳过中间值**
 - **绝不回绕复用**旧序号。历史上 `26.3a` ~ `26.3f` 因反复回绕被用了 2～3 次，
-  导致无法用序号判断版本新旧，详见 `docs/CHANGELOG.md` 文首说明
+  导致无法用序号判断版本新旧，详见 `other/CHANGELOG.md` 文首说明
 - 发版前先 `git tag --list | grep <候选序号>` 确认未被占用

@@ -84,7 +84,7 @@ wow config set web.auth_password 你的密码      # 离线密码登录
 | 顺序 | 源 | 说明 |
 |------|----|------|
 | 1 | `WOW_CLOUDFLARED_MIRROR` 环境变量 | 临时覆盖，优先级最高 |
-| 2 | `web.tunnel_mirror` 配置项 | 长期覆盖，见 [配置说明](CONFIG.md#webtunnel_mirror--cloudflared-下载源) |
+| 2 | `web.tunnel_mirror` 配置项 | 长期覆盖，见 [配置说明](../CONFIG.md#webtunnel_mirror--cloudflared-下载源) |
 | 3 | `gh-proxy.com` → `ghfast.top` → `ghproxy.net` | 内置国内镜像，默认即用 |
 | 4 | GitHub 官方 | 始终兜底，不会被去掉 |
 
@@ -117,8 +117,7 @@ V3.5.19 起，`web start` 在**交互终端**里启动面板后会直接进入**
 
 ## 二、登录与认证
 
-面板支持两种登录方式，任选其一。**设置密码后，登录页会出现「验证码登录 / 密码登录」双 Tab**；
-没设置密码时只显示验证码表单，不会出现空入口。
+面板支持两种登录方式，任选其一。
 
 ### 方式一：邮箱 + 验证码（默认）
 
@@ -129,39 +128,16 @@ V3.5.19 起，`web start` 在**交互终端**里启动面板后会直接进入**
    - 若未配置 SMTP 且**不是**开发模式，接口直接返回 `403`，不会回显验证码。
 3. 输入验证码完成登录，后端签发 **JWT** 令牌，后续请求通过 `Authorization: Bearer <token>` 携带。
 
-### 方式二：备用钥匙密码（V3.5.3 起支持，V3.7.0 起可在面板内设置）
+### 方式二：离线密码（V3.5.3，没有 SMTP 时用）
 
-不想配邮箱服务器、或只想少收几封邮件时，设一个面板密码。
-
-**在面板里设置（推荐）**：打开「设置」页 → 下方 **🔑 备用钥匙** 卡片
-
-1. 填管理员邮箱（必须与 `wow.yaml` 的 `mail.admin_email` 一致）；
-2. 点「获取验证码」，去邮箱取 6 位码（没配 SMTP 时看服务端控制台）；
-3. 填验证码 + 新密码（8~128 位、至少含一个字母）+ 确认密码，提交。
-
-成功后密码以 **`scrypt$<saltHex>$<derivedHex>`** 加盐哈希写入 `web.auth_password`，
-不会以明文落盘；同时接口会返回 JWT，设完即为登录态。已有密码时再改，需要额外填「当前密码」。
-
-**用命令行设置（等效）**：
+不想配邮箱服务器时，直接设一个密码：
 
 ```bash
-wow config set web.auth_password "你的密码"
+wow config wow web.auth_password "你的密码"
 ```
 
-首次用明文密码登录时也会自动转成 scrypt 哈希写回。
-
-> ### 🔒 限流与安全底线
->
-> - **密码接口 5 次 / 15 分钟**：同一 IP 在 `login-password` 通道连续失败 5 次，锁 15 分钟，
->   返回 `429` 与 `retry_after_seconds`；**锁定期内即使密码正确也拒绝**。
-> - **通道隔离**：`login`（验证码）、`login-password`（密码）、`set-password`（设置密码）
->   分别计数，密码通道被锁**不影响验证码登录** —— 忘记密码永远能靠邮箱回来。
-> - **双通道永存**：设置密码不会关闭验证码登录；两者同时可用时互不覆盖。
-> - **邮箱是硬门槛**：`mail.admin_email` 为空时不允许设置密码（设置页整卡禁用并提示）。
-> - **验证码用 CSPRNG 生成**（`crypto.randomInt`），未过期的码会复用，
->   反复点「获取验证码」不会让手上的码失效、也不会重复发邮件。
-> - **公网 / 反代 / 隧道下强制登录**：与 `web.require_login` 的取值无关。
->   经 nginx / Caddy 反代时，务必在 `wow.yaml` 设 `web.trust_proxy: true`。
+登录页输入该密码即可。首次登录后，明文会自动转成 **scrypt** 哈希写回 `wow.yaml`
+（`scrypt$...` 形式），不会以明文落盘。两种方式同时可用时，验证码仍然优先。
 
 > 🔐 **限制可登录的邮箱**（V3.5.8 新增）
 >
@@ -176,18 +152,15 @@ wow config set web.auth_password "你的密码"
 >
 > 名单外的邮箱在「获取验证码」这步就会被拒绝（HTTP 403），**不会生成验证码**；
 > 即便此前已发出过验证码，登录阶段还会再校验一次。留空 = 不限制。
-> 设置备用钥匙密码时，`mail.admin_email` 必须也在名单内，否则拿不到验证码。
-> 详见 [配置参考 · mail](CONFIG.md#mail--邮件设置)。
+> 详见 [配置参考 · mail](../CONFIG.md#mail--邮件设置)。
 
-相关配置项（见 [配置参考](CONFIG.md)）：
+相关配置项（见 [配置参考](../CONFIG.md)）：
 
 | 配置键 | 说明 | 默认值 |
 |--------|------|--------|
 | `mail.whitelist` | **登录邮箱白名单**，名单外邮箱无法获取验证码（V3.5.8） | `[]`（不限制） |
 | `web.auth_token` | JWT 签名密钥；也可手动指定。绑定非回环地址**或使用 `--tunnel`** 时必填 | 自动生成 |
-| `web.auth_password` | 备用钥匙密码（scrypt 哈希存储，V3.5.3） | `null` |
-| `web.require_login` | `false` = 本机免登录；`true` = 强制验证（V3.7.0） | `false` |
-| `web.trust_proxy` | 挂在反向代理后面时置 `true`，强制登录并锁定危险开关（V3.7.0） | `false` |
+| `web.auth_password` | 离线登录密码（scrypt 哈希存储，V3.5.3） | `null` |
 | `web.session_timeout` | 登录会话有效期（秒） | `86400`（24 小时） |
 | `web.dev_mode` | 开发模式。未配 SMTP 时会回显验证码，**生产环境务必关闭** | `false` |
 | `web.port` | 监听端口 | `8080` |
@@ -210,7 +183,6 @@ wow config set web.auth_password "你的密码"
 | 方案管理 | 列出方案及当前激活方案，查看资源引用详情 |
 | 主题切换 | 列出并切换主题包 |
 | 命令执行 | 直接在面板里执行 `wow` CLI 命令，终端同步回显 `[WebCLI] ...` |
-| 插件管理 | 🧪 **[实验性 / Beta]** 列出 / 安装 / 删除 wow CLI 插件；插件声明了 `web` 且打开 `web.allow_plugins_web` 时，可「打开界面」在 sandbox iframe 里显示插件前端 |
 
 > 🎯 **面板上的每个操作，本质都是「代理发送一条 CLI 指令」**。终端会同步打印
 > `[WebCLI] wow <指令>`，方便对照与排查。CLI 优先级高于面板：面板不实现独立逻辑，
@@ -219,22 +191,6 @@ wow config set web.auth_password "你的密码"
 面板页面（静态资源）来自 `web/` 目录。启动时若 `web/` 不存在，会从当前主题包
 （`themes/<web.theme>/`，缺失则回退 `themes/default/`）复制生成；两个主题目录都没有时，
 才生成一个只有提示的最小页。切换主题是**整目录替换**，详见 [主题包开发指南](THEMES.md)。
-
-### 🧪 插件 Web UI（实验性 / Beta）
-
-插件可以在 `plugin.json` 里用 `"web": "frontend"` 声明前端目录。**默认不挂载**，
-需要 `wow.yaml`：
-
-```yaml
-web:
-  allow_plugins_web: true
-```
-
-- 挂在**同源** `/plugin-web/<插件名>/`，不新开端口；
-- 启动时把声明目录复制到 `core/plugin-web/<插件名>/`，插件 `index.js` 不会外露；
-- 响应头强制 `Content-Security-Policy: frame-ancestors 'self'; connect-src 'self';`；
-- 面板用 `sandbox="allow-scripts allow-forms allow-popups"` 的 iframe 打开
-  （**不含** `allow-same-origin`），插件页面无法读取面板的 JWT / localStorage。
 
 ---
 

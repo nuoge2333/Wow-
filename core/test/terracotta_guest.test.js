@@ -196,8 +196,8 @@ check('config.js / terracotta.js 头部不再声称「仅实现房主端 / guest
     assert.ok(/wow 3\.7\.0 起支持 joinRoom/.test(terraSrc), 'terracotta.js 未标注 3.7.0 房客支持');
 });
 
-check('docs/LAN_TERRACOTTA.md 更新为双端支持 + 降级说明', () => {
-    const doc = fs.readFileSync(path.join(ROOT, 'docs', 'LAN_TERRACOTTA.md'), 'utf8');
+check('docs/net/LAN_TERRACOTTA.md 更新为双端支持 + 降级说明', () => {
+    const doc = fs.readFileSync(path.join(ROOT, 'docs', 'net', 'LAN_TERRACOTTA.md'), 'utf8');
     assert.ok(/房客端/.test(doc), '文档未提房客端');
     assert.ok(/Join Room/.test(doc), '文档未提 Join Room');
     assert.ok(/state\/guesting/.test(doc), '文档未提 /state/guesting');

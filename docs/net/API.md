@@ -63,77 +63,6 @@ Wow~ Web 面板以 Express 提供 HTTP 接口，并以 Socket.IO 提供实时通
 { "valid": true, "email": "admin@example.com" }
 ```
 
-### `GET /api/auth/config`
-公开接口（V3.7.0 安全加固）。供登录页与设置页判断「有没有密码通道、管理员邮箱配没配」。
-
-**响应**
-```json
-{
-  "password_enabled": true,
-  "email": "a***@example.com",
-  "email_configured": true
-}
-```
-
-- `password_enabled`：`wow.yaml` 的 `web.auth_password` 是否非空。`false` 时登录页只显示验证码表单。
-- `email`：`mail.admin_email` 的**掩码**，永远不回明文。
-- `email_configured`：`mail.admin_email` 是否已配置。`false` 时不允许设置密码。
-
-### `POST /api/auth/login-password`
-公开接口（V3.7.0 安全加固）。用「备用钥匙」密码登录，成功签发 JWT。
-
-**请求体**
-```json
-{ "password": "你的面板密码" }
-```
-
-**响应**
-```json
-{ "success": true, "token": "<jwt>" }
-```
-
-失败：
-- `401`：未设置密码 / 密码错误。
-- `429`：同一 IP 在 `login-password` 通道连续失败 5 次，锁 15 分钟。返回
-  `{ "success": false, "error": "尝试过于频繁，请稍后再试", "retry_after_seconds": 900 }`。
-  锁定期内**即使密码正确也返回 429**。
-
-> 限流按「通道 + IP」分桶：`login`（验证码/离线密码）、`login-password`（备用钥匙）、
-> `set-password`（设置密码）互不影响，一个通道被锁不会连累其它通道。
-
-### `POST /api/auth/set-password`
-公开接口（V3.7.0 安全加固）。设置或修改「备用钥匙」密码。
-
-**为什么公开**：首次设置密码时用户不可能已有 JWT；而用来换 token 的
-`/api/auth/login` 会当场消费掉验证码，所以「先换 token 再设密码」在协议上走不通。
-本接口的凭据是**管理员邮箱 + 邮箱验证码**，再叠 IP 限流。
-
-**请求体**
-```json
-{
-  "email": "admin@example.com",
-  "code": "123456",
-  "password": "新密码",
-  "old_password": "已有密码时必填"
-}
-```
-
-**响应**
-```json
-{ "success": true, "message": "登录密码已设置，验证码登录仍可继续使用", "token": "<jwt>" }
-```
-
-失败：
-- `400`：`mail.admin_email` 未配置 / 提交邮箱与管理员邮箱不一致 / 密码不足 8 位或不含字母。
-- `401`：验证码未获取、已过期、错误，或已有密码时 `old_password` 不正确。
-- `429`：同 IP 在 `set-password` 通道连续失败 5 次。
-
-成功后会删除该验证码，并把 `scrypt$<saltHex>$<derivedHex>` 写入 `web.auth_password`；
-同时返回 JWT，前端可直接进入登录态。
-
-> 注意：`mail.admin_email` 必须同时出现在 `mail.whitelist` 里（若白名单非空），
-> 否则获取验证码会被 403 拒绝。
-
 ---
 
 ## 二、服务器与资源（需认证）
@@ -212,7 +141,7 @@ Wow~ Web 面板以 Express 提供 HTTP 接口，并以 Socket.IO 提供实时通
   "world": { "exists": true }
 }
 ```
-方案不存在返回 `404`。`state` 取值为 `minimal` / `partial` / `full`，含义见 [SCHEMES.md](SCHEMES.md)。
+方案不存在返回 `404`。`state` 取值为 `minimal` / `partial` / `full`，含义见 [SCHEMES.md](../scheme/SCHEMES.md)。
 
 ### `GET /api/themes`
 主题包列表与当前主题。
@@ -250,24 +179,6 @@ Wow~ Web 面板以 Express 提供 HTTP 接口，并以 Socket.IO 提供实时通
 ```json
 { "success": true, "key": "web.port", "value": 9000 }
 ```
-
-> ### ⚠️ 危险开关的 403 拦截（V3.7.0 安全加固）
->
-> `web.allow_scheme_ops`、`web.allow_remote_install`、`web.allow_plugins`
-> 三个键只能从**本机**（`127.0.0.1` / `localhost` / `::1`）直连面板修改。
-> 通过公网、局域网、内网穿透、反向代理访问时，`POST /api/config` 与
-> `POST /api/config/batch` 只要载荷里**出现**这三个键就直接：
->
-> ```json
-> { "success": false, "error": "出于安全考虑，危险开关只能在 127.0.0.1 下修改", "keys": ["web.allow_plugins"] }
-> ```
->
-> HTTP 状态码 `403`。判定是「出现即拦」——不比较值，`false` 也拦，避免类型归一化绕过。
-> 判定条件全部满足才算本机：socket 来源为回环、`Host` 为回环、无隧道（含建立中）、
-> `web.trust_proxy` 未开启、绑定地址未暴露；出现任何转发头（`X-Forwarded-For` 等）即锁死。
-> 拦截发生在认证之前，所以未登录时也是 403 而不是 401。
->
-> 需要在远端开启时，请登录服务器本机操作，或使用 CLI：`wow config set web.allow_scheme_ops true`。
 
 ### `GET /api/config/schema`
 配置表单结构（V3.5.19 新增）。返回「有哪些键、什么类型、中文怎么解释」，前端据此生成表单。
@@ -657,8 +568,6 @@ V3.5.19 新增的文本编辑器接口，参数与 `/api/files/content` 完全�
 ```json
 {
   "success": true,
-  "experimental": true,
-  "web_enabled": false,
   "plugins": [
     {
       "name": "hello",
@@ -667,8 +576,6 @@ V3.5.19 新增的文本编辑器接口，参数与 `/api/files/content` 完全�
       "author": "wow Team",
       "description": "打招呼",
       "commands": ["hello", "hello-status"],
-      "web": "frontend",
-      "web_url": null,
       "trusted": "trusted",
       "active": true
     }
@@ -676,17 +583,8 @@ V3.5.19 新增的文本编辑器接口，参数与 `/api/files/content` 完全�
 }
 ```
 
-| 字段 | 说明 |
-|------|------|
-| `experimental` | 恒为 `true`，标记插件系统整体为 **[实验性 / Beta]** |
-| `web_enabled` | `web.allow_plugins_web` 是否打开 |
-| `web` | `plugin.json` 声明的前端目录（未声明为 `null`） |
-| `web_url` | 仅在 `web_enabled === true` 且有 `web` 时给出 `/plugin-web/<name>/`，否则 `null` |
-
 `trusted` 三态：`trusted`（指纹一致）/ `new`（从未信任）/ `changed`（信任后被改过）。
 `active` 恒等于 `trusted === 'trusted'`，即「下次启动会被真正加载」。
-
-> 🧪 **插件系统为 [实验性 / Beta]**，接口字段可能变动。
 
 > ⚠️ **插件命令默认不能经 Web 端执行**（`web.allow_plugins: false`）。
 > 本接口只是列出插件，不提供执行入口；即便插件已被信任，

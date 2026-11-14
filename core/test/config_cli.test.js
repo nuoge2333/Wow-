@@ -112,7 +112,7 @@ try {
 
     check('文档里出现的 wow config set 语法都能被 CLI 识别', () => {
         // 只校验语法形态：`wow config set <key> <value>` —— key 不能是子命令名
-        const docs = ['docs/WEB_PANEL.md', 'docs/CF_PROXY.md', 'docs/COMMANDS.md'];
+        const docs = ['docs/net/WEB_PANEL.md', 'docs/other/CF_PROXY.md', 'docs/COMMANDS.md'];
         for (const rel of docs) {
             const p = path.join(ROOT, '..', rel);
             if (!fs.existsSync(p)) continue;

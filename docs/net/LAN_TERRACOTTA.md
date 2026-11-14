@@ -3,7 +3,7 @@
 wow~ V3.3.0 起内置对接 **[陶瓦（Terracotta）](https://github.com/burningtnt/Terracotta)**，为你的 Minecraft 服务端提供开箱即用的内网 / 局域网穿透联机能力。没有公网 IP 也能让好友直接加入。
 
 > ✅ **3.7.0 范围**：同时支持 **房主端（「我要当房主」/ 开房）** 与 **房客端（「我要当房客」/ Join Room）**。
-> 在 `R`（网络）页选择第 9 项「我要当房客」，输入房主提供的**房间号**与自己的**玩家名**，wow~ 会通过陶瓦的 `/state/guesting` 真正加入房间。
+> 在 `R`（网络）页选择「我要当房客」，输入房主提供的**房间号**与自己的**玩家名**，wow~ 会通过陶瓦的 `/state/guesting` 真正加入房间。
 > 房客侧无需本机运行 Minecraft 服务端；加入端也可继续由 **PCL / HMCL / BakaXL / FCL** 等启动器内置支持。
 > 若陶瓦二进制版本过旧、没有 `/state/guesting` 路由，wow~ 会**运行时探测并降级**：给出升级 `lan.version` 或改用启动器加入的可执行提示，并回显房间号，不会崩溃。
 
@@ -56,7 +56,7 @@ R 页 · 网络与联机
 ```
 
 先按 `R` 切到该页，再输入 `141` / `142` / `143` 并回车即可（与其他数字选择一致，编号要回车提交）。
-页面说明见 [TUI.md](./TUI.md)。
+页面说明见 [COMMANDS.md](../COMMANDS.md)（第十一节「M / L 两种交互模式」）。
 
 ### 方式三：Web 面板
 左侧菜单「🌐 联机(陶瓦)」页：
@@ -132,7 +132,7 @@ Powered by Terracotta | 陶瓦联机 — https://github.com/burningtnt/Terracott
 - **想固定房间号**：在 `lan.room_code` 填写，或在 `wow lan host -r <房间号>` 指定；若格式不被陶瓦接受，陶瓦会自动重新生成一个（不会报错）。
 - **关不掉房间**：`wow lan stop` 会先通过陶瓦 API 优雅退出，失败时回退为终止进程；也可直接结束陶瓦进程（运行时状态记录在 `core/.lan.json`）。
 - **平台支持**：自动下载支持 **Windows / macOS / Linux** 的 x64 与 arm64（Linux 为 musl 静态二进制，免 glibc 依赖）。
-- **Android 手机**：**不能**运行 wow~ 服务端（网络沙箱限制，详见 [Android 已知限制说明](ANDROID_LIMITATIONS.md)）；但 Android 设备**可以作为联机客户端**——在 FCL 等启动器里「加入陶瓦房间」输入房间号即可（2026-10-17 实测通过，见下方实测记录）。
+- **Android 手机**：**不能**运行 wow~ 服务端（网络沙箱限制，详见 [Android 已知限制说明](../other/ANDROID_LIMITATIONS.md)）；但 Android 设备**可以作为联机客户端**——在 FCL 等启动器里「加入陶瓦房间」输入房间号即可（2026-10-17 实测通过，见下方实测记录）。
 - 其它未覆盖的架构（如 32 位 Linux）请改用 `lan.binary_url` 手动提供可用二进制。
 
 ---
@@ -141,7 +141,7 @@ Powered by Terracotta | 陶瓦联机 — https://github.com/burningtnt/Terracott
 
 **结论：家宽对家宽、跨宽带约 3 公里，联机稳定，几乎不卡。**
 
-完整报告见 [陶瓦联机实测报告](LAN_TERRACOTTA-TEST-REPORT.md)，要点如下：
+完整报告见 [陶瓦联机实测报告](../other/LAN_TERRACOTTA-TEST-REPORT.md)，要点如下：
 
 | 项目 | 结果 |
 |------|------|

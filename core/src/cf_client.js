@@ -379,7 +379,7 @@ function printNoKeyHint() {
     console.log('  ⚠️  [CF] 公共代理未启用，且未配置 API Key。');
     console.log('      请前往 console.curseforge.com 申请免费 Key，填入 wow.yaml 的');
     console.log('      curseforge.api_key，或稍后重试。');
-    console.log('      （也可自建 cfproxy 代理后填写 curseforge.proxy_url，见 docs/CF_PROXY.md）');
+    console.log('      （也可自建 cfproxy 代理后填写 curseforge.proxy_url，见 docs/other/CF_PROXY.md）');
     console.log('');
 }
 
