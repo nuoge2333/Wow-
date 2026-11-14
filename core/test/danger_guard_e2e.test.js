@@ -84,7 +84,7 @@ function post(pathname, body, extraHeaders = {}) {
     // ── 1. 本机基线：三种载荷都应放行 ──
     setHost('127.0.0.1');
 
-    let r = await post('/api/config', { key: 'web.allow_plugins', value: false });
+    let r = await post('/api/config', { key: 'web.allow_extensions', value: false });
     check('本机 · 单键载荷放行', r.status === 200, `got ${r.status} ${r.text.slice(0, 80)}`);
 
     r = await post('/api/config/batch', { patch: { 'web.allow_scheme_ops': false } });
@@ -99,7 +99,7 @@ function post(pathname, body, extraHeaders = {}) {
     // ── 2. 绑定地址对外：一律 403 ──
     setHost('0.0.0.0');
 
-    r = await post('/api/config', { key: 'web.allow_plugins', value: true });
+    r = await post('/api/config', { key: 'web.allow_extensions', value: true });
     check('暴露 · 单键 403', r.status === 403, `got ${r.status}`);
     check('暴露 · 403 文案逐字一致', !!(r.data && r.data.error === DENY_MSG), JSON.stringify(r.data));
 
@@ -115,26 +115,26 @@ function post(pathname, body, extraHeaders = {}) {
     // ── 3. 伪造 Host / 转发头：单向收紧 ──
     setHost('127.0.0.1');
 
-    r = await post('/api/config', { key: 'web.allow_plugins', value: true }, { Host: 'example.com' });
+    r = await post('/api/config', { key: 'web.allow_extensions', value: true }, { Host: 'example.com' });
     check('伪造 Host 403', r.status === 403, `got ${r.status}`);
 
-    r = await post('/api/config', { key: 'web.allow_plugins', value: true }, { 'X-Forwarded-For': '8.8.8.8' });
+    r = await post('/api/config', { key: 'web.allow_extensions', value: true }, { 'X-Forwarded-For': '8.8.8.8' });
     check('X-Forwarded-For 403', r.status === 403, `got ${r.status}`);
 
-    r = await post('/api/config', { key: 'web.allow_plugins', value: true }, { 'CF-Connecting-IP': '8.8.8.8' });
+    r = await post('/api/config', { key: 'web.allow_extensions', value: true }, { 'CF-Connecting-IP': '8.8.8.8' });
     check('CF-Connecting-IP 403', r.status === 403, `got ${r.status}`);
 
-    r = await post('/api/config', { key: 'web.allow_plugins', value: true }, { Forwarded: 'for=8.8.8.8' });
+    r = await post('/api/config', { key: 'web.allow_extensions', value: true }, { Forwarded: 'for=8.8.8.8' });
     check('Forwarded 403', r.status === 403, `got ${r.status}`);
 
     // ── 4. trust_proxy 显性声明：一律收紧 ──
     mem.set('web.trust_proxy', true);
-    r = await post('/api/config', { key: 'web.allow_plugins', value: true });
+    r = await post('/api/config', { key: 'web.allow_extensions', value: true });
     check('trust_proxy=true 时本机也 403', r.status === 403, `got ${r.status}`);
     check('trust_proxy=true 时 requireLogin() 强制为 true', webService.requireLogin() === true);
     mem.set('web.trust_proxy', false);
 
-    r = await post('/api/config', { key: 'web.allow_plugins', value: false });
+    r = await post('/api/config', { key: 'web.allow_extensions', value: false });
     check('恢复 trust_proxy=false 后本机放行', r.status === 200, `got ${r.status}`);
 
     // ── 5. 收尾 ──

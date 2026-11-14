@@ -35,7 +35,7 @@ const read = (p) => fs.readFileSync(p, 'utf8');
 const srcOf = (f) => read(path.join(SRC, f));
 const webOf = (f) => read(path.join(ROOT, 'web', f));
 
-const DANGER_KEYS = ['web.allow_plugins', 'web.allow_remote_install', 'web.allow_scheme_ops'];
+const DANGER_KEYS = ['web.allow_extensions', 'web.allow_remote_install', 'web.allow_scheme_ops'];
 const DENY_MSG = '出于安全考虑，危险开关只能在 127.0.0.1 下修改';
 const LOCK_TEXT = '⚠️ 危险开关已被锁定。如需开启，请在服务器本机（127.0.0.1）访问 Web 面板修改，或使用 CLI 命令 wow config wow ...';
 

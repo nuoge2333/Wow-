@@ -38,8 +38,8 @@ function tuiOwnsScreen() {
 
 // wow 顶层指令命名空间（用于区分「wow 指令」与「MC 指令」）
 const WOW_NAMESPACES = new Set([
-    'server', 'scheme', 'mod', 'pack', 'theme', 'plugin', 'web', 'logs',
-    'config', 'mail', 'pool', 'lan', 'down', 'install', 'init', 'set', 'help'
+    'server', 'scheme', 'mod', 'pack', 'theme', 'extension', 'web', 'logs',
+    'config', 'mail', 'pool', 'lan', 'down', 'install', 'init', 'set', 'help', 'plugin'
 ]);
 
 // 允许在开服控制台直接执行的 wow 指令（不修改运行中的方案文件，且非长驻进程）
@@ -54,7 +54,7 @@ const ALLOWED_CONSOLE = new Set([
     'pool stats',
     'mail test', 'mail send-code', 'mail crash',
     'down',
-    'plugin list', 'plugin info', 'plugin trust', 'plugin path',
+    'extension list', 'extension info', 'extension trust', 'extension path',
     'theme list', 'theme info',
     'help'
 ]);
@@ -67,7 +67,7 @@ const DENIED_CONSOLE = new Set([
     'mod remove', 'mod sync', 'mod toggle',
     'pack install', 'pack generate',
     'theme install', 'theme switch', 'theme delete',
-    'plugin install', 'plugin remove', 'plugin untrust',
+    'extension install', 'extension remove', 'extension untrust',
     'install',
     'init',
     'pool prune',
@@ -100,20 +100,24 @@ function classifyConsoleInput(rawLine) {
         return { action: 'deny', reason: '长命令模式(wow L)是交互式 REPL，在开服控制台中不可用，请另开终端运行' };
     }
 
-    const head = tokens[0].toLowerCase();
+    let head = tokens[0].toLowerCase();
 
-    // V3.5.21：插件命令也属于 wow 命名空间（运行期才知道），
-    // 但绝不能被当成 MC 指令转发给服务端（否则插件命令会变成「unknown command in game」）。
-    // 插件命令在开服控制台里直接拒绝：它们多半带长驻 / 交互逻辑，
+    // `plugin` 是 `extension` 的向后兼容别名（CLI 层保留），
+    // 此处归一化，使开服控制台的分类清单只需维护 canonical 的 `extension`。
+    if (head === 'plugin') { head = 'extension'; tokens[0] = 'extension'; }
+
+    // V3.5.21：扩展命令也属于 wow 命名空间（运行期才知道），
+    // 但绝不能被当成 MC 指令转发给服务端（否则扩展命令会变成「unknown command in game」）。
+    // 扩展命令在开服控制台里直接拒绝：它们多半带长驻 / 交互逻辑，
     // 而且此时方案文件正在被正在运行的服务端使用。
     // 注：这里不 require command_policy，避免 server.js 依赖链里多一个模块；
-    // 直接用同名规则判断（两者必须保持一致，见 plugin_loader.registerPluginCommand）。
+    // 直接用同名规则判断（两者必须保持一致，见 extension_loader.registerExtensionCommand）。
     try {
         const policy = require('./command_policy');
-        if (policy.RUNTIME_PLUGIN_CMDS.has(head)) {
+        if (policy.RUNTIME_EXTENSION_CMDS.has(head)) {
             return {
                 action: 'deny',
-                reason: `插件命令 ${head} 不提供在开服控制台中执行，请另开终端运行`
+                reason: `扩展命令 ${head} 不提供在开服控制台中执行，请另开终端运行`
             };
         }
     } catch (e) { /* 策略模块不可用则不额外拦截 */ }
@@ -1287,7 +1291,7 @@ class ServerManager {
      * 原则：
      *   1. 只移动不删除；
      *   2. 任何异常只警告，绝不阻断启动；
-     *   3. 原版 / 纯插件端直接跳过（那里根本没有 mods/ 的加载器）。
+     *   3. 原版 / 纯扩展端直接跳过（那里根本没有 mods/ 的加载器）。
      */
     _quarantineClientMods() {
         try {
@@ -1946,7 +1950,7 @@ function enqueueConsoleCommand(line) {
 
 module.exports = ServerManager;
 // V3.5.21：把开服控制台的输入分类器挂到导出上，供单测直接验证
-// 「插件命令不会被当成 MC 指令转发」这一行为（它是模块内私有函数，原本无法从外部调用）。
+// 「扩展命令不会被当成 MC 指令转发」这一行为（它是模块内私有函数，原本无法从外部调用）。
 ServerManager.classifyConsoleInput = classifyConsoleInput;
 // V3.5.19：Web 面板需要判断中继是否在线、并往队列里投递指令
 ServerManager.isConsoleRelayAlive = isConsoleRelayAlive;

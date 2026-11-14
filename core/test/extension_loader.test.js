@@ -1,15 +1,15 @@
 #!/usr/bin/env node
 /**
- * V3.5.21：插件加载器（plugin_loader.js）
+ * V3.5.21：扩展加载器（extension_loader.js）
  * ----------------------------------------------------------------
  * 覆盖四类关键行为：
- *   1. 正常注册：plugin.json 声明的命令真的挂到了 program 上，能执行、能收到 options；
+ *   1. 正常注册：extension.json 声明的命令真的挂到了 program 上，能执行、能收到 options；
  *   2. 崩溃隔离：index.js 加载期抛错 / 处理函数缺失 / handler 运行期抛错，
- *      都不能让主进程挂掉，且提示文案是「插件 X 崩溃，已跳过」；
- *   3. 冲突与跳过：命令名撞内置命名空间、清单损坏，整插件跳过（不半加载）；
+ *      都不能让主进程挂掉，且提示文案是「扩展 X 崩溃，已跳过」；
+ *   3. 冲突与跳过：命令名撞内置命名空间、清单损坏，整扩展跳过（不半加载）；
  *   4. 信任闸：未信任 + 非交互 → 跳过；用户拒绝 → 跳过；用户同意 → 记表并加载。
  *
- * 全部用临时目录 + fixtures，不碰真实的 wow-plugins/ 与 core/.plugins.trust.json。
+ * 全部用临时目录 + fixtures，不碰真实的 wow-extensions/ 与 core/.plugins.trust.json。
  */
 
 const assert = require('assert');
@@ -18,8 +18,8 @@ const os = require('os');
 const path = require('path');
 const { Command } = require('commander');
 
-const loader = require('../src/plugin_loader');
-const trust = require('../src/plugin_trust');
+const loader = require('../src/extension_loader');
+const trust = require('../src/extension_trust');
 const policy = require('../src/command_policy');
 
 const FIXTURES = path.join(__dirname, 'fixtures', 'plugins');
@@ -77,9 +77,9 @@ function freshProgram() {
 }
 
 /**
- * 造一个「已装好并已信任某个 fixture 插件」的 program。
+ * 造一个「已装好并已信任某个 fixture 扩展」的 program。
  * commander 的同一个实例只能 parse 一次（第二次会因 _scriptPath 已存在而忽略新 argv），
- * 因此每次执行命令都必须重新加载插件、拿到全新的 program。
+ * 因此每次执行命令都必须重新加载扩展、拿到全新的 program。
  * @param {string} tag 用于区分临时目录
  * @param {string} fixture fixtures/plugins 下的目录名
  * @returns {Promise<{program, log, root, trustFile}>}
@@ -91,11 +91,11 @@ async function bootstrap(tag, fixture) {
     trust.grantTrust(fixture, trust.fingerprint(path.join(root, fixture)), trustFile);
     const program = freshProgram();
     const log = makeLog();
-    await loader.loadPlugins(program, { dir: root, trustFile, interactive: false, quiet: true, log });
+    await loader.loadExtensions(program, { dir: root, trustFile, interactive: false, quiet: true, log });
     return { program, log, root, trustFile };
 }
 
-/** 把某个 fixture 插件复制到临时插件根目录 */
+/** 把某个 fixture 扩展复制到临时扩展根目录 */
 function stage(pluginDirName, targetRoot) {
     fs.ensureDirSync(targetRoot);
     fs.copySync(path.join(FIXTURES, pluginDirName), path.join(targetRoot, pluginDirName));
@@ -125,7 +125,7 @@ async function capture(fn) {
 
     const programA = freshProgram();
     const logA = makeLog();
-    const rA = await loader.loadPlugins(programA, {
+    const rA = await loader.loadExtensions(programA, {
         dir: rootA, trustFile: trustA, interactive: false, quiet: true, log: logA
     });
 
@@ -136,20 +136,20 @@ async function capture(fn) {
         assert.match(rA.pending[0].reason, /非交互环境/);
     });
 
-    await checkAsync('pending 时给出 `wow plugin trust` 指引', async () => {
-        assert.match(logA.all(), /wow plugin trust good-hello/);
+    await checkAsync('pending 时给出 `wow extension trust` 指引', async () => {
+        assert.match(logA.all(), /wow extension trust good-hello/);
     });
 
     await checkAsync('pending 时命令没有被注册', async () => {
         assert.strictEqual(programA.commands.some(c => c.name() === 'hello'), false);
-        assert.strictEqual(policy.RUNTIME_PLUGIN_CMDS.size, 0);
+        assert.strictEqual(policy.RUNTIME_EXTENSION_CMDS.size, 0);
     });
 
     // 信任后重来
     trust.grantTrust('good-hello', trust.fingerprint(path.join(rootA, 'good-hello')), trustA);
     const programB = freshProgram();
     const logB = makeLog();
-    const rB = await loader.loadPlugins(programB, {
+    const rB = await loader.loadExtensions(programB, {
         dir: rootA, trustFile: trustA, interactive: false, quiet: true, log: logB
     });
 
@@ -165,9 +165,9 @@ async function capture(fn) {
         }
     });
 
-    await checkAsync('命令名登记进 RUNTIME_PLUGIN_CMDS', async () => {
-        assert.ok(policy.RUNTIME_PLUGIN_CMDS.has('hello'));
-        assert.ok(policy.RUNTIME_PLUGIN_CMDS.has('hello-ctx'));
+    await checkAsync('命令名登记进 RUNTIME_EXTENSION_CMDS', async () => {
+        assert.ok(policy.RUNTIME_EXTENSION_CMDS.has('hello'));
+        assert.ok(policy.RUNTIME_EXTENSION_CMDS.has('hello-ctx'));
         assert.ok(policy.isWowNamespace('hello'));
     });
 
@@ -191,7 +191,7 @@ async function capture(fn) {
             await programB.parseAsync(['node', 'wow', 'hello-ctx']);
         });
         const keys = out.match(/CTX_KEYS:(.*)/)[1].split(',');
-        assert.deepStrictEqual(keys.sort(), ['config', 'event', 'log', 'mail', 'mod', 'pack', 'pluginConfig', 'scheme', 'server', 'theme', 'utils']);
+        assert.deepStrictEqual(keys.sort(), ['config', 'event', 'extensionConfig', 'log', 'mail', 'mod', 'pack', 'scheme', 'server', 'theme', 'utils']);
         assert.match(out, /CTX_HAS_PROCESS:false/);
         // context.config 必须是真正的 config 模块
         assert.match(out, /CTX_LANG:(zh_CN|en_US|unknown)/);
@@ -235,11 +235,11 @@ async function capture(fn) {
 
     const programC = freshProgram();
     const logC = makeLog();
-    const rC = await loader.loadPlugins(programC, {
+    const rC = await loader.loadExtensions(programC, {
         dir: rootC, trustFile: trustC, interactive: false, quiet: true, log: logC
     });
 
-    await checkAsync('四个坏插件全部进 skipped，没有一个被加载', async () => {
+    await checkAsync('四个坏扩展全部进 skipped，没有一个被加载', async () => {
         assert.strictEqual(rC.loaded.length, 0, logC.all());
         assert.strictEqual(rC.skipped.length, 4, logC.all());
     });
@@ -250,9 +250,9 @@ async function capture(fn) {
         assert.match(s.reason, /JSON/);
     });
 
-    await checkAsync('bad-crash：提示文案为「插件 X 崩溃，已跳过」', async () => {
+    await checkAsync('bad-crash：提示文案为「扩展 X 崩溃，已跳过」', async () => {
         const text = logC.all();
-        assert.match(text, /插件 bad-crash 崩溃，已跳过/);
+        assert.match(text, /扩展 bad-crash 崩溃，已跳过/);
         assert.match(text, /加载期就崩了/);
     });
 
@@ -269,7 +269,7 @@ async function capture(fn) {
         assert.match(s.reason, /缺少处理函数/);
     });
 
-    await checkAsync('冲突插件没有把 cmd 名污染进 RUNTIME_PLUGIN_CMDS', async () => {
+    await checkAsync('冲突扩展没有把 cmd 名污染进 RUNTIME_EXTENSION_CMDS', async () => {
         // conflict-init 声明的 init 本来就在 WOW_NAMESPACES 里，这里只确认
         // 它的唯一命令没被「额外」注册（注册后仍然只是 init，无法区分）。
         // 更直接的检查：program 上 init 只有一份。
@@ -286,7 +286,7 @@ async function capture(fn) {
         stage('good-hello', rootD);
         const programD = freshProgram();
         const logD = makeLog();
-        const r = await loader.loadPlugins(programD, {
+        const r = await loader.loadExtensions(programD, {
             dir: rootD, trustFile: trustD, interactive: true,
             confirm: async () => false, quiet: true, log: logD
         });
@@ -305,7 +305,7 @@ async function capture(fn) {
         const programE = freshProgram();
         const logE = makeLog();
         let asked = 0;
-        const r = await loader.loadPlugins(programE, {
+        const r = await loader.loadExtensions(programE, {
             dir: rootE, trustFile: trustE, interactive: true,
             confirm: async () => { asked++; return true; }, quiet: true, log: logE
         });
@@ -315,18 +315,18 @@ async function capture(fn) {
         assert.match(table.plugins['good-hello'].fingerprint, /^sha256:/);
     });
 
-    await checkAsync('确认提示里含插件名、命令预览与权限警告', async () => {
+    await checkAsync('确认提示里含扩展名、命令预览与权限警告', async () => {
         const rootF = path.join(tmpRoot, 'F');
         const trustF = path.join(tmpRoot, 'F.trust.json');
         stage('good-hello', rootF);
         const programF = freshProgram();
         const logF = makeLog();
-        await loader.loadPlugins(programF, {
+        await loader.loadExtensions(programF, {
             dir: rootF, trustFile: trustF, interactive: true,
             confirm: async () => false, quiet: true, log: logF
         });
         const text = logF.all();
-        assert.match(text, /插件 good-hello v1\.2\.3 首次加载/);
+        assert.match(text, /扩展 good-hello v1\.2\.3 首次加载/);
         assert.match(text, /wow hello/);
         assert.match(text, /同权限/);
     });
@@ -345,7 +345,7 @@ async function capture(fn) {
 
         const programG = freshProgram();
         const logG = makeLog();
-        const r = await loader.loadPlugins(programG, {
+        const r = await loader.loadExtensions(programG, {
             dir: rootG, trustFile: trustG, interactive: false, quiet: true, log: logG
         });
         assert.strictEqual(r.loaded.length, 0);
@@ -354,12 +354,12 @@ async function capture(fn) {
         assert.match(logG.all(), /内容已变更/);
     });
 
-    // ==================== 4. 空目录 / 无插件 ====================
+    // ==================== 4. 空目录 / 无扩展 ====================
     console.log('\n边界情况\n');
 
-    await checkAsync('插件目录不存在 → 返回空结果，不抛', async () => {
+    await checkAsync('扩展目录不存在 → 返回空结果，不抛', async () => {
         const programH = freshProgram();
-        const r = await loader.loadPlugins(programH, {
+        const r = await loader.loadExtensions(programH, {
             dir: path.join(tmpRoot, 'no-such-dir'),
             trustFile: path.join(tmpRoot, 'H.trust.json'),
             interactive: false, quiet: true, log: makeLog()
@@ -367,12 +367,12 @@ async function capture(fn) {
         assert.deepStrictEqual(r, { loaded: [], skipped: [], pending: [] });
     });
 
-    await checkAsync('目录存在但无 plugin.json → 不算插件', async () => {
+    await checkAsync('目录存在但无 extension.json → 不算扩展', async () => {
         const rootI = path.join(tmpRoot, 'I');
         fs.ensureDirSync(path.join(rootI, 'not-a-plugin'));
         fs.writeFileSync(path.join(rootI, 'not-a-plugin', 'readme.txt'), 'hi', 'utf8');
         const programI = freshProgram();
-        const r = await loader.loadPlugins(programI, {
+        const r = await loader.loadExtensions(programI, {
             dir: rootI, trustFile: path.join(tmpRoot, 'I.trust.json'),
             interactive: false, quiet: true, log: makeLog()
         });
@@ -392,7 +392,7 @@ async function capture(fn) {
         }
     });
 
-    await check('validateManifest 拒绝插件内重名命令', () => {
+    await check('validateManifest 拒绝扩展内重名命令', () => {
         const v = loader.validateManifest({
             name: 'x',
             commands: [{ name: 'a', handler: 'h1' }, { name: 'a', handler: 'h2' }]

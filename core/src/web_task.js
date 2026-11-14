@@ -39,7 +39,9 @@ const ALLOWED_PREFIXES = [
     'install vanilla', 'install fabric', 'install forge', 'install neoforge',
     'install paper', 'install spigot', 'install mohist', 'install purpur',
     'install folia', 'install quilt',
-    'down', 'mod download', 'mod sync'
+    'down', 'mod download', 'mod sync',
+    // V3.8.0 P0 下载中心：模组 / 服务端插件安装到方案（--kind plugins 走插件页）
+    'mod install'
 ];
 
 /**

@@ -87,7 +87,7 @@ function logger() {
 program
     .name('wow')
     .description('Minecraft 服务器管理工具 - 默认优先，可以修改')
-    .version('3.7.4-26.47', '-V');
+    .version('3.8.0-26.48', '-V');
 
 // ==================== init ====================
 
@@ -441,6 +441,86 @@ modCmd
         }
         if (options.dryRun && result.movedCount > 0) {
             console.log('（这是预览，文件没有变动。去掉 --dry-run 即真正执行。）');
+        }
+    });
+
+/**
+ * V3.8.0 P0 下载中心：从 Modrinth / CurseForge 安装模组或「Minecraft 服务端插件」
+ * 到**指定方案**。
+ *
+ * 铁律：必须显式给 --scheme，绝不默认塞入当前方案（下载中心弹窗同理）。
+ * loader / MC 版本缺省时从方案 scheme.yaml 读取，实现「自动选最适配的版本」。
+ * --kind plugins 用于「插件下载」页（仍走同一安装器，落到 scheme/<name>/plugins/）。
+ */
+modCmd
+    .command('install <project>')
+    .description('从 Modrinth（默认）/ CurseForge 安装模组或服务端插件到指定方案')
+    .option('--scheme <name>', '目标方案名（必填；禁止默认塞入当前方案）')
+    .option('--source <src>', '数据源：modrinth（默认）| curseforge')
+    .option('--version <v>', 'MC 版本（缺省取方案元数据）')
+    .option('--loader <l>', '加载器（缺省取方案元数据）')
+    .option('--kind <kind>', 'mods（模组，默认）| plugins（Minecraft 服务端插件）')
+    .option('--no-auto', '关闭自动解析：不按方案选最适配版本、不递归拉前置依赖')
+    .action(async (project, options) => {
+        const scheme = options.scheme;
+        if (!scheme) {
+            console.error('❌ 必须指定目标方案：--scheme <方案名>（下载中心禁止默认塞入当前方案）');
+            console.error('   可用方案请用 wow scheme list 查看。');
+            process.exitCode = 1;
+            return;
+        }
+        const Installer = load('./content_installer');
+        const SchemeManager = load('./scheme_manager');
+        if (!Installer || !SchemeManager) { process.exitCode = 1; return; }
+
+        const sm = new SchemeManager();
+        if (!sm._schemeExists(scheme)) {
+            console.error(`❌ 方案「${scheme}」不存在`);
+            process.exitCode = 1;
+            return;
+        }
+        // 「按方案核心版本 + 加载器抓最适配文件」：缺省从 scheme.yaml 读
+        let meta = {};
+        try { meta = sm.getMeta(scheme) || {}; } catch (e) { /* 元数据坏了也能装，只是无版本提示 */ }
+        const mcVersion = options.version || meta.version || null;
+        const loader = options.loader || meta.loader || null;
+        const kind = options.kind === 'plugins' ? 'plugins' : 'mods';
+        const autoResolve = options.auto !== false;
+        const source = options.source || 'modrinth';
+
+        const label = kind === 'plugins' ? '插件' : '模组';
+        console.log(`📦 安装${label} ${project} → 方案「${scheme}」`);
+        console.log(`   数据源: ${source} | MC ${mcVersion || '自动'} | 加载器 ${loader || '自动'} | 自动解析: ${autoResolve ? '开' : '关'}`);
+
+        let lastPct = -1;
+        const onProgress = ({ received, total }) => {
+            if (!total) return;
+            const pct = Math.floor(received / total * 100);
+            if (pct !== lastPct && (pct % 10 === 0 || pct === 100)) {
+                lastPct = pct;
+                console.log(`   已下载 ${pct}%`);
+            }
+        };
+
+        try {
+            const r = await Installer.installToScheme({
+                source, project, targetScheme: scheme, kind, autoResolve,
+                loader, mcVersion, onProgress, schemeManager: sm
+            });
+            for (const w of r.warnings) console.warn(`⚠️ ${w}`);
+            for (const it of r.installed) {
+                console.log(`   ✅ ${it.filename}${it.depth ? `（前置依赖 depth=${it.depth}）` : ''}`);
+            }
+            for (const s of r.skipped) console.error(`   ❌ ${s.projectId}: ${s.error}`);
+            if (r.ok) {
+                console.log(`✅ 已安装 ${r.installed.length} 个文件到 scheme/${scheme}/${kind}/`);
+            } else {
+                console.error(`❌ 部分文件安装失败（成功 ${r.installed.length} / 失败 ${r.skipped.length}）`);
+                process.exitCode = 1;
+            }
+        } catch (e) {
+            console.error(`❌ 安装失败: ${e.message}`);
+            process.exitCode = 1;
         }
     });
 
@@ -975,28 +1055,28 @@ themeCmd
         }
     });
 
-// ==================== plugin（V3.5.21：外部插件管理） ====================
-// 插件是「主程序 + 外部插件」微内核架构的扩展点：
-//   代码放 <项目根>/wow-plugins/<名字>/，永不进 core/；
-//   插件在 plugin.json 里声明的命令会被注册成顶层命令（wow <命令名>）。
+// ==================== plugin（V3.5.21：外部扩展管理） ====================
+// 扩展是「主程序 + 外部扩展」微内核架构的扩展点：
+//   代码放 <项目根>/wow-extensions/<名字>/，永不进 core/；
+//   扩展在 extension.json 里声明的命令会被注册成顶层命令（wow <命令名>）。
 // 本命令组只负责「装 / 卸 / 查 / 信任」这些文件层操作，
-// 命令注册由 plugin_loader.js 在启动时完成（见文件末尾的 registerPlugins）。
+// 命令注册由 extension_loader.js 在启动时完成（见文件末尾的 registerPlugins）。
 
-const pluginCmd = program.command('plugin').description('插件管理（外部扩展命令）[实验性 / Beta]');
+const pluginCmd = program.command('extension').alias('plugin').description('wow扩展管理（外部扩展命令）[实验性 / Beta]');
 
 pluginCmd
     .command('list')
-    .description('列出已安装插件及信任状态')
+    .description('列出已安装扩展及信任状态')
     .action(() => {
-        const PluginManager = load('./plugin_manager');
-        if (!PluginManager) return;
-        const pm = new PluginManager();
+        const ExtensionManager = load('./extension_manager');
+        if (!ExtensionManager) return;
+        const pm = new ExtensionManager();
         const plugins = pm.list();
-        console.log('插件系统 [实验性 / Beta]：接口可能变动，请勿在生产环境依赖。');
-        console.log(`插件目录: ${pm.pluginsDir}`);
+        console.log('wow扩展系统 [实验性 / Beta]：接口可能变动，请勿在生产环境依赖。');
+        console.log(`wow扩展目录: ${pm.pluginsDir}`);
         if (plugins.length === 0) {
-            console.log('  还没有安装任何插件。');
-            console.log('  安装方式: wow plugin install <插件包.zip>');
+            console.log('  还没有安装任何 wow扩展。');
+            console.log('  安装方式: wow extension install <扩展包.zip>');
             return;
         }
         const badge = { trusted: '✅ 已信任', new: '⏳ 未信任', changed: '⚠️ 已变更' };
@@ -1011,19 +1091,19 @@ pluginCmd
         }
         const untrusted = plugins.filter(p => p.trusted !== 'trusted').length;
         if (untrusted) {
-            console.log(`\n  ℹ️ ${untrusted} 个插件未信任，启动时会在终端询问是否启用；`);
+            console.log(`\n  ℹ️ ${untrusted} 个 wow扩展未信任，启动时会在终端询问是否启用；`);
             console.log('     非交互环境（脚本 / Web 面板调用）下会被跳过。');
         }
     });
 
 pluginCmd
     .command('info <name>')
-    .description('查看插件详细信息')
+    .description('查看扩展详细信息')
     .action((name) => {
-        const PluginManager = load('./plugin_manager');
-        if (!PluginManager) return;
+        const ExtensionManager = load('./extension_manager');
+        if (!ExtensionManager) return;
         try {
-            new PluginManager().info(name);
+            new ExtensionManager().info(name);
         } catch (e) {
             console.error(`❌ ${e.message}`);
         }
@@ -1031,15 +1111,15 @@ pluginCmd
 
 pluginCmd
     .command('install <source>')
-    .description('安装插件（ZIP 包或插件目录路径）')
-    .option('-f, --force', '覆盖同名插件')
+    .description('安装 wow扩展（ZIP 包或扩展目录路径）')
+    .option('-f, --force', '覆盖同名扩展')
     .action(async (source, options) => {
-        const PluginManager = load('./plugin_manager');
-        if (!PluginManager) return;
-        const pm = new PluginManager();
+        const ExtensionManager = load('./extension_manager');
+        if (!ExtensionManager) return;
+        const pm = new ExtensionManager();
         try {
             const r = await pm.install(source, { force: options.force === true });
-            console.log(`✅ 插件 ${r.name} v${r.version} 已安装到 ${r.dir}`);
+            console.log(`✅ 扩展 ${r.name} v${r.version} 已安装到 ${r.dir}`);
             console.log('   下次执行 wow 命令时会询问是否信任并加载。');
         } catch (e) {
             console.error(`❌ 安装失败: ${e.message}`);
@@ -1048,12 +1128,12 @@ pluginCmd
 
 pluginCmd
     .command('remove <name>')
-    .description('卸载插件（删除目录并撤销信任记录）')
+    .description('卸载 wow扩展（删除目录并撤销信任记录）')
     .action((name) => {
-        const PluginManager = load('./plugin_manager');
-        if (!PluginManager) return;
+        const ExtensionManager = load('./extension_manager');
+        if (!ExtensionManager) return;
         try {
-            new PluginManager().remove(name);
+            new ExtensionManager().remove(name);
         } catch (e) {
             console.error(`❌ 卸载失败: ${e.message}`);
         }
@@ -1061,66 +1141,66 @@ pluginCmd
 
 pluginCmd
     .command('trust <name>')
-    .description('信任插件（记录当前内容指纹，之后启动不再询问）')
+    .description('信任 wow扩展（记录当前内容指纹，之后启动不再询问）')
     .action((name) => {
-        const trust = load('./plugin_trust');
-        const loader = load('./plugin_loader');
+        const trust = load('./extension_trust');
+        const loader = load('./extension_loader');
         if (!trust || !loader) return;
         const dir = loader.getPluginsDir();
         let target = path.join(dir, name);
         if (!fs.existsSync(target)) {
-            console.error(`❌ 插件 ${name} 不存在（目录: ${dir}）`);
+            console.error(`❌ 扩展 ${name} 不存在（目录: ${dir}）`);
             return;
         }
         const fp = trust.fingerprint(target);
         let displayName = name;
         try {
-            const meta = JSON.parse(fs.readFileSync(path.join(target, 'plugin.json'), 'utf8'));
+            const meta = JSON.parse(fs.readFileSync(path.join(target, 'extension.json'), 'utf8'));
             displayName = meta.name || name;
         } catch (e) { /* 清单坏了也能记，但提醒一下 */ }
         trust.grantTrust(displayName, fp);
-        console.log(`✅ 已信任插件 ${displayName}`);
+        console.log(`✅ 已信任扩展 ${displayName}`);
         console.log(`   指纹: ${fp}`);
-        console.log('   ⚠️ 该插件的内容一旦被修改，启动时会重新要求确认。');
+        console.log('   ⚠️ 该扩展的内容一旦被修改，启动时会重新要求确认。');
     });
 
 pluginCmd
     .command('untrust <name>')
     .description('撤销信任（下次启动会重新询问）')
     .action((name) => {
-        const trust = load('./plugin_trust');
-        const loader = load('./plugin_loader');
+        const trust = load('./extension_trust');
+        const loader = load('./extension_loader');
         if (!trust || !loader) return;
         const dir = loader.getPluginsDir();
         const target = path.join(dir, name);
         let displayName = name;
-        if (fs.existsSync(path.join(target, 'plugin.json'))) {
+        if (fs.existsSync(path.join(target, 'extension.json'))) {
             try {
-                const meta = JSON.parse(fs.readFileSync(path.join(target, 'plugin.json'), 'utf8'));
+                const meta = JSON.parse(fs.readFileSync(path.join(target, 'extension.json'), 'utf8'));
                 displayName = meta.name || name;
             } catch (e) { /* 用目录名 */ }
         }
         if (trust.revokeTrust(displayName)) {
-            console.log(`✅ 已撤销插件 ${displayName} 的信任，下次启动会重新询问。`);
+            console.log(`✅ 已撤销扩展 ${displayName} 的信任，下次启动会重新询问。`);
         } else {
-            console.log(`ℹ️ 插件 ${displayName} 本来就没有信任记录。`);
+            console.log(`ℹ️ 扩展 ${displayName} 本来就没有信任记录。`);
         }
     });
 
 pluginCmd
     .command('path')
-    .description('显示插件目录与信任表位置')
+    .description('显示 wow扩展 目录与信任表位置')
     .action(() => {
-        const loader = load('./plugin_loader');
-        const trust = load('./plugin_trust');
+        const loader = load('./extension_loader');
+        const trust = load('./extension_trust');
         if (!loader || !trust) return;
-        console.log(`插件目录: ${loader.getPluginsDir()}`);
+        console.log(`wow扩展目录: ${loader.getPluginsDir()}`);
         console.log(`信任表:   ${trust.TRUST_FILE}`);
         console.log('');
-        console.log('插件目录结构:');
-        console.log('  wow-plugins/');
+        console.log('wow扩展 目录结构:');
+        console.log('  wow-extensions/');
         console.log('    hello/');
-        console.log('      plugin.json   （命令清单）');
+        console.log('      extension.json   （命令清单）');
         console.log('      index.js      （处理函数实现）');
     });
 
@@ -1707,6 +1787,101 @@ configCmd
             console.log(`✅ ${player} 已从白名单移除`);
         } else {
             console.log('用法: config white <add|remove|list> [player]');
+        }
+    });
+
+// ==================== V3.8.0 P1：玩家管理 ====================
+
+/**
+ * `wow config players ...`
+ *
+ * 名单来源：scheme/<方案>/scheme.yaml 的 known_players（由日志扫描 / 手动扫描累积）。
+ * 白黑名单写入统一交给 player_manager —— 它按**铁律①**分发：
+ *   服务器运行 → stdin 发 `whitelist add` / `ban`；停服 → 直接改 JSON。
+ * 与旧的 `config white add`（只改文件、运行时会冲突）不同，这里运行时绝不碰 JSON。
+ */
+const playersCmd = configCmd
+    .command('players')
+    .description('玩家管理（已知玩家名单 / 白名单 / 黑名单）');
+
+function loadPlayerManager(options) {
+    const mod = load('./player_manager');
+    if (!mod) return null;
+    return new mod.PlayerManager();
+}
+
+playersCmd
+    .command('list')
+    .description('列出已知玩家及其白/黑名单状态')
+    .option('--scheme <name>', '方案名（缺省用当前激活方案）')
+    .action((options) => {
+        const pm = loadPlayerManager(options);
+        if (!pm) { process.exitCode = 1; return; }
+        try {
+            const name = pm.resolveScheme(options.scheme);
+            const list = pm.listPlayers(name);
+            console.log(`方案「${name}」已知玩家（${list.length}）:`);
+            if (list.length === 0) {
+                console.log('  空（可执行 wow config players scan 从 latest.log 提取）');
+                return;
+            }
+            for (const p of list) {
+                const badge = p.banned ? '⛔ 黑名单' : (p.whitelisted ? '✅ 白名单' : '· 普通');
+                console.log(`  ${p.id.padEnd(18)} ${String(p.first_join || '-').padEnd(26)} ${badge}`);
+            }
+        } catch (e) {
+            console.error(`❌ ${e.message}`);
+            process.exitCode = 1;
+        }
+    });
+
+playersCmd
+    .command('whitelist <id>')
+    .description('把玩家移入白名单（运行态走服务器指令，停服态改 whitelist.json）')
+    .option('--scheme <name>', '方案名（缺省用当前激活方案）')
+    .action((id, options) => {
+        const pm = loadPlayerManager(options);
+        if (!pm) { process.exitCode = 1; return; }
+        try {
+            const r = pm.whitelist(options.scheme, id);
+            if (r.ok) console.log(`✅ ${r.message}`);
+            else { console.error(`❌ ${r.message}`); process.exitCode = 1; }
+        } catch (e) {
+            console.error(`❌ ${e.message}`);
+            process.exitCode = 1;
+        }
+    });
+
+playersCmd
+    .command('ban <id>')
+    .description('把玩家移入黑名单（运行态走服务器指令，停服态改 banned-players.json）')
+    .option('--scheme <name>', '方案名（缺省用当前激活方案）')
+    .action((id, options) => {
+        const pm = loadPlayerManager(options);
+        if (!pm) { process.exitCode = 1; return; }
+        try {
+            const r = pm.ban(options.scheme, id);
+            if (r.ok) console.log(`✅ ${r.message}`);
+            else { console.error(`❌ ${r.message}`); process.exitCode = 1; }
+        } catch (e) {
+            console.error(`❌ ${e.message}`);
+            process.exitCode = 1;
+        }
+    });
+
+playersCmd
+    .command('scan')
+    .description('从 logs/latest.log 回溯提取 joined the game 的玩家并合并进 known_players')
+    .option('--scheme <name>', '方案名（缺省用当前激活方案）')
+    .action(async (options) => {
+        const tracker = load('./player_tracker');
+        if (!tracker) { process.exitCode = 1; return; }
+        try {
+            const r = await tracker.scanScheme(options.scheme);
+            console.log(`✅ 扫描完成：新增 ${r.added} 个玩家，累计 ${r.total} 个（读取日志尾部 ${r.bytesRead} 字节）`);
+        } catch (e) {
+            console.error(`❌ 扫描失败: ${e.message}`);
+            process.exitCode = 1;
         }
     });
 
@@ -2380,39 +2555,39 @@ async function _requestStopBeforeExit() {
     } catch (e) { /* 兜底模块不可用时不影响退出 */ }
 }
 
-// ==================== V3.5.21：加载外部插件 ====================
+// ==================== V3.5.21：加载外部扩展 ====================
 //
 // 位置很关键：必须在 program.parse(process.argv) 之前，而且必须放在下面
 // 「无参数 → 数字菜单」的 if 分支**之前**。否则：
-//   - 带参数执行时，插件命令还没注册，commander 会报 unknown command；
+//   - 带参数执行时，扩展命令还没注册，commander 会报 unknown command；
 //   - 无参数进菜单 / 长命令 REPL 时，REPL 里会先预校验命令是否存在
-//     （见 startRepl 里的 known 判断），未注册的插件命令直接被判为未知。
+//     （见 startRepl 里的 known 判断），未注册的扩展命令直接被判为未知。
 //
-// 加载失败绝不阻断主程序：插件系统的定位是「可选的扩展点」，
-// 插件坏了 wow 必须照常能用。
+// 加载失败绝不阻断主程序：扩展系统的定位是「可选的扩展点」，
+// 扩展坏了 wow 必须照常能用。
 async function registerPlugins() {
-    // 尊重配置开关：plugins.enabled_loader = false 时完全不碰 wow-plugins/
-    if (config.getConfig('plugins.enabled_loader', true) !== true) return;
+    // 尊重配置开关：extensions.enabled_loader = false 时完全不碰 wow-extensions/
+    if (config.getConfig('extensions.enabled_loader', true) !== true) return;
 
-    // 管理插件本身的那几条命令不需要先加载插件。
-    // 若不跳过，`wow plugin list` / `plugin trust` / `plugin remove` 会先对
-    // 尚未信任的插件打一条「非交互环境已跳过」的告警——用户正是在执行
+    // 管理 wow扩展 本身的那几条命令不需要先加载扩展。
+    // 若不跳过，`wow extension list` / `extension trust` / `extension remove` 会先对
+    // 尚未信任的扩展打一条「非交互环境已跳过」的告警——用户正是在执行
     // 「我要看看/我要授权」的动作，却被先告知「跳过」，非常费解
     // （尤其 plugin trust 紧接着又说「已信任」，自相矛盾）。
     const argv = process.argv.slice(2);
     let head = String(argv[0] || '').toLowerCase();
     if (head === 'wow') head = String(argv[1] || '').toLowerCase();
-    if (head === 'plugin') return;
+    if (head === 'extension' || head === 'plugin') return;
     try {
-        const loader = require('./plugin_loader');
-        const quiet = config.getConfig('plugins.quiet', false) === true;
-        const r = await loader.loadPlugins(program, { quiet });
+        const loader = require('./extension_loader');
+        const quiet = config.getConfig('extensions.quiet', false) === true;
+        const r = await loader.loadExtensions(program, { quiet });
         if (r.loaded.length) {
-            logger()?.info(`已加载 ${r.loaded.length} 个插件：${r.loaded.map(p => p.name).join(', ')}`);
+            logger()?.info(`已加载 ${r.loaded.length} 个 wow扩展：${r.loaded.map(p => p.name).join(', ')}`);
         }
     } catch (e) {
-        // 插件加载器本身出问题（例如 wow-plugins/ 权限异常）也要静默降级
-        console.error(`⚠️ 插件系统初始化失败（已忽略）: ${e.message}`);
+        // 扩展加载器本身出问题（例如 wow-extensions/ 权限异常）也要静默降级
+        console.error(`⚠️ 扩展系统初始化失败（已忽略）: ${e.message}`);
     }
 }
 

@@ -355,6 +355,41 @@
             .result-item .actions { margin-left: 0; flex-wrap: wrap; }
             .core-form .form-row { flex-direction: column; }
         }
+
+        /* ===== V3.8.0：选方案安装弹窗 ===== */
+        .modal-mask {
+            position: fixed; inset: 0; z-index: 1000;
+            background: rgba(0, 0, 0, .62);
+            display: none; align-items: center; justify-content: center;
+        }
+        .modal-mask.active { display: flex; }
+        .modal-box {
+            background: #16223a; border: 1px solid #2a3b5c; border-radius: 10px;
+            padding: 22px; width: min(470px, 92vw);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, .5);
+            max-height: 90vh; overflow-y: auto;
+        }
+        .modal-box h3 { margin: 0 0 6px; font-size: 18px; color: #e6edf7; }
+        .modal-box .modal-sub { font-size: 13px; color: #8fa3c0; margin-bottom: 16px; line-height: 1.6; }
+        .modal-field { margin-bottom: 14px; }
+        .modal-field label { display: block; font-size: 13px; color: #b8c8e0; margin-bottom: 6px; }
+        .modal-field select {
+            width: 100%; padding: 9px 12px; background: #0f1a2f;
+            border: 1px solid #2a3b5c; border-radius: 6px; color: #ccd; font-size: 14px;
+        }
+        .modal-check {
+            display: flex; gap: 8px; align-items: flex-start;
+            font-size: 13px; color: #b8c8e0; line-height: 1.5; margin-bottom: 6px;
+        }
+        .modal-check input { margin-top: 3px; }
+        .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
+        .modal-actions button {
+            padding: 9px 18px; border: none; border-radius: 6px; font-size: 14px; cursor: pointer;
+        }
+        .modal-actions .cancel { background: #2a3b5c; color: #ccd; }
+        .modal-actions .confirm { background: #4CAF50; color: #fff; }
+        .modal-actions .confirm:disabled { opacity: .5; cursor: not-allowed; }
+        .modal-warn { font-size: 12px; color: #ffb74d; margin-top: 10px; line-height: 1.5; }
     </style>
 </head>
 <body>
@@ -366,6 +401,7 @@
         <!-- Tab 切换 -->
         <div class="tab-bar">
             <button class="tab-btn active" data-tab="mods">🔍 模组搜索</button>
+            <button class="tab-btn" data-tab="plugins">🔌 插件搜索</button>
             <button class="tab-btn" data-tab="core">⬇️ 核心下载</button>
             <button class="tab-btn" data-tab="queue">📋 下载队列</button>
         </div>
@@ -373,12 +409,21 @@
         <!-- ===== 模组搜索 Tab ===== -->
         <div class="tab-content active" id="tab-mods">
             <div class="search-bar">
-                <select id="mod-source">
-                    <option value="curseforge">CurseForge</option>
-                    <option value="modrinth">Modrinth</option>
+                <select id="mod-source" title="下载源（默认优先 Modrinth）">
+                    <option value="modrinth" selected>Modrinth（默认优先）</option>
+                    <option value="curseforge">CurseForge（次选）</option>
                 </select>
                 <input type="text" id="mod-search-input" placeholder="搜索模组名称..." />
-                <select id="mod-loader-filter">
+                <select id="mod-category-filter" title="类别">
+                    <option value="">全部类别</option>
+                    <option value="technology">科技</option>
+                    <option value="magic">魔法</option>
+                    <option value="optimization">优化</option>
+                    <option value="adventure">冒险</option>
+                    <option value="library">API / 库</option>
+                </select>
+                <input type="text" id="mod-version-filter" placeholder="MC 版本 如 1.20.1" style="max-width:170px;flex:0 1 170px;" />
+                <select id="mod-loader-filter" title="加载器">
                     <option value="">全部加载器</option>
                     <option value="forge">Forge</option>
                     <option value="fabric">Fabric</option>
@@ -391,7 +436,43 @@
                 <div class="empty-state">
                     <div class="icon">🔎</div>
                     <div>输入关键词搜索模组</div>
-                    <div style="font-size:12px;color:#556677;margin-top:4px;">支持 CurseForge 和 Modrinth</div>
+                    <div style="font-size:12px;color:#556677;margin-top:4px;">默认优先 Modrinth；点「下载」后必须选择要安装到哪个方案</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ===== 插件搜索 Tab（Minecraft 服务端插件，非 wow扩展） ===== -->
+        <div class="tab-content" id="tab-plugins">
+            <div class="search-bar">
+                <select id="plugin-source" title="下载源（默认优先 Modrinth）">
+                    <option value="modrinth" selected>Modrinth（默认优先）</option>
+                    <option value="curseforge">CurseForge（次选）</option>
+                </select>
+                <input type="text" id="plugin-search-input" placeholder="搜索服务端插件名称..." />
+                <select id="plugin-category-filter" title="类别">
+                    <option value="">全部类别</option>
+                    <option value="technology">科技</option>
+                    <option value="magic">魔法</option>
+                    <option value="optimization">优化</option>
+                    <option value="adventure">冒险</option>
+                    <option value="library">API / 库</option>
+                </select>
+                <input type="text" id="plugin-version-filter" placeholder="MC 版本 如 1.20.1" style="max-width:170px;flex:0 1 170px;" />
+                <select id="plugin-loader-filter" title="插件加载器">
+                    <option value="">全部加载器</option>
+                    <option value="bukkit">Bukkit</option>
+                    <option value="spigot">Spigot</option>
+                    <option value="paper">Paper</option>
+                    <option value="purpur">Purpur</option>
+                    <option value="folia">Folia</option>
+                </select>
+                <button class="btn-search" id="plugin-search-btn">🔍 搜索</button>
+            </div>
+            <div id="plugin-results" class="result-list">
+                <div class="empty-state">
+                    <div class="icon">🔌</div>
+                    <div>搜索 Bukkit / Paper 等服务端插件</div>
+                    <div style="font-size:12px;color:#556677;margin-top:4px;">与「模组搜索」同样支持选方案、类别筛选与自动解析依赖</div>
                 </div>
             </div>
         </div>
@@ -456,7 +537,7 @@
                 <div class="empty-state">
                     <div class="icon">📭</div>
                     <div>暂无下载任务</div>
-                    <div style="font-size:12px;color:#556677;margin-top:4px;">从模组搜索或核心下载添加的任务会显示在这里</div>
+                    <div style="font-size:12px;color:#556677;margin-top:4px;">从模组搜索、插件搜索或核心下载添加的任务会显示在这里</div>
                 </div>
             </div>
             <div class="queue-status" id="queue-status">
@@ -467,6 +548,33 @@
 
     <!-- Toast 消息 -->
     <div class="toast" id="toast"></div>
+
+    <!-- ===== V3.8.0：选方案安装弹窗（模组 / 插件共用） ===== -->
+    <div class="modal-mask" id="install-modal">
+        <div class="modal-box">
+            <h3 id="install-modal-title">安装到方案</h3>
+            <div class="modal-sub" id="install-modal-sub"></div>
+            <div class="modal-field">
+                <label for="install-scheme-select">目标方案（必选 · 禁止默认塞入当前方案）</label>
+                <select id="install-scheme-select">
+                    <option value="">— 请选择方案 —</option>
+                </select>
+            </div>
+            <label class="modal-check">
+                <input type="checkbox" id="install-auto-resolve" checked />
+                <span>自动选择合适的版本并拉取前置依赖
+                    <br><span style="color:#8fa3c0;font-size:12px;">按所选方案的 MC 版本与加载器匹配最适配文件；模组自动递归抓取必需依赖（最多 3 层）。</span>
+                </span>
+            </label>
+            <div class="modal-warn" id="install-cf-warn" style="display:none;">
+                ⚠️ CurseForge 为次选源：依赖解析为尽力而为，且可能需要 BYOK / 代理；API 超时会自动降级并给出提示。
+            </div>
+            <div class="modal-actions">
+                <button class="cancel" id="install-cancel-btn">取消</button>
+                <button class="confirm" id="install-confirm-btn">⬇️ 确认安装</button>
+            </div>
+        </div>
+    </div>
 
     <script src="/socket.io/socket.io.js"></script>
     <script>
@@ -484,6 +592,25 @@
             const modLoaderFilter = document.getElementById('mod-loader-filter');
             const modSearchBtn = document.getElementById('mod-search-btn');
             const modResults = document.getElementById('mod-results');
+            const modCategoryFilter = document.getElementById('mod-category-filter');
+            const modVersionFilter = document.getElementById('mod-version-filter');
+            const pluginSource = document.getElementById('plugin-source');
+            const pluginSearchInput = document.getElementById('plugin-search-input');
+            const pluginCategoryFilter = document.getElementById('plugin-category-filter');
+            const pluginVersionFilter = document.getElementById('plugin-version-filter');
+            const pluginLoaderFilter = document.getElementById('plugin-loader-filter');
+            const pluginSearchBtn = document.getElementById('plugin-search-btn');
+            const pluginResults = document.getElementById('plugin-results');
+            // V3.8.0 选方案安装弹窗
+            const installModal = document.getElementById('install-modal');
+            const installSchemeSelect = document.getElementById('install-scheme-select');
+            const installAutoResolve = document.getElementById('install-auto-resolve');
+            const installTitle = document.getElementById('install-modal-title');
+            const installSub = document.getElementById('install-modal-sub');
+            const installCfWarn = document.getElementById('install-cf-warn');
+            const installConfirmBtn = document.getElementById('install-confirm-btn');
+            const installCancelBtn = document.getElementById('install-cancel-btn');
+            let pendingInstall = null;   // 当前弹窗对应的项目
             const coreType = document.getElementById('core-type');
             const coreVersion = document.getElementById('core-version');
             const coreBuild = document.getElementById('core-build');
@@ -703,92 +830,101 @@
                 }
             });
 
-            // ==================== 模组搜索 ====================
-            async function searchMods() {
-                const query = modSearchInput.value.trim();
-                if (!query) {
-                    showToast('请输入搜索关键词', 'warning');
-                    return;
-                }
-                const source = modSource.value;
-                const loader = modLoaderFilter.value;
+            // ==================== 内容搜索（模组 / 插件共用，V3.8.0） ====================
+            // 默认源 Modrinth；支持类别 / MC 版本 / 加载器 / projectType 筛选。
+            // 「下载」不再直接 down <url> 落共享池，而是打开「选方案安装」弹窗。
+            function searchUi(kind) {
+                const isPlugin = kind === 'plugins';
+                return {
+                    source: isPlugin ? pluginSource : modSource,
+                    query: isPlugin ? pluginSearchInput : modSearchInput,
+                    category: isPlugin ? pluginCategoryFilter : modCategoryFilter,
+                    version: isPlugin ? pluginVersionFilter : modVersionFilter,
+                    loader: isPlugin ? pluginLoaderFilter : modLoaderFilter,
+                    btn: isPlugin ? pluginSearchBtn : modSearchBtn,
+                    results: isPlugin ? pluginResults : modResults,
+                    label: isPlugin ? '插件' : '模组',
+                    projectType: isPlugin ? 'plugin' : 'mod',
+                    kind: isPlugin ? 'plugins' : 'mods'
+                };
+            }
 
-                modSearchBtn.disabled = true;
-                modSearchBtn.textContent = '搜索中...';
-                modResults.innerHTML = `<div class="empty-state"><div class="loading-spinner"></div><div>搜索中...</div></div>`;
+            async function searchContent(kind) {
+                const ui = searchUi(kind);
+                const query = ui.query.value.trim();
+                if (!query) { showToast('请输入搜索关键词', 'warning'); return; }
+                const source = ui.source.value || 'modrinth';
+                const params = new URLSearchParams({
+                    source, query,
+                    loader: ui.loader.value,
+                    version: ui.version.value.trim(),
+                    category: ui.category.value,
+                    projectType: ui.projectType
+                });
+
+                ui.btn.disabled = true;
+                ui.btn.textContent = '搜索中...';
+                ui.results.innerHTML = `<div class="empty-state"><div class="loading-spinner"></div><div>正在从 ${source === 'modrinth' ? 'Modrinth' : 'CurseForge'} 搜索${ui.label}...</div></div>`;
 
                 try {
-                    // 调用后端 API 搜索模组
-                    const data = await apiGet(`/api/mod/search?source=${source}&query=${encodeURIComponent(query)}&loader=${loader}`);
-                    const results = data.results || [];
-
-                    if (results.length === 0) {
-                        modResults.innerHTML = `<div class="empty-state">
+                    const data = await apiGet('/api/mod/search?' + params.toString());
+                    const list = data.results || [];
+                    if (!list.length) {
+                        ui.results.innerHTML = `<div class="empty-state">
                             <div class="icon">😕</div>
-                            <div>未找到匹配的模组</div>
-                            <div style="font-size:12px;color:#556677;margin-top:4px;">尝试使用不同的关键词或来源</div>
+                            <div>未找到匹配的${ui.label}</div>
+                            <div style="font-size:12px;color:#556677;margin-top:4px;">尝试更换关键词、类别、MC 版本或来源</div>
                         </div>`;
                         return;
                     }
-
-                    let html = '';
-                    for (const item of results) {
-                        const loaders = (item.loaders || []).map(l => `<span class="tag">${l}</span>`).join('');
-                        html += `<div class="result-item">
+                    ui.results.innerHTML = list.map(item => {
+                        const loaders = (item.loaders || []).map(l => `<span class="tag">${escapeHtml(l)}</span>`).join('');
+                        const project = item.project_id || item.slug || item.name;
+                        const attrs = `data-project="${escapeHtml(project)}" data-name="${escapeHtml(item.name)}" ` +
+                            `data-source="${escapeHtml(source)}" data-kind="${ui.kind}"`;
+                        return `<div class="result-item">
                             <div class="info">
                                 <div class="name">${escapeHtml(item.name)}</div>
                                 <div class="meta">
-                                    ${escapeHtml(item.author || '未知作者')} · 
-                                    版本 ${escapeHtml(item.version || 'latest')} · 
-                                    下载 ${escapeHtml(item.downloads || '0')} · 
+                                    ${escapeHtml(item.author || '未知作者')} ·
+                                    版本 ${escapeHtml(item.version || 'latest')} ·
+                                    下载 ${escapeHtml(item.downloads || '0')} ·
                                     ${loaders}
                                     ${item.summary ? '<br>' + escapeHtml(item.summary.slice(0, 100)) : ''}
                                 </div>
                             </div>
                             <div class="actions">
-                                <button class="btn-sm download" data-url="${escapeHtml(item.download_url || item.url)}" data-name="${escapeHtml(item.name)}">⬇️ 下载</button>
-                                <button class="btn-sm deps" data-url="${escapeHtml(item.download_url || item.url)}" data-name="${escapeHtml(item.name)}">📦 依赖</button>
-                                <button class="btn-sm info" data-project="${escapeHtml(item.project_id || item.slug)}">ℹ️ 详情</button>
+                                <button class="btn-sm download" ${attrs}>⬇️ 下载</button>
+                                <button class="btn-sm deps" ${attrs}>📦 依赖</button>
+                                <button class="btn-sm info" ${attrs}>ℹ️ 详情</button>
                             </div>
                         </div>`;
-                    }
-                    modResults.innerHTML = html;
-
-                    // 绑定下载按钮
-                    document.querySelectorAll('.result-item .download').forEach(el => {
-                        el.addEventListener('click', () => {
-                            const url = el.dataset.url;
-                            const name = el.dataset.name;
-                            if (url) downloadMod(url, name);
-                        });
-                    });
-
-                    // 依赖下载按钮
-                    document.querySelectorAll('.result-item .deps').forEach(el => {
-                        el.addEventListener('click', () => {
-                            const url = el.dataset.url;
-                            const name = el.dataset.name;
-                            if (url) downloadModWithDeps(url, name);
-                        });
-                    });
-
-                    // 详情按钮
-                    document.querySelectorAll('.result-item .info').forEach(el => {
-                        el.addEventListener('click', () => {
-                            const project = el.dataset.project;
-                            showModInfo(project, source);
-                        });
-                    });
-
+                    }).join('');
+                    bindResultButtons(ui.results);
                 } catch (e) {
-                    modResults.innerHTML = `<div class="empty-state" style="color:#f44336;">
+                    ui.results.innerHTML = `<div class="empty-state" style="color:#f44336;">
                         <div class="icon">❌</div>
                         <div>搜索失败: ${escapeHtml(e.message)}</div>
                     </div>`;
                 } finally {
-                    modSearchBtn.disabled = false;
-                    modSearchBtn.textContent = '🔍 搜索';
+                    ui.btn.disabled = false;
+                    ui.btn.textContent = '🔍 搜索';
                 }
+            }
+
+            function bindResultButtons(container) {
+                container.querySelectorAll('.result-item .download').forEach(el => {
+                    el.addEventListener('click', () => openInstallModal({
+                        project: el.dataset.project,
+                        name: el.dataset.name,
+                        source: el.dataset.source,
+                        kind: el.dataset.kind
+                    }));
+                });
+                // 详情 / 依赖打开同一个「项目详情 + 依赖清单」弹层（依赖按钮不再形同虚设）
+                container.querySelectorAll('.result-item .btn-sm.info, .result-item .btn-sm.deps').forEach(el => {
+                    el.addEventListener('click', () => showContentInfo(el.dataset.project, el.dataset.source));
+                });
             }
 
             function escapeHtml(text) {
@@ -820,42 +956,95 @@
                 return data;
             }
 
-            // ==================== 下载模组 ====================
-            async function downloadMod(url, name) {
+            // ==================== 选方案安装弹窗（V3.8.0 P0） ====================
+            /**
+             * 铁律：目标方案必须**由用户显式选择**，弹窗默认项是「— 请选择方案 —」，
+             * 绝不预填当前方案，也不允许在未选时提交。
+             */
+            async function loadInstallSchemes() {
                 try {
-                    showToast(`⏳ 已提交下载「${name}」，进度见任务队列`, 'info', 4000);
-                    await apiTask('down', [url, '-o', 'pool/mods/'], name, '模组');
-                    activateTab('queue');
-                    await loadTasks();
-                } catch (e) {
-                    if (e.code === 'POLICY_DENIED') {
-                        showToast(`❌ 下载被策略拒绝: ${e.message}`, 'error');
-                    } else {
-                        showToast(`❌ 下载失败: ${e.message}`, 'error');
+                    const data = await apiGet('/api/schemes');
+                    const names = (data.schemes || [])
+                        .map(s => (typeof s === 'string' ? s : (s && s.name) || ''))
+                        .filter(Boolean);
+                    installSchemeSelect.innerHTML = '<option value="">— 请选择方案 —</option>';
+                    for (const n of names) {
+                        const opt = document.createElement('option');
+                        opt.value = n;
+                        opt.textContent = n;
+                        installSchemeSelect.appendChild(opt);
                     }
+                    if (!names.length) showToast('当前还没有任何方案，请先在「方案」页创建一个', 'warning');
+                } catch (e) {
+                    showToast('方案列表加载失败: ' + e.message, 'error');
                 }
             }
 
-            async function downloadModWithDeps(url, name) {
+            async function openInstallModal(item) {
+                if (!item || !item.project) return;
+                pendingInstall = item;
+                installTitle.textContent = `安装${item.kind === 'plugins' ? '插件' : '模组'}「${item.name || item.project}」`;
+                installSub.innerHTML =
+                    `项目 ID：<code>${escapeHtml(item.project)}</code> · 来源：${escapeHtml(item.source)}<br>` +
+                    `将按<strong>所选方案</strong>的 MC 版本与加载器自动匹配最合适的文件，` +
+                    `安装到 scheme/&lt;方案&gt;/${item.kind === 'plugins' ? 'plugins' : 'mods'}/。`;
+                installCfWarn.style.display = (item.source === 'curseforge') ? 'block' : 'none';
+                installAutoResolve.checked = true;
+                installModal.classList.add('active');
+                await loadInstallSchemes();
+            }
+
+            function closeInstallModal() {
+                installModal.classList.remove('active');
+                pendingInstall = null;
+                installConfirmBtn.disabled = false;
+            }
+
+            async function confirmInstall() {
+                if (!pendingInstall) return;
+                const scheme = installSchemeSelect.value;
+                if (!scheme) {
+                    showToast('必须先选择一个目标方案（禁止默认塞入当前方案）', 'warning');
+                    return;
+                }
+                const item = pendingInstall;
+                const args = [
+                    item.project,
+                    '--scheme', scheme,
+                    '--kind', item.kind,
+                    '--source', item.source
+                ];
+                if (!installAutoResolve.checked) args.push('--no-auto');
+                installConfirmBtn.disabled = true;
                 try {
-                    showToast(`⏳ 已提交下载「${name}」及依赖，进度见任务队列`, 'info', 4000);
-                    await apiTask('down', [url, '-o', 'pool/mods/'], name + ' (含依赖)', '模组');
+                    await apiTask('mod install', args,
+                        `${item.name || item.project} → ${scheme}`,
+                        item.kind === 'plugins' ? '插件' : '模组');
+                    showToast(`⏳ 已提交安装「${item.name || item.project}」到方案 ${scheme}，进度见下载队列`, 'success');
+                    closeInstallModal();
                     activateTab('queue');
                     await loadTasks();
                 } catch (e) {
-                    showToast(`❌ 下载失败: ${e.message}`, 'error');
+                    showToast(`❌ 提交失败: ${e.message}`, 'error');
+                    installConfirmBtn.disabled = false;
                 }
             }
 
-            async function showModInfo(project, source) {
+            installCancelBtn.addEventListener('click', closeInstallModal);
+            installConfirmBtn.addEventListener('click', confirmInstall);
+            installModal.addEventListener('click', (e) => {
+                if (e.target === installModal) closeInstallModal();
+            });
+
+            // ==================== 项目详情 / 依赖清单 ====================
+            async function showContentInfo(project, source) {
                 try {
-                    const data = await apiGet(`/api/mod/info?source=${source}&project=${project}`);
-                    if (data) {
-                        const msg = `📦 ${data.name}\n作者: ${data.author}\n版本: ${data.version}\n下载: ${data.downloads}\n描述: ${data.description || '无'}`;
-                        alert(msg);
-                    } else {
-                        showToast('无法获取模组详情', 'warning');
-                    }
+                    const data = await apiGet(`/api/mod/info?source=${encodeURIComponent(source)}&project=${encodeURIComponent(project)}`);
+                    const deps = (data.dependencies || []).length
+                        ? (data.dependencies || []).map(d =>
+                            `  · ${d.project_id || d.name || d.slug || String(d)}（${d.dependency_type || 'required'}）`).join('\n')
+                        : '  无（或该来源未提供依赖信息）';
+                    alert(`📦 ${data.name}\n作者: ${data.author}\n版本: ${data.version}\n下载: ${data.downloads}\n描述: ${data.description || '无'}\n\n前置依赖:\n${deps}`);
                 } catch (e) {
                     showToast('获取详情失败: ' + e.message, 'error');
                 }
@@ -904,9 +1093,19 @@
             }
 
             // ==================== 事件绑定 ====================
-            modSearchBtn.addEventListener('click', searchMods);
+            modSearchBtn.addEventListener('click', () => searchContent('mods'));
             modSearchInput.addEventListener('keydown', (e) => {
-                if (e.key === 'Enter') searchMods();
+                if (e.key === 'Enter') searchContent('mods');
+            });
+            modVersionFilter.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') searchContent('mods');
+            });
+            pluginSearchBtn.addEventListener('click', () => searchContent('plugins'));
+            pluginSearchInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') searchContent('plugins');
+            });
+            pluginVersionFilter.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') searchContent('plugins');
             });
 
             coreDownloadBtn.addEventListener('click', downloadCore);
@@ -928,7 +1127,13 @@
                 if (e.origin !== window.location.origin) return;
                 if (e.data.type === 'search-mod') {
                     modSearchInput.value = e.data.query || '';
-                    searchMods();
+                    activateTab('mods');
+                    searchContent('mods');
+                }
+                if (e.data.type === 'search-plugin') {
+                    pluginSearchInput.value = e.data.query || '';
+                    activateTab('plugins');
+                    searchContent('plugins');
                 }
                 if (e.data.type === 'download-core') {
                     coreType.value = e.data.type || 'vanilla';

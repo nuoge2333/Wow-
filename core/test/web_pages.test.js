@@ -196,6 +196,78 @@ check('其它页面不再把变量拼进命令字符串', () => {
     }
 });
 
+console.log('\n📥 V3.8.0 下载中心（down.html）\n');
+
+const downHtml = fs.readFileSync(path.join(ROOT, 'web', 'down.html'), 'utf8');
+
+check('Tab 重排：模组搜索 / 插件搜索 / 核心下载 / 下载队列', () => {
+    for (const t of ['mods', 'plugins', 'core', 'queue']) {
+        assert.ok(downHtml.includes(`data-tab="${t}"`), `缺少 Tab ${t}`);
+        assert.ok(downHtml.includes(`id="tab-${t}"`), `缺少 Tab 内容 ${t}`);
+    }
+});
+
+check('默认源 Modrinth 且置顶（模组与插件两处）', () => {
+    const hits = downHtml.match(/<option value="modrinth" selected>/g) || [];
+    assert.strictEqual(hits.length, 2, '模组/插件都应默认选中 Modrinth');
+    for (const sel of ['id="mod-source"', 'id="plugin-source"']) {
+        const pos = downHtml.indexOf(sel);
+        assert.ok(pos > 0, `缺少 ${sel}`);
+        const block = downHtml.slice(pos, pos + 200);
+        assert.ok(block.indexOf('value="modrinth"') < block.indexOf('value="curseforge"'),
+            'CurseForge 必须排在 Modrinth 之后（次选）');
+    }
+});
+
+check('筛选控件齐全：类别 / MC 版本 / 加载器（模组与插件）', () => {
+    for (const id of [
+        'mod-category-filter', 'mod-version-filter', 'mod-loader-filter',
+        'plugin-category-filter', 'plugin-version-filter', 'plugin-loader-filter'
+    ]) {
+        assert.ok(downHtml.includes(`id="${id}"`), `缺少筛选控件 ${id}`);
+    }
+    for (const slug of ['technology', 'magic', 'optimization', 'adventure', 'library']) {
+        assert.ok(downHtml.includes(`value="${slug}"`), `缺少类别 ${slug}`);
+    }
+});
+
+check('插件加载器为 Bukkit 系（bukkit/spigot/paper/purpur/folia）', () => {
+    const pos = downHtml.indexOf('id="plugin-loader-filter"');
+    const block = downHtml.slice(pos, downHtml.indexOf('</select>', pos));
+    for (const l of ['bukkit', 'spigot', 'paper', 'purpur', 'folia']) {
+        assert.ok(block.includes(`value="${l}"`), `插件加载器缺少 ${l}`);
+    }
+});
+
+check('搜索请求携带 category / version / projectType', () => {
+    for (const frag of ["category: ui.category.value", "version: ui.version.value.trim()", 'projectType: ui.projectType']) {
+        assert.ok(downHtml.includes(frag), `搜索参数缺少 ${frag}`);
+    }
+    assert.ok(downHtml.includes("projectType: isPlugin ? 'plugin' : 'mod'"), '插件 Tab 必须传 projectType=plugin');
+});
+
+check('选方案安装弹窗：节点齐全且默认不选任何方案', () => {
+    for (const id of [
+        'install-modal', 'install-modal-title', 'install-modal-sub',
+        'install-scheme-select', 'install-auto-resolve', 'install-cf-warn',
+        'install-confirm-btn', 'install-cancel-btn'
+    ]) {
+        assert.ok(downHtml.includes(`id="${id}"`), `缺少弹窗节点 ${id}`);
+    }
+    assert.ok(/<option value="">— 请选择方案 —<\/option>/.test(downHtml),
+        '目标方案必须有空的默认项（禁止默认塞入当前方案）');
+    assert.ok(downHtml.includes("showToast('必须先选择一个目标方案"), '未选方案时必须有拦截提示');
+});
+
+check('下载不再直落共享池，改为 mod install 提交到方案', () => {
+    assert.ok(!downHtml.includes("'pool/mods/'"), '仍残留 down -o pool/mods/ 的旧写法');
+    assert.ok(downHtml.includes("await apiTask('mod install', args"), '应提交 mod install 异步任务');
+    for (const frag of ["'--scheme', scheme", "'--kind', item.kind", "args.push('--no-auto')"]) {
+        assert.ok(downHtml.includes(frag), `安装参数缺少 ${frag}`);
+    }
+    assert.ok(downHtml.includes("activateTab('queue')"), '提交后应切到下载队列 Tab');
+});
+
 console.log('\n📋 主题副本一致性\n');
 
 check('default 主题与 web 目录的页面全部一致', () => {

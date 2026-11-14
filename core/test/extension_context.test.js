@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * V3.5.21：插件运行上下文（plugin_context.js）
+ * V3.5.21：插件运行上下文（extension_context.js）
  * ----------------------------------------------------------------
  * 锁定的行为：
  *   1. 只暴露 10 个白名单模块（config/utils/log/event/server/mod/scheme/theme/mail/pack），**不含** process / require / fs 这类逃生口；
@@ -14,7 +14,7 @@
 const assert = require('assert');
 const path = require('path');
 
-const { createContext, CONTEXT_KEYS } = require('../src/plugin_context');
+const { createContext, CONTEXT_KEYS } = require('../src/extension_context');
 
 const SRC = path.resolve(__dirname, '..', 'src');
 
@@ -47,7 +47,7 @@ check('恰好暴露 11 个模块', () => {
 check('键名与预期一致', () => {
     assert.deepStrictEqual(
         [...CONTEXT_KEYS].sort(),
-        ['config', 'event', 'log', 'mail', 'mod', 'pack', 'pluginConfig', 'scheme', 'server', 'theme', 'utils']
+        ['config', 'event', 'extensionConfig', 'log', 'mail', 'mod', 'pack', 'scheme', 'server', 'theme', 'utils']
     );
 });
 
@@ -140,7 +140,7 @@ check('构造失败时返回 null 且记录 warn', () => {
     // 打桩：让 log_handler 的构造抛错（通过临时改写 require 结果不可行，
     // 这里退一步验证「工厂抛错 → null」的通用路径：用一个不存在的 key 走不通，
     // 改为直接验证实现里的 try-catch 包装存在——用 monkey patch FACTORIES。
-    const mod = require('../src/plugin_context');
+    const mod = require('../src/extension_context');
     const factories = mod._internals.FACTORIES;
     const original = factories.server;
     const warns = [];
@@ -159,7 +159,7 @@ check('构造失败时返回 null 且记录 warn', () => {
 });
 
 check('单个能力失败不影响其它能力', () => {
-    const mod = require('../src/plugin_context');
+    const mod = require('../src/extension_context');
     const factories = mod._internals.FACTORIES;
     const original = factories.mail;
     factories.mail = () => { throw new Error('模拟 SMTP 构造失败'); };

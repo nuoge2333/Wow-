@@ -116,7 +116,7 @@ const PAGES = [
     {
         key: 'E',
         label: '内容',
-        title: '内容与配置（模组 / 插件 [实验性·Beta] / 配置文件）',
+        title: '内容与配置（模组 / wow扩展 [实验性·Beta] / 配置文件）',
         items: [
             {
                 id: '1', label: '列出已安装模组',
@@ -253,7 +253,7 @@ function resolveNumber(id, page) {
  * 创建 readline 接口（**仅供外部未接管 stdin 时使用**）。
  *
  * V3.6.3 起 M 模式自身改用 tui.createKeyboard()；本函数保留是因为
- * `dispatchMenu(choice, options)` 的外部调用方（插件、测试脚本）可能
+ * `dispatchMenu(choice, options)` 的外部调用方（扩展、测试脚本）可能
  * 直接调 dispatchMenu 而不传 rl。
  */
 function createRL() {

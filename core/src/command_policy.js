@@ -4,7 +4,7 @@
  * V3.5.3：Web 面板（/api/exec 与 WebSocket command）执行的命令安全策略。
  *
  * 设计说明：
- *  - 面板是「已认证的 admin 工具」，需要广泛的写权限（mod/theme/plugin 安装、
+ *  - 面板是「已认证的 admin 工具」，需要广泛的写权限（mod/theme/extension 安装、
  *    开服、改下载镜像等），因此不能简单复用开服控制台的 ALLOWED_CONSOLE
  *    （那套会禁掉 `server start`，而面板恰恰要靠它开服），也不能用窄白名单
  *    （会把面板自己的 mod install / theme install 等功能挡掉）。
@@ -13,14 +13,14 @@
  *  - 经前端审计（web/*.html 的 apiExec(...) 调用），面板合法使用：
  *    server start/stop/restart/kill、scheme list/info/status、
  *    mod list/install、theme list/info/install/switch/delete、
- *    plugin list/info/install/remove、pack list/info/generate、
+ *    extension list/info/install/remove、pack list/info/generate、
  *    set download.mirror、install <本地文件> -o ./、config 只读、
  *    logs analyze/report、mail *、lan *、down、pool *、web stop/status。
  *    以下被拒绝项均不在面板用途内。
  */
 
 const WOW_NAMESPACES = new Set([
-    'server', 'scheme', 'mod', 'plugin', 'theme', 'pack', 'config',
+    'server', 'scheme', 'mod', 'extension', 'theme', 'pack', 'config',
     'set', 'mail', 'lan', 'down', 'pool', 'logs', 'web', 'install', 'init', 'help'
 ]);
 
@@ -53,47 +53,47 @@ const DENIED_WEB_ALWAYS = new Set([
 /** 兼容导出：完整拒绝清单（两档合并后的静态快照） */
 const DENIED_WEB = new Set([...SCHEME_OPS, ...DENIED_WEB_ALWAYS]);
 
-// ==================== 插件命令（V3.5.21-26.3c）====================
+// ==================== 扩展命令（V3.5.21-26.3c）====================
 /**
- * 运行期由插件注册进来的顶层命令名（小写）。
+ * 运行期由扩展注册进来的顶层命令名（小写）。
  *
- * 为什么不直接把插件命令塞进 WOW_NAMESPACES：
+ * 为什么不直接把扩展命令塞进 WOW_NAMESPACES：
  *   WOW_NAMESPACES 是「wow 自己的命名空间」，用于 server.js 区分
- *   「wow 指令」和「MC 指令」；插件命令是**运行期**才知道的，而
+ *   「wow 指令」和「MC 指令」；扩展命令是**运行期**才知道的，而
  *   WOW_NAMESPACES 是模块加载时就定下的常量。混在一起会让
- *   「当前装了什么插件」影响主程序的静态语义，不好推理。
- *   因此单独一个 Set，由 registerPluginCommand 在插件加载时填充。
+ *   「当前装了什么扩展」影响主程序的静态语义，不好推理。
+ *   因此单独一个 Set，由 registerExtensionCommand 在扩展加载时填充。
  *
- * 安全默认：插件命令**一律不在 Web 端放行**，除非用户显式打开
- * web.allow_plugins。理由：插件是第三方任意代码，Web 面板是远程入口，
+ * 安全默认：扩展命令**一律不在 Web 端放行**，除非用户显式打开
+ * web.allow_extensions。理由：扩展是第三方任意代码，Web 面板是远程入口，
  * 两者叠加等于「远程可控的任意代码执行」，默认必须关。
  */
-const RUNTIME_PLUGIN_CMDS = new Set();
+const RUNTIME_EXTENSION_CMDS = new Set();
 
 /**
- * 插件加载时登记一条命令名，使 Web/控制台能把它识别为「wow 命名空间」。
+ * 扩展加载时登记一条命令名，使 Web/控制台能把它识别为「wow 命名空间」。
  * @param {string} name 顶层命令名（不含 wow 前缀）
  */
-function registerPluginCommand(name) {
+function registerExtensionCommand(name) {
     const key = String(name || '').trim().toLowerCase();
     if (!key) return;
-    RUNTIME_PLUGIN_CMDS.add(key);
+    RUNTIME_EXTENSION_CMDS.add(key);
 }
 
-/** 清空运行期插件命令（测试 / 重新扫描插件前调用） */
+/** 清空运行期扩展命令（测试 / 重新扫描扩展前调用） */
 function resetPluginCommands() {
-    RUNTIME_PLUGIN_CMDS.clear();
+    RUNTIME_EXTENSION_CMDS.clear();
 }
 
 /**
- * 该 head 是否属于「wow 指令命名空间」（含插件命令）。
- * server.js 与 command_policy 共用，避免两边判断不一致导致插件命令被当 MC 指令转发。
+ * 该 head 是否属于「wow 指令命名空间」（含扩展命令）。
+ * server.js 与 command_policy 共用，避免两边判断不一致导致扩展命令被当 MC 指令转发。
  * @param {string} head
  * @returns {boolean}
  */
 function isWowNamespace(head) {
     const key = String(head || '').trim().toLowerCase();
-    return WOW_NAMESPACES.has(key) || RUNTIME_PLUGIN_CMDS.has(key);
+    return WOW_NAMESPACES.has(key) || RUNTIME_EXTENSION_CMDS.has(key);
 }
 
 /**
@@ -109,7 +109,7 @@ function readSwitches() {
         const config = require('./config');
         allowSchemeOps = config.getConfig('web.allow_scheme_ops', false) === true;
         allowRemoteInstall = config.getConfig('web.allow_remote_install', false) === true;
-        allowPlugins = config.getConfig('web.allow_plugins', false) === true;
+        allowPlugins = config.getConfig('web.allow_extensions', false) === true;
     } catch (e) {
         // 配置模块不可用时保守收紧
     }
@@ -144,12 +144,12 @@ function isWebCommandAllowed(command) {
     const two = tokens.slice(0, 2).join(' ');
     const { allowSchemeOps, allowRemoteInstall, allowPlugins } = readSwitches();
 
-    // 插件命令：第三方任意代码，默认完全禁止经 Web 执行。
-    // 只能由用户在配置里显式打开 web.allow_plugins。
-    if (RUNTIME_PLUGIN_CMDS.has(head) && !allowPlugins) {
+    // 扩展命令：第三方任意代码，默认完全禁止经 Web 执行。
+    // 只能由用户在配置里显式打开 web.allow_extensions。
+    if (RUNTIME_EXTENSION_CMDS.has(head) && !allowPlugins) {
         return {
             allowed: false,
-            reason: `插件命令 ${head} 默认禁止在 Web 端执行（如需放开，请在配置中设置 web.allow_plugins: true）`
+            reason: `扩展命令 ${head} 默认禁止在 Web 端执行（如需放开，请在配置中设置 web.allow_extensions: true）`
         };
     }
 
@@ -209,7 +209,7 @@ function auditDangerousConfig() {
     const opened = [];
     if (allowSchemeOps) opened.push('web.allow_scheme_ops');
     if (allowRemoteInstall) opened.push('web.allow_remote_install');
-    if (allowPlugins) opened.push('web.allow_plugins');
+    if (allowPlugins) opened.push('web.allow_extensions');
     if (opened.length === 0) return warnings;
 
     let host = '127.0.0.1';
@@ -245,8 +245,8 @@ function auditDangerousConfig() {
 
     if (allowPlugins) {
         warnings.push(
-            'web.allow_plugins 已开启：面板可执行插件注册的自定义命令。' +
-            '插件是第三方代码、与主程序同权限，请只安装你信任的插件。'
+            'web.allow_extensions 已开启：面板可执行扩展注册的自定义命令。' +
+            '扩展是第三方代码、与主程序同权限，请只安装你信任的扩展。'
         );
     }
 
@@ -257,10 +257,10 @@ module.exports = {
     isWebCommandAllowed,
     auditDangerousConfig,
     isWowNamespace,
-    registerPluginCommand,
+    registerExtensionCommand,
     resetPluginCommands,
     WOW_NAMESPACES,
-    RUNTIME_PLUGIN_CMDS,
+    RUNTIME_EXTENSION_CMDS,
     DENIED_WEB,
     DENIED_WEB_ALWAYS,
     SCHEME_OPS

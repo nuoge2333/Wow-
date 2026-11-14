@@ -220,7 +220,7 @@ class SchemeManager {
                 hash: pluginHash,
                 in_pool: inPool,
                 pool_path: inPool ? this._getPoolPathByHash(pluginHash) : null,
-                plugin_name: plugin.name || path.basename(plugin.path)
+                extension_name: plugin.name || path.basename(plugin.path)
             });
         }
 
@@ -708,6 +708,36 @@ class SchemeManager {
     _saveSchemeMeta(name, meta) {
         const metaPath = path.join(this._getSchemePath(name), 'scheme.yaml');
         fs.writeFileSync(metaPath, yaml.dump(meta, { indent: 2, lineWidth: -1 }), 'utf8');
+    }
+
+    // ==================== 元数据公开接口（V3.8.0 P1 玩家管理） ====================
+
+    /**
+     * 读取方案元数据（公开入口）。方案不存在 / 文件缺失时抛错，由调用方决定降级。
+     * @param {string} name 方案名
+     * @returns {object} scheme.yaml 解析后的对象
+     */
+    getMeta(name) {
+        return this._loadSchemeMeta(name);
+    }
+
+    /**
+     * 写回方案元数据（公开入口）。
+     * @param {string} name 方案名
+     * @param {object} meta 完整元数据对象（整体覆盖写回）
+     */
+    saveMeta(name, meta) {
+        return this._saveSchemeMeta(name, meta);
+    }
+
+    /**
+     * 当前激活方案名；无激活方案时返回 null。
+     * 每次实时读配置，避免运行中切换方案后拿到过期值。
+     * @returns {string|null}
+     */
+    getActiveScheme() {
+        const cur = config.getConfig('server.scheme', null);
+        return cur && this._schemeExists(cur) ? cur : null;
     }
 
     // ==================== Pool 管理 ====================

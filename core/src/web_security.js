@@ -21,7 +21,7 @@ const { listFields } = require('./config_schema');
 const EXPECTED_DANGER_KEYS = [
     'web.allow_scheme_ops',
     'web.allow_remote_install',
-    'web.allow_plugins'
+    'web.allow_extensions'
 ];
 
 /**
@@ -149,7 +149,7 @@ function isLocalRequest(req, ctx = {}) {
 
 /**
  * 从三种写入载荷里提取「准备写入的点号键」：
- *   1. 单键：{ key: 'web.allow_plugins', value: true }
+ *   1. 单键：{ key: 'web.allow_extensions', value: true }
  *   2. 批量：{ patch: { 'web.port': 8080, web: {...} } } 或直接扁平对象
  *   3. 整份嵌套对象（原始 JSON 模式）：{ server: {...}, web: {...} }
  *

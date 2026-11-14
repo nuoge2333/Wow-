@@ -464,14 +464,14 @@ function startWeb(options = {}) {
     // 静态文件服务（主题）
     app.use(express.static(webDir));
 
-    // 插件 Web UI（实验性 / Beta）
-    // 默认关闭：web.allow_plugins_web 必须显式设为 true 才挂载。
-    // 只挂在同源 /plugin-web/<插件>/ 下，绝不新开端口。
+    // wow扩展 Web UI（实验性 / Beta）
+    // 默认关闭：web.allow_extensions_web 必须显式设为 true 才挂载。
+    // 只挂在同源 /extension-web/<插件>/ 下，绝不新开端口。
     // 放在主题静态之后：主题目录里同名路径优先，避免插件顶掉主面板资源。
     try {
-        const pluginWeb = require('./plugin_web');
-        pluginWeb.mount(app, {
-            enabled: config.getConfig('web.allow_plugins_web', false) === true,
+        const extensionWeb = require('./extension_web');
+        extensionWeb.mount(app, {
+            enabled: config.getConfig('web.allow_extensions_web', false) === true,
             warn: (m) => console.warn(m),
             info: (m) => console.log(m)
         });
@@ -2288,8 +2288,9 @@ function startWeb(options = {}) {
     // ===== 模组搜索与下载队列（V3.5.6）=====
 
     /**
-     * 搜索模组
-     * GET /api/mod/search?source=<modrinth|curseforge>&query=<关键词>&loader=<加载器>&version=<MC版本>
+     * 搜索模组 / 插件
+     * GET /api/mod/search?source=<modrinth|curseforge>&query=<关键词>&loader=<加载器>&version=<MC版本>&category=<类别>&projectType=<mod|plugin>
+     * 默认 source = modrinth（优先）；projectType 默认 mod，plugin = Minecraft 服务端插件。
      */
     app.get('/api/mod/search', async (req, res) => {
         try {
@@ -2297,10 +2298,14 @@ function startWeb(options = {}) {
             const result = await ModSearch.search(
                 req.query.source,
                 req.query.query,
-                req.query.loader,
-                req.query.version
+                {
+                    loader: req.query.loader,
+                    version: req.query.version,
+                    category: req.query.category,
+                    projectType: req.query.projectType
+                }
             );
-            res.json({ success: true, source: result.source, results: result.results });
+            res.json({ success: true, source: result.source, projectType: result.projectType, results: result.results });
         } catch (e) {
             res.status(e.status || 502).json({ success: false, error: e.message });
         }
@@ -2363,30 +2368,89 @@ function startWeb(options = {}) {
     });
 
     /**
-     * 插件列表
-     * GET /api/plugins
+     * wow扩展列表
+     * GET /api/extensions
      */
-    app.get('/api/plugins', (req, res) => {
+    app.get('/api/extensions', (req, res) => {
         try {
-            const PluginManager = require('./plugin_manager');
-            const pm = new PluginManager();
-            const webEnabled = config.getConfig('web.allow_plugins_web', false) === true;
-            const plugins = pm.list().map(p => ({
+            const ExtensionManager = require('./extension_manager');
+            const pm = new ExtensionManager();
+            const webEnabled = config.getConfig('web.allow_extensions_web', false) === true;
+            const extensions = pm.list().map(p => ({
                 ...p,
                 // web_url 只有在全局开关打开时才给：否则前端不该渲染「打开」按钮，
                 // 免得用户点了得到 404 却不知道为什么。
                 web_url: (p.web && webEnabled)
-                    ? `/plugin-web/${encodeURIComponent(p.name)}/`
+                    ? `/extension-web/${encodeURIComponent(p.name)}/`
                     : null
             }));
             res.json({
                 success: true,
-                experimental: true,   // 插件系统整体标记为实验性 / Beta
+                experimental: true,   // wow扩展系统整体标记为实验性 / Beta
                 web_enabled: webEnabled,
-                plugins
+                extensions
             });
         } catch (e) {
             res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+    // ==================== V3.8.0 P1：玩家管理 ====================
+    // 名单写入统一由 player_manager 按铁律①分发：运行态走服务器指令
+    // （中继队列优先，stdin 兜底），停服态才直接改 whitelist.json /
+    // banned-players.json。这里不复制任何名单逻辑，CLI 与 Web 共用一条链路。
+
+    /** GET /api/players?scheme=<name> —— 已知玩家 + 白/黑名单状态 */
+    app.get('/api/players', (req, res) => {
+        try {
+            const { PlayerManager } = require('./player_manager');
+            const pm = new PlayerManager();
+            const scheme = pm.resolveScheme(req.query.scheme);
+            res.json({
+                success: true,
+                scheme,
+                server_running: pm.isServerRunning(),
+                known_players: pm.listPlayers(scheme)
+            });
+        } catch (e) {
+            res.status(400).json({ success: false, error: e.message });
+        }
+    });
+
+    /** POST /api/players/scan —— 从 logs/latest.log 尾部回溯提取并合并 known_players */
+    app.post('/api/players/scan', async (req, res) => {
+        try {
+            const tracker = require('./player_tracker');
+            const r = await tracker.scanScheme((req.body || {}).scheme);
+            res.json({ success: true, ...r });
+        } catch (e) {
+            res.status(400).json({ success: false, error: e.message });
+        }
+    });
+
+    /** POST /api/players/whitelist  {scheme,id} —— 移入白名单（铁律①） */
+    app.post('/api/players/whitelist', (req, res) => {
+        try {
+            const body = req.body || {};
+            const { PlayerManager } = require('./player_manager');
+            const r = new PlayerManager().whitelist(body.scheme, body.id);
+            if (!r.ok) return res.status(409).json({ success: false, ...r });
+            res.json({ success: true, ...r });
+        } catch (e) {
+            res.status(400).json({ success: false, error: e.message });
+        }
+    });
+
+    /** POST /api/players/ban  {scheme,id} —— 移入黑名单（铁律①） */
+    app.post('/api/players/ban', (req, res) => {
+        try {
+            const body = req.body || {};
+            const { PlayerManager } = require('./player_manager');
+            const r = new PlayerManager().ban(body.scheme, body.id);
+            if (!r.ok) return res.status(409).json({ success: false, ...r });
+            res.json({ success: true, ...r });
+        } catch (e) {
+            res.status(400).json({ success: false, error: e.message });
         }
     });
 

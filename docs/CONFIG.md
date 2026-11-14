@@ -200,7 +200,7 @@ backup:
 | `cors_origins` | array | `[]` | 允许的跨源域名白名单；空数组 = 仅同源 |
 | `allow_scheme_ops` | boolean | `false` | 🔺 **V3.5.7** 放开 `scheme create/switch/delete/edit/pull/prune/register/export/import` |
 | `allow_remote_install` | boolean | `false` | 🔺 **V3.5.7** 放开 `install <http(s)://...>` 远程下载（等同任意代码执行入口） |
-| `allow_plugins` | boolean | `false` | 🔺 **V3.5.21** 放开插件注册的自定义命令经 Web 端执行（插件是第三方任意代码） |
+| `allow_extensions` | boolean | `false` | 🔺 **V3.5.21** 放开wow扩展注册的自定义命令经 Web 端执行（wow扩展是第三方任意代码） |
 | `tunnel_mirror` | string | `''` | 🔺 **V3.5.22** cloudflared 二进制下载源。留空 = 内置三家国内镜像 + GitHub 官方兜底 |
 
 **示例：**
@@ -216,7 +216,7 @@ web:
   cors_origins: []
   allow_scheme_ops: false
   allow_remote_install: false
-  allow_plugins: false
+  allow_extensions: false
   tunnel_mirror: ''
 ```
 
@@ -242,10 +242,10 @@ web:
 > wow web start --public
 > ```
 
-> 🔒 **关于 `allow_scheme_ops` / `allow_remote_install` / `allow_plugins`**
+> 🔒 **关于 `allow_scheme_ops` / `allow_remote_install` / `allow_extensions`**
 > 默认均为 `false`，保持安全基线。开启 `allow_remote_install` 相当于把任意代码执行入口
 > 暴露给 Web 面板访问者，请仅在完全可信的网络环境中开启。
-> `allow_plugins` 同理：插件与主程序同权限，放开它等于让面板登录者通过插件执行任意代码。
+> `allow_extensions` 同理：插件与主程序同权限，放开它等于让面板登录者通过插件执行任意代码。
 
 ### `web.tunnel_mirror` — cloudflared 下载源
 
@@ -375,23 +375,23 @@ auth:
 
 ---
 
-### `plugins` — wow 插件设置
+### `extensions` — wow 扩展设置
 
-> 📌 这里的 `plugins` 指 **wow 自身的 CLI 扩展插件**（`wow-plugins/` 目录），
+> 📌 这里的 `extensions` 指 **wow 自身的 CLI 扩展**（`wow-extensions/` 目录），
 > 与 Minecraft 服务端的 Bukkit/Paper 插件（放 `pool/plugins/`）是两回事。
-> 开发指南见 [WOW-PLUGINS.md](other/WOW-PLUGINS.md)。
+> 开发指南见 [WOW-EXTENSIONS.md](other/WOW-EXTENSIONS.md)。
 
 | 字段 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
 | `port` | integer | `9000` | 插件通信端口（历史预留键，当前未使用） |
 | `enabled` | boolean | `false` | 旧版插件服务开关（历史预留键，当前未使用） |
-| `enabled_loader` | boolean | `true` | 🔺 **V3.5.21** 启动时是否扫描并加载 `wow-plugins/`。设为 `false` 可彻底关闭插件系统 |
+| `enabled_loader` | boolean | `true` | 🔺 **V3.5.21** 启动时是否扫描并加载 `wow-extensions/`。设为 `false` 可彻底关闭wow扩展系统 |
 | `quiet` | boolean | `false` | 🔺 **V3.5.21** 加载成功时是否打印提示（出错始终会打印） |
 
 **示例：**
 ```yaml
-plugins:
-  enabled_loader: true    # 关掉插件系统就改成 false，启动速度最快
+extensions:
+  enabled_loader: true    # 关掉扩展系统就改成 false，启动速度最快
   quiet: false
 ```
 

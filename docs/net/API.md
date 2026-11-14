@@ -522,22 +522,67 @@ V3.5.19 新增的文本编辑器接口，参数与 `/api/files/content` 完全�
 
 ## 四之三、模组搜索与下载队列（V3.5.6 新增，需认证）
 
-### `GET /api/mod/search?source=<modrinth|curseforge>&query=<关键词>&loader=<加载器>&version=<MC版本>`
-搜索模组。
+### `GET /api/mod/search`
 
-- `source` 默认 `modrinth`（公开 API，无需密钥）
-- `curseforge` 需在配置中提供 `api_keys.curseforge`，否则返回 `400` 并给出指引
-- 返回的每项含 `name`、`author`、`version`、`downloads`、`summary`、`loaders`、`project_id`、`slug`、`download_url`
+搜索**模组**或 **Minecraft 服务端插件**（V3.8.0 起）。
+
+| 参数 | 默认 | 说明 |
+|------|------|------|
+| `source` | `modrinth` | 下载源，**默认优先 Modrinth**（公开 API，无需密钥）；`curseforge` 为次选，走 `cf_client` 三层降级（代理 → BYOK → 缓存），不再硬性要求 Key |
+| `query` | — | 关键词（必填） |
+| `projectType` | `mod` | `mod` = 模组；`plugin` = Minecraft 服务端插件（Bukkit/Paper） |
+| `category` | — | 类别 slug：`technology`（科技）/ `magic`（魔法）/ `optimization`（优化）/ `adventure`（冒险）/ `library`（API·库） |
+| `version` | — | MC 版本，如 `1.20.1` |
+| `loader` | — | 加载器：模组端 `forge`/`fabric`/`neoforge`/`quilt`；插件端 `bukkit`/`spigot`/`paper`/`purpur`/`folia` |
+
+返回的每项含 `name`、`author`、`version`、`downloads`、`summary`、`loaders`、`project_id`、`slug`、`download_url`。
 
 ```json
-{ "success": true, "source": "modrinth", "results": [ { "name": "Sodium", "download_url": "https://..." } ] }
+{ "success": true, "source": "modrinth", "projectType": "mod", "results": [ { "name": "Sodium", "download_url": "https://..." } ] }
 ```
+
+> 「下载」不再由前端直接拉 `download_url` 落共享池，而是把 `project_id` 交给
+> `POST /api/tasks/run`（`command: "mod install"`），由后端按**目标方案**解析版本并下载。
 
 ### `GET /api/mod/info?source=<来源>&project=<项目id或slug>`
 获取项目详情，含 `dependencies` 依赖列表（Modrinth）。
 
 ```json
 { "success": true, "name": "Just Enough Items (JEI)", "author": "mezz", "version": "15.70.0.221", "downloads": "83.3M", "dependencies": [ { "project_id": "7tEfOcA7", "dependency_type": "required" } ] }
+```
+
+### 玩家管理（V3.8.0，P1）
+
+名单写入统一遵守**铁律①**：服务器运行时通过服务器指令生效（绝不直接改 JSON），
+停服时才写名单文件；玩家 ID 强制校验 `^[a-zA-Z0-9_]{3,16}$` 防指令注入。
+
+#### `GET /api/players?scheme=<name>`
+
+`scheme` 缺省用当前激活方案。返回 `known_players` 及每个玩家的白/黑名单状态。
+
+```json
+{ "success": true, "scheme": "alpha", "server_running": false, "known_players": [ { "id": "Steve", "first_join": "2026-11-14T09:00:00.000Z", "whitelisted": true, "banned": false } ] }
+```
+
+#### `POST /api/players/scan`
+
+Body `{ "scheme": "alpha" }`。从 `scheme/<方案>/logs/latest.log` **末尾最多 5MB**
+流式回溯提取 `joined the game`，合并进 `scheme.yaml` 的 `known_players`（去重 +
+首次加入时间）。**禁止整文件读**。
+
+```json
+{ "success": true, "added": 2, "total": 5, "bytesRead": 5242880, "ids": ["Alex", "Notch"] }
+```
+
+#### `POST /api/players/whitelist` / `POST /api/players/ban`
+
+Body `{ "scheme": "alpha", "id": "Steve" }`。运行时走控制台中继队列 / stdin
+发 `whitelist add` / `ban`；停服时写 `whitelist.json` / `banned-players.json`。
+`via` 字段标明生效路径（`stdin` / `file`）；运行时无法送达时返回 `409`
+且**不降级改 JSON**。
+
+```json
+{ "success": true, "via": "stdin", "message": "..." }
 ```
 
 ### `GET /api/download/status`
@@ -562,13 +607,13 @@ V3.5.19 新增的文本编辑器接口，参数与 `/api/files/content` 完全�
 ```
 `total` 为 pool 中资源文件总数，`refs` 为已被方案引用的数量（按文件名匹配）。
 
-### `GET /api/plugins`
-列出已安装的 wow 插件（只读）：
+### `GET /api/extensions`
+列出已安装的 wow 扩展（只读）：
 
 ```json
 {
   "success": true,
-  "plugins": [
+  "extensions": [
     {
       "name": "hello",
       "dirName": "hello",
@@ -586,10 +631,10 @@ V3.5.19 新增的文本编辑器接口，参数与 `/api/files/content` 完全�
 `trusted` 三态：`trusted`（指纹一致）/ `new`（从未信任）/ `changed`（信任后被改过）。
 `active` 恒等于 `trusted === 'trusted'`，即「下次启动会被真正加载」。
 
-> ⚠️ **插件命令默认不能经 Web 端执行**（`web.allow_plugins: false`）。
-> 本接口只是列出插件，不提供执行入口；即便插件已被信任，
+> ⚠️ **扩展命令默认不能经 Web 端执行**（`web.allow_extensions: false`）。
+> 本接口只是列出扩展，不提供执行入口；即便扩展已被信任，
 > 它的命令经 `/api/exec` 调用也会被 `command_policy` 拒绝，
-> 除非用户在配置里显式打开 `web.allow_plugins`。
+> 除非用户在配置里显式打开 `web.allow_extensions`。
 
 ### `GET /api/logs/analysis`
 获取最近一次日志 AI 分析报告。无报告时返回 `{ "success": true, "result": "", "message": "暂无分析报告，请先执行「日志分析」。" }`（而非 404）。

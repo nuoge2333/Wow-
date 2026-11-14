@@ -1,15 +1,15 @@
 #!/usr/bin/env node
 /**
- * V3.5.21：插件命令的策略管控
+ * V3.5.21：扩展命令的策略管控
  * ----------------------------------------------------------------
- * 插件命令是**运行期**才知道的顶层命令，因此比内置命令多两个风险点：
- *   ① Web 面板：插件是第三方任意代码，面板是远程入口，两者叠加等于
+ * 扩展命令是**运行期**才知道的顶层命令，因此比内置命令多两个风险点：
+ *   ① Web 面板：扩展是第三方任意代码，面板是远程入口，两者叠加等于
  *      「远程可控的任意代码执行」，默认必须禁止；
  *   ② 开服控制台：classifyConsoleInput 原先用 `WOW_NAMESPACES.has(head)`
- *      判断「是不是 wow 指令」，插件命令不在这个常量里，会被当成 MC 指令
+ *      判断「是不是 wow 指令」，扩展命令不在这个常量里，会被当成 MC 指令
  *      转发给服务端（表现为游戏里报 unknown command）。必须显式拦截。
  *
- * 本测试锁定这两条通路，以及 registerPluginCommand / resetPluginCommands 的行为。
+ * 本测试锁定这两条通路，以及 registerExtensionCommand / resetPluginCommands 的行为。
  */
 
 const assert = require('assert');
@@ -39,7 +39,7 @@ function withSwitches(opts, fn) {
     config.getConfig = (key, def) => {
         if (key === 'web.allow_scheme_ops') return opts.schemeOps === true;
         if (key === 'web.allow_remote_install') return opts.remoteInstall === true;
-        if (key === 'web.allow_plugins') return opts.plugins === true;
+        if (key === 'web.allow_extensions') return opts.extensions === true;
         if (key === 'web.host') return '127.0.0.1';
         if (key === 'web.dev_mode') return false;
         return originalGet.call(config, key, def);
@@ -48,7 +48,7 @@ function withSwitches(opts, fn) {
 }
 
 // classifyConsoleInput 不是模块导出（server.js 导出的是 class），
-// 这里用源码内的正则确认它已接入插件判断过于脆弱，
+// 这里用源码内的正则确认它已接入扩展判断过于脆弱，
 // 改为通过 ServerManager 实例的私有方法访问（挂在原型上便于测试）。
 function classify(line) {
     if (typeof ServerManager.prototype.classifyConsoleInput === 'function') {
@@ -63,59 +63,59 @@ function classify(line) {
 
 console.log('\n命令名登记\n');
 
-check('初始 RUNTIME_PLUGIN_CMDS 为空', () => {
+check('初始 RUNTIME_EXTENSION_CMDS 为空', () => {
     policy.resetPluginCommands();
-    assert.strictEqual(policy.RUNTIME_PLUGIN_CMDS.size, 0);
+    assert.strictEqual(policy.RUNTIME_EXTENSION_CMDS.size, 0);
 });
 
-check('registerPluginCommand 登记后可在 RUNTIME_PLUGIN_CMDS 里查到', () => {
+check('registerExtensionCommand 登记后可在 RUNTIME_EXTENSION_CMDS 里查到', () => {
     policy.resetPluginCommands();
-    policy.registerPluginCommand('hello');
-    assert.ok(policy.RUNTIME_PLUGIN_CMDS.has('hello'));
+    policy.registerExtensionCommand('hello');
+    assert.ok(policy.RUNTIME_EXTENSION_CMDS.has('hello'));
 });
 
-check('registerPluginCommand 统一转小写', () => {
+check('registerExtensionCommand 统一转小写', () => {
     policy.resetPluginCommands();
-    policy.registerPluginCommand('HeLLo');
-    assert.ok(policy.RUNTIME_PLUGIN_CMDS.has('hello'));
+    policy.registerExtensionCommand('HeLLo');
+    assert.ok(policy.RUNTIME_EXTENSION_CMDS.has('hello'));
 });
 
-check('registerPluginCommand 忽略空值', () => {
+check('registerExtensionCommand 忽略空值', () => {
     policy.resetPluginCommands();
-    policy.registerPluginCommand('');
-    policy.registerPluginCommand(null);
-    policy.registerPluginCommand('   ');
-    assert.strictEqual(policy.RUNTIME_PLUGIN_CMDS.size, 0);
+    policy.registerExtensionCommand('');
+    policy.registerExtensionCommand(null);
+    policy.registerExtensionCommand('   ');
+    assert.strictEqual(policy.RUNTIME_EXTENSION_CMDS.size, 0);
 });
 
-check('isWowNamespace 覆盖内置命名空间与插件命令', () => {
+check('isWowNamespace 覆盖内置命名空间与扩展命令', () => {
     policy.resetPluginCommands();
-    policy.registerPluginCommand('hello');
+    policy.registerExtensionCommand('hello');
     assert.strictEqual(policy.isWowNamespace('server'), true);
     assert.strictEqual(policy.isWowNamespace('hello'), true);
     assert.strictEqual(policy.isWowNamespace('say'), false);
 });
 
 check('resetPluginCommands 清空', () => {
-    policy.registerPluginCommand('hello');
+    policy.registerExtensionCommand('hello');
     policy.resetPluginCommands();
-    assert.strictEqual(policy.RUNTIME_PLUGIN_CMDS.size, 0);
+    assert.strictEqual(policy.RUNTIME_EXTENSION_CMDS.size, 0);
 });
 
-console.log('\nWeb 面板：插件命令默认禁止\n');
+console.log('\nWeb 面板：扩展命令默认禁止\n');
 
 policy.resetPluginCommands();
-policy.registerPluginCommand('hello');
+policy.registerExtensionCommand('hello');
 
-withSwitches({ plugins: false }, () => {
-    check('默认配置下拒绝插件命令', () => {
+withSwitches({ extensions: false }, () => {
+    check('默认配置下拒绝扩展命令', () => {
         const r = policy.isWebCommandAllowed('hello');
         assert.strictEqual(r.allowed, false);
     });
 
-    check('拒绝理由给出 web.allow_plugins 指引', () => {
+    check('拒绝理由给出 web.allow_extensions 指引', () => {
         const r = policy.isWebCommandAllowed('hello --name Steve');
-        assert.match(r.reason, /web\.allow_plugins/);
+        assert.match(r.reason, /web\.allow_extensions/);
         assert.match(r.reason, /hello/);
     });
 
@@ -132,12 +132,12 @@ withSwitches({ plugins: false }, () => {
     });
 });
 
-withSwitches({ plugins: true }, () => {
-    check('allow_plugins = true 时放行插件命令', () => {
+withSwitches({ extensions: true }, () => {
+    check('allow_extensions = true 时放行扩展命令', () => {
         assert.strictEqual(policy.isWebCommandAllowed('hello --name Steve').allowed, true);
     });
 
-    check('放行插件命令不代表放行危险内置命令', () => {
+    check('放行扩展命令不代表放行危险内置命令', () => {
         assert.strictEqual(policy.isWebCommandAllowed('init').allowed, false);
         assert.strictEqual(policy.isWebCommandAllowed('mod remove a.jar').allowed, false);
     });
@@ -145,22 +145,22 @@ withSwitches({ plugins: true }, () => {
 
 console.log('\nauditDangerousConfig\n');
 
-withSwitches({ plugins: false }, () => {
+withSwitches({ extensions: false }, () => {
     check('全关时无警告', () => {
         assert.deepStrictEqual(policy.auditDangerousConfig(), []);
     });
 });
 
-withSwitches({ plugins: true }, () => {
-    check('打开 allow_plugins 时产生警告并点名该开关', () => {
+withSwitches({ extensions: true }, () => {
+    check('打开 allow_extensions 时产生警告并点名该开关', () => {
         const w = policy.auditDangerousConfig();
         assert.ok(w.length > 0);
-        assert.ok(w.join('\n').includes('web.allow_plugins'));
+        assert.ok(w.join('\n').includes('web.allow_extensions'));
         assert.ok(w.join('\n').includes('同权限'));
     });
 });
 
-console.log('\n开服控制台：插件命令不得当 MC 指令转发\n');
+console.log('\n开服控制台：扩展命令不得当 MC 指令转发\n');
 
 check('未登记时 hello 被当 MC 指令（对照组）', () => {
     policy.resetPluginCommands();
@@ -169,17 +169,17 @@ check('未登记时 hello 被当 MC 指令（对照组）', () => {
     assert.strictEqual(r.action, 'mc');
 });
 
-check('登记后插件命令被显式拒绝，而非转发给 MC', () => {
+check('登记后扩展命令被显式拒绝，而非转发给 MC', () => {
     policy.resetPluginCommands();
-    policy.registerPluginCommand('hello');
+    policy.registerExtensionCommand('hello');
     const r = classify('hello Steve');
     assert.strictEqual(r.action, 'deny');
-    assert.match(r.reason, /插件命令 hello/);
+    assert.match(r.reason, /扩展命令 hello/);
 });
 
-check('带 wow 前缀的插件命令同样被拒', () => {
+check('带 wow 前缀的扩展命令同样被拒', () => {
     policy.resetPluginCommands();
-    policy.registerPluginCommand('hello');
+    policy.registerExtensionCommand('hello');
     const r = classify('wow hello');
     assert.strictEqual(r.action, 'deny');
 });

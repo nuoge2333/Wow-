@@ -85,7 +85,7 @@ check('登录闸门仍在（web.require_login=false 完全免登录）', () => {
 
 check('apiExec 不把变量拼进命令字符串', () => {
     assert.ok(!/apiExec\(`[^`]*\$\{/.test(html), '仍有拼接变量的 apiExec');
-    assert.ok(/apiExec\('plugin remove', \[name\]\)/.test(html), '插件删除命令参数化丢失');
+    assert.ok(/apiExec\('extension remove', \[name\]\)/.test(html), '扩展删除命令参数化丢失');
 });
 
 console.log('\n[3] 重写结构：CSS 外置 / 首屏干净 / 高级折叠');
@@ -108,7 +108,7 @@ check('首屏只留配置表单 + JVM 预览，扩展功能折进 details.advanc
     const advPos = html.indexOf('<details class="advanced">');
     const cfgPos = html.indexOf('id="config-form"');
     const jvmPos = html.indexOf('id="jvm-preview-panel"');
-    const pluginPos = html.indexOf('id="plugin-list"');
+    const pluginPos = html.indexOf('id="extension-list"');
     const schemaPos = html.indexOf('id="schema-list"');
     const themePos = html.indexOf('id="theme-list"');
     assert.ok(cfgPos > 0 && jvmPos > cfgPos, '首屏顺序不符');
@@ -118,8 +118,8 @@ check('首屏只留配置表单 + JVM 预览，扩展功能折进 details.advanc
 
 check('扩展功能 DOM 节点全部保留（折叠不等于删除）', () => {
     for (const id of [
-        'plugin-install-btn', 'plugin-refresh-btn', 'plugin-filter', 'plugin-list',
-        'plugin-install-modal', 'plugin-install-source', 'plugin-install-confirm', 'plugin-install-cancel',
+        'extension-install-btn', 'extension-refresh-btn', 'extension-filter', 'extension-list',
+        'extension-install-modal', 'extension-install-source', 'extension-install-confirm', 'extension-install-cancel',
         'schema-count', 'schema-import-btn', 'schema-refresh-btn', 'schema-list',
         'schema-import-modal', 'schema-import-json', 'schema-import-url', 'schema-import-confirm', 'schema-import-cancel',
         'theme-install-btn', 'theme-refresh-btn', 'theme-filter', 'theme-list',
@@ -135,6 +135,48 @@ check('两套 HTML 转义函数合并为一个 escapeHtml（无 escHtml 残留�
     assert.ok(!/function escHtml\(/.test(html), '仍残留 escHtml 定义');
     assert.ok(!/escHtml\(/.test(html), '仍有 escHtml 调用');
     assert.ok(html.includes("function $ =") || html.includes("const $ ="), '缺 DOM 助手');
+});
+
+console.log('\n[3.5] V3.8.0 玩家管理卡片');
+
+check('玩家管理卡片 DOM 节点齐全且位于折叠区之外', () => {
+    for (const id of [
+        'players-card', 'players-scheme-badge', 'players-server-badge',
+        'players-scheme-select', 'players-scan-btn', 'players-refresh-btn',
+        'players-filter', 'players-list', 'players-hint'
+    ]) {
+        assert.ok(html.includes(`id="${id}"`), `缺少玩家管理节点 ${id}`);
+    }
+    const advEnd = html.indexOf('</details>');
+    assert.ok(advEnd > 0 && html.indexOf('id="players-card"') > advEnd,
+        '玩家管理是常用功能，不应被收进折叠的高级管理区');
+});
+
+check('玩家管理接入 4 个后端接口并在 init 中加载', () => {
+    for (const frag of [
+        "apiGet('/api/players'",
+        "apiPost('/api/players/scan'",
+        "'/api/players/' + action",
+        'loadPlayerSchemes();',
+        'loadPlayers();'
+    ]) {
+        assert.ok(html.includes(frag), `缺少前端调用 ${frag}`);
+    }
+    // 防翻车提示必须写进界面，避免用户以为运行时是直接改 JSON
+    assert.ok(html.includes('绝不直接改 JSON'), '缺少铁律①的前端说明');
+});
+
+check('后端注册 /api/players 四个路由', () => {
+    const ws = require('fs').readFileSync(
+        require('path').join(__dirname, '..', 'src', 'web_service.js'), 'utf8');
+    for (const route of [
+        "app.get('/api/players'",
+        "app.post('/api/players/scan'",
+        "app.post('/api/players/whitelist'",
+        "app.post('/api/players/ban'"
+    ]) {
+        assert.ok(ws.includes(route), `缺少后端路由 ${route}`);
+    }
 });
 
 console.log('\n[4] 主题副本逐字节一致');

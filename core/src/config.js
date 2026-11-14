@@ -80,13 +80,13 @@ const DEFAULT_CONFIG = {
         // V3.5.7：危险指令开关（默认全关，保持安全基线）
         allow_scheme_ops: false,     // true = 放开 scheme create/switch/delete/edit/pull/prune/register/export/import
         allow_remote_install: false, // true = 放开 install <http(s)://...> 远程下载（等同任意代码执行入口）
-        // V3.5.21：true = 放开插件注册的自定义命令经 Web 端执行。
-        // 插件是第三方代码、与主程序同权限，Web 又是远程入口，两者叠加风险最高，故默认关闭。
-        allow_plugins: false,
-        // [实验性 / Beta] true = 允许把插件包内的前端目录挂到同源 /plugin-web/<插件>/。
-        // 默认关闭：插件前端与主面板同源，能读 cookie/localStorage，
-        // 开启后由 plugin_web.js 强制 CSP（frame-ancestors / connect-src 限同源）。
-        allow_plugins_web: false,
+        // V3.5.21：true = 放开扩展注册的自定义命令经 Web 端执行。
+        // 扩展是第三方代码、与主程序同权限，Web 又是远程入口，两者叠加风险最高，故默认关闭。
+        allow_extensions: false,
+        // [实验性 / Beta] true = 允许把扩展包内的前端目录挂到同源 /extension-web/<扩展>/。
+        // 默认关闭：扩展前端与主面板同源，能读 cookie/localStorage，
+        // 开启后由 extension_web.js 强制 CSP（frame-ancestors / connect-src 限同源）。
+        allow_extensions_web: false,
         // 指令一：true = 本面板挂在 nginx / Caddy 等反向代理后面。
         // 反代到 127.0.0.1:8080 时，绑定地址、socket 来源 IP、隧道标记全都
         // 「看起来是本机」，服务端无法自行分辨；必须由管理员显式声明，
@@ -122,13 +122,13 @@ const DEFAULT_CONFIG = {
         javaagent: null,
         server: null
     },
-    plugins: {
+    extensions: {
         port: 9000,
-        enabled: false,        // 旧版「插件服务端口」开关，保留键位仅为兼容老配置
-        // V3.5.21：是否在启动时自动加载 wow-plugins/ 下的插件。
-        // false = 完全不加载（插件命令不可用，也不用确认任何东西）
+        enabled: false,        // 旧版「扩展服务端口」开关，保留键位仅为兼容老配置
+        // V3.5.21：是否在启动时自动加载 wow-extensions/ 下的扩展。
+        // false = 完全不加载（扩展命令不可用，也不用确认任何东西）
         enabled_loader: true,
-        // 是否在启动时打印插件加载统计（false 则只在出错时说话）
+        // 是否在启动时打印扩展加载统计（false 则只在出错时说话）
         quiet: false
     },
     verbose: false,
@@ -173,18 +173,58 @@ const DEFAULT_CONFIG = {
 /**
  * 获取配置值，支持点号分隔键
  */
-function getConfig(key, defaultValue = null) {
-    const config = loadConfig();
-    const parts = key.split('.');
+// V3.8.0「wow插件 → wow扩展」彻底改名后的**旧键回退**：
+// 用户旧的 wow.yaml 里可能仍写着 allow_plugins / plugins.enabled_loader 等。
+// 新键未显式设置时回退读旧键，避免升级后开关被静默重置（尤其是安全开关）。
+const LEGACY_KEY_ALIAS = {
+    'web.allow_extensions': 'web.allow_plugins',
+    'web.allow_extensions_web': 'web.allow_plugins_web',
+    'extensions.enabled_loader': 'plugins.enabled_loader',
+    'extensions.quiet': 'plugins.quiet'
+};
+
+/**
+ * 把用户配置里的旧键「搬」到新键（只在内存里，不改盘）。
+ * 必须在 mergeDeep(DEFAULT_CONFIG, userConfig) **之前**做：合并后新键会被默认值
+ * 填满，就再也无法区分「用户没写新键」和「用户显式写了 false」了。
+ * 新键已显式出现时以新键为准，不覆盖。
+ */
+function migrateLegacyKeys(userConfig) {
+    if (!userConfig || typeof userConfig !== 'object') return userConfig;
+    for (const [newKey, oldKey] of Object.entries(LEGACY_KEY_ALIAS)) {
+        if (readConfigKey(userConfig, newKey) !== undefined) continue;
+        const oldVal = readConfigKey(userConfig, oldKey);
+        if (oldVal === undefined) continue;
+        const parts = newKey.split('.');
+        let cur = userConfig;
+        for (let i = 0; i < parts.length - 1; i++) {
+            if (!cur[parts[i]] || typeof cur[parts[i]] !== 'object') cur[parts[i]] = {};
+            cur = cur[parts[i]];
+        }
+        cur[parts[parts.length - 1]] = oldVal;
+    }
+    return userConfig;
+}
+
+function readConfigKey(config, dotted) {
     let current = config;
-    for (const part of parts) {
+    for (const part of dotted.split('.')) {
         if (current && typeof current === 'object' && part in current) {
             current = current[part];
         } else {
-            return defaultValue;
+            return undefined;
         }
     }
-    return current !== undefined ? current : defaultValue;
+    return current;
+}
+
+function getConfig(key, defaultValue = null) {
+    const config = loadConfig();
+    let value = readConfigKey(config, key);
+    if (value === undefined && LEGACY_KEY_ALIAS[key]) {
+        value = readConfigKey(config, LEGACY_KEY_ALIAS[key]);
+    }
+    return value !== undefined ? value : defaultValue;
 }
 
 /**
@@ -217,8 +257,8 @@ function loadConfig() {
     try {
         const fileContent = fs.readFileSync(CONFIG_FILE, 'utf8');
         const userConfig = yaml.load(fileContent);
-        // 合并默认值（缺失的键补上）
-        return mergeDeep(DEFAULT_CONFIG, userConfig);
+        // 先把旧键迁移到新键，再合并默认值（缺失的键补上）
+        return mergeDeep(DEFAULT_CONFIG, migrateLegacyKeys(userConfig));
     } catch (e) {
         console.error(`加载配置文件失败: ${e.message}`);
         return DEFAULT_CONFIG;

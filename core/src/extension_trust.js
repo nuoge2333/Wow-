@@ -1,22 +1,22 @@
 'use strict';
 
 /**
- * 插件信任表（V3.5.21-26.3c）
+ * 扩展信任表（V3.5.21-26.3c）
  * ----------------------------------------------------------------
- * 插件是**任意代码**，与 wow 主程序同进程同权限。既然做不到真沙箱
+ * 扩展是**任意代码**，与 wow 主程序同进程同权限。既然做不到真沙箱
  * （require 同权限、node:vm 也能 `this.constructor.constructor('return process')()` 逃逸），
  * 那就退一步做「知情同意 + 变更可感知」：
  *
- *   - 第一次加载某个插件时，记下它的内容指纹，并要求用户确认一次；
- *   - 之后每次启动比对指纹，**一个字节变了就当作新插件**，重新要求确认；
+ *   - 第一次加载某个扩展时，记下它的内容指纹，并要求用户确认一次；
+ *   - 之后每次启动比对指纹，**一个字节变了就当作新扩展**，重新要求确认；
  *   - 非交互环境（CI、Web 面板 spawn 的子进程、cron）没有终端可问，
- *     默认**拒绝**加载未信任插件，而不是默默放行。
+ *     默认**拒绝**加载未信任扩展，而不是默默放行。
  *
- * 信任表落在 `core/.plugins.trust.json`（与 .web.pid 一类运行时文件同级，
+ * 信任表落在 `core/.extensions.trust.json`（与 .web.pid 一类运行时文件同级，
  * 已加入 .gitignore）。结构：
  *   {
  *     "version": 1,
- *     "plugins": {
+ *     "extensions": {
  *       "hello": { "fingerprint": "sha256:ab12…", "trusted_at": "2025-01-01T00:00:00.000Z" }
  *     }
  *   }
@@ -31,11 +31,11 @@ const crypto = require('crypto');
 const fs = require('fs-extra');
 const path = require('path');
 
-/** 计算指纹时跳过的子目录（与插件内容无关，且体积可能很大） */
+/** 计算指纹时跳过的子目录（与扩展内容无关，且体积可能很大） */
 const SKIP_DIRS = new Set(['node_modules', '.git', '.svn', '.DS_Store']);
 
 /** 信任表文件名（相对 core/） */
-const TRUST_FILE = path.join(__dirname, '..', '.plugins.trust.json');
+const TRUST_FILE = path.join(__dirname, '..', '.extensions.trust.json');
 
 /** 参与指纹计算的文件大小上限：超过 2MB 的文件只算「大小 + 头尾各 4KB」 */
 const BIG_FILE = 2 * 1024 * 1024;
@@ -89,8 +89,8 @@ function hashFile(full) {
 }
 
 /**
- * 计算插件目录的内容指纹。
- * @param {string} pluginDir 插件目录绝对路径
+ * 计算扩展目录的内容指纹。
+ * @param {string} pluginDir 扩展目录绝对路径
  * @returns {string} `sha256:...`，目录不可读时返回 `sha256:` 前缀的空指纹
  */
 function fingerprint(pluginDir) {
@@ -146,8 +146,8 @@ function saveTrust(data, trustFile) {
 }
 
 /**
- * 判断插件是否已被信任（指纹一致）。
- * @param {string} name 插件名
+ * 判断扩展是否已被信任（指纹一致）。
+ * @param {string} name 扩展名
  * @param {string} fp 当前指纹
  * @param {string} [trustFile]
  * @returns {'trusted' | 'changed' | 'new'}
@@ -161,7 +161,7 @@ function checkTrust(name, fp, trustFile) {
 }
 
 /**
- * 记下一个插件的信任。
+ * 记下一个扩展的信任。
  * @param {string} name
  * @param {string} fp
  * @param {string} [trustFile]
@@ -177,7 +177,7 @@ function grantTrust(name, fp, trustFile, when) {
 }
 
 /**
- * 撤销一个插件的信任记录（卸载插件时调用）。
+ * 撤销一个扩展的信任记录（卸载扩展时调用）。
  * @param {string} name
  * @param {string} [trustFile]
  * @returns {boolean} 是否真的删掉了一条记录

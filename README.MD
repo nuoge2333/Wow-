@@ -25,7 +25,7 @@
 - 🔌 **模组与插件管理**：支持 Forge / Fabric / NeoForge / Quilt 模组，Bukkit / Spigot / Paper 插件
 - 📥 **整合包安装**：一键安装客户端整合包（含自动测试与不兼容模组清理）
 - 🎨 **主题包系统**：用户可完全替换 Web 界面，支持 ZIP 安装与切换
-- 🧩 **wow 插件系统**：通过 `plugin.json` + `index.js` 扩展新 CLI 命令，代码放 `wow-plugins/`，与主程序物理隔离；首次启用需确认，内容改动后重新确认
+- 🧩 **wow扩展系统**：通过 `extension.json` + `index.js` 扩展新 CLI 命令，代码放 `wow-extensions/`；wow扩展与主程序同进程同权限（非沙箱），首次启用需信任确认，内容改动后需重新确认
 - 🤖 **AI 日志分析**：对接 OpenAI/兼容 API，自动分析服务器错误并给出建议
 - 📧 **邮件通知**：登录验证码、崩溃报告、定时日志摘要（SMTP，15 分钟限流）
 - 🔐 **外置登录**：自动下载并注入 `authlib-injector`，支持 LittleSkin 等第三方认证
@@ -129,7 +129,7 @@ wow/
 │   └── <方案名>/             # 含核心 jar、mods/、plugins/、world/、server.properties、scheme.yaml
 ├── web/                      # Web 面板前端（实际生效的前端资源）
 ├── themes/                   # 主题包目录
-├── wow-plugins/              # wow 插件目录
+├── wow-extensions/           # wow扩展目录
 ├── wow.bat / wow.sh          # 启动脚本
 ├── update.bat / update.sh    # 更新脚本
 └── docs/                     # 文档
@@ -146,7 +146,7 @@ wow/
 - [完整命令参考](docs/COMMANDS.md)
 - [方案管理详解 (模板模式)](docs/scheme/SCHEMES.md)
 - [主题包开发指南](docs/net/THEMES.md)
-- [插件开发指南](docs/other/WOW-PLUGINS.md)
+- [wow扩展开发指南](docs/other/WOW-EXTENSIONS.md)
 - [Web 面板使用说明](docs/net/WEB_PANEL.md)
 - [联机 / 内网穿透（陶瓦）](docs/net/LAN_TERRACOTTA.md)
 - [陶瓦联机实测报告](docs/other/LAN_TERRACOTTA-TEST-REPORT.md)

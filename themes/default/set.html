@@ -12,7 +12,7 @@
     <h2>⚙️ 设置</h2>
     <p class="set-sub">
         按分组编辑 wow.yaml，改动会实时预览最终启动命令；保存后重启 wow 生效。<br>
-        插件、模组配置库与主题包等扩展功能收在下方「高级管理」中。
+        wow扩展、模组配置库与主题包等扩展功能收在下方「高级管理」中。
     </p>
 
     <!-- ===== 首屏：配置表单 + JVM 预览 ===== -->
@@ -58,22 +58,22 @@
         <div class="set-hint">修改后需要重启服务才能生效，部分配置项保存后立即生效。</div>
     </div>
 
-    <!-- ===== 高级管理：插件 / 模组配置库 / 主题包（默认折叠，DOM 全保留） ===== -->
+    <!-- ===== 高级管理：wow扩展 / 模组配置库 / 主题包（默认折叠，DOM 全保留） ===== -->
     <details class="advanced">
-        <summary>高级管理 · 插件 / 模组配置库 / 主题包</summary>
+        <summary>高级管理 · wow扩展 / 模组配置库 / 主题包</summary>
         <div class="settings-grid">
             <div class="settings-section">
-                <div class="title">🔌 wow 插件 <span class="badge">扩展命令</span> <span class="badge beta">实验性 / Beta</span></div>
+                <div class="title">🔌 wow扩展 <span class="badge">扩展命令</span> <span class="badge beta">实验性 / Beta</span></div>
                 <div class="set-note">
-                    <strong>插件系统仍在公测（实验性 / Beta）。</strong>插件代码与 wow 主程序同进程同权限，
-                    接口随时可能调整，请勿在生产环境依赖。单个插件加载失败只会被跳过并记日志，不影响服务器与面板启动。
+                    <strong>wow扩展系统仍在公测（实验性 / Beta）。</strong>wow扩展代码与 wow 主程序同进程同权限，
+                    接口随时可能调整，请勿在生产环境依赖。单个wow扩展加载失败只会被跳过并记日志，不影响服务器与面板启动。
                 </div>
                 <div class="btn-row" style="margin-bottom:12px;">
-                    <button class="btn btn-primary" id="plugin-install-btn">📦 安装插件</button>
-                    <button class="btn btn-secondary" id="plugin-refresh-btn">🔄 刷新列表</button>
+                    <button class="btn btn-primary" id="extension-install-btn">📦 安装wow扩展</button>
+                    <button class="btn btn-secondary" id="extension-refresh-btn">🔄 刷新列表</button>
                 </div>
-                <input class="filter-input" id="plugin-filter" placeholder="筛选插件..." />
-                <div id="plugin-list"><div class="empty-state">加载中...</div></div>
+                <input class="filter-input" id="extension-filter" placeholder="筛选wow扩展..." />
+                <div id="extension-list"><div class="empty-state">加载中...</div></div>
             </div>
 
             <div class="settings-section full">
@@ -101,6 +101,29 @@
             </div>
         </div>
     </details>
+
+    <!-- ===== V3.8.0 P1：玩家管理 ===== -->
+    <div class="settings-section full" id="players-card">
+        <div class="title">
+            👥 玩家管理
+            <span class="badge" id="players-scheme-badge">-</span>
+            <span class="badge" id="players-server-badge">读取中</span>
+        </div>
+        <div class="set-note">
+            名单来自 <code>scheme/&lt;方案&gt;/logs/latest.log</code> 里的 <code>joined the game</code> 记录，
+            去重后存入 <code>scheme.yaml</code> 的 <code>known_players</code>（含首次加入时间）。<br>
+            <strong>防翻车：</strong>服务器运行时，白/黑名单通过服务器指令即时生效（绝不直接改 JSON，避免与运行中的服务端抢写）；
+            停服时才写入名单文件。
+        </div>
+        <div class="btn-row" style="margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+            <select id="players-scheme-select" class="filter-input" style="max-width:200px;"></select>
+            <button class="btn btn-primary" id="players-scan-btn">🔄 刷新玩家名单</button>
+            <button class="btn btn-secondary" id="players-refresh-btn">↻ 重新加载</button>
+            <input class="filter-input" id="players-filter" placeholder="筛选玩家 ID..." style="flex:1;min-width:160px;" />
+        </div>
+        <div id="players-list"><div class="empty-state">加载中...</div></div>
+        <div class="set-hint" id="players-hint"></div>
+    </div>
 
     <!-- ===== 备用钥匙：设了密码，登录页就多一条「密码登录」通道 ===== -->
     <!-- 验证码登录永远保留，忘密码也能靠邮箱回去。邮箱必须与 mail.admin_email 一致。 -->
@@ -167,36 +190,36 @@
         </div>
     </div>
 
-    <!-- ===== 模态框：安装插件 ===== -->
-    <div class="modal-overlay" id="plugin-install-modal">
+    <!-- ===== 模态框：安装wow扩展 ===== -->
+    <div class="modal-overlay" id="extension-install-modal">
         <div class="modal">
-            <h3>📦 安装插件</h3>
+            <h3>📦 安装wow扩展</h3>
             <div class="form-group">
-                <label>插件包路径或 URL</label>
-                <input type="text" id="plugin-install-source" placeholder="/path/to/plugin.zip 或 https://example.com/plugin.zip" />
-                <div class="set-hint">支持 .zip 格式，需包含 plugin.json 和 index.js</div>
+                <label>wow扩展包路径或 URL</label>
+                <input type="text" id="extension-install-source" placeholder="/path/to/extension.zip 或 https://example.com/extension.zip" />
+                <div class="set-hint">支持 .zip 格式，需包含 extension.json 和 index.js</div>
             </div>
             <div class="btn-row">
-                <button class="btn btn-modal-cancel" id="plugin-install-cancel">取消</button>
-                <button class="btn btn-modal-confirm" id="plugin-install-confirm">安装</button>
+                <button class="btn btn-modal-cancel" id="extension-install-cancel">取消</button>
+                <button class="btn btn-modal-confirm" id="extension-install-confirm">安装</button>
             </div>
         </div>
     </div>
 
-    <!-- ===== 模态框：插件 Web UI（实验性 / Beta，sandbox iframe） ===== -->
-    <div class="modal-overlay" id="plugin-web-modal">
+    <!-- ===== 模态框：wow扩展 Web UI（实验性 / Beta，sandbox iframe） ===== -->
+    <div class="modal-overlay" id="extension-web-modal">
         <div class="modal modal-wide">
-            <h3 id="plugin-web-title">插件界面 <span class="badge beta">实验性 / Beta</span></h3>
+            <h3 id="extension-web-title">wow扩展界面 <span class="badge beta">实验性 / Beta</span></h3>
             <div class="set-note">
-                页面由第三方插件提供，运行在 <code>sandbox</code> iframe 中：它与主面板不同源，
-                无法读取本面板的登录凭证或 localStorage。若插件功能异常，请直接联系插件作者。
+                页面由第三方wow扩展提供，运行在 <code>sandbox</code> iframe 中：它与主面板不同源，
+                无法读取本面板的登录凭证或 localStorage。若wow扩展功能异常，请直接联系wow扩展作者。
             </div>
-            <iframe id="plugin-web-frame" class="plugin-web-frame"
+            <iframe id="extension-web-frame" class="extension-web-frame"
                     sandbox="allow-scripts allow-forms allow-popups"
                     referrerpolicy="no-referrer"
-                    title="插件界面"></iframe>
+                    title="wow扩展界面"></iframe>
             <div class="btn-row">
-                <button class="btn btn-modal-cancel" id="plugin-web-close">关闭</button>
+                <button class="btn btn-modal-cancel" id="extension-web-close">关闭</button>
             </div>
         </div>
     </div>
@@ -235,7 +258,7 @@
     // web.auth_password 永远隐藏：它存的是 scrypt 哈希，露在表单里只会被误改。
     const HIDDEN_KEYS = new Set(['web.auth_password']);
     if (!isLocalPanel) {
-        ['web.allow_scheme_ops', 'web.allow_remote_install', 'web.allow_plugins']
+        ['web.allow_scheme_ops', 'web.allow_remote_install', 'web.allow_extensions']
             .forEach((k) => HIDDEN_KEYS.add(k));
     }
     const DANGER_LOCKED_TEXT = '⚠️ 危险开关已被锁定。如需开启，请在服务器本机（127.0.0.1）访问 Web 面板修改，或使用 CLI 命令 wow config wow ...';
@@ -639,53 +662,53 @@
         } catch (e) { showToast('保存失败: ' + e.message, 'error'); }
     }
 
-    // ==================== 插件管理 ====================
-    const pluginList = $('plugin-list');
-    const pluginFilter = $('plugin-filter');
+    // ==================== wow扩展管理 ====================
+    const extensionList = $('extension-list');
+    const extensionFilter = $('extension-filter');
 
-    // 插件 Web UI：sandbox iframe，绝不同源直嵌
-    const pluginWebModal = $('plugin-web-modal');
-    const pluginWebFrame = $('plugin-web-frame');
-    const pluginWebTitle = $('plugin-web-title');
+    // wow扩展 Web UI：sandbox iframe，绝不同源直嵌
+    const extensionWebModal = $('extension-web-modal');
+    const extensionWebFrame = $('extension-web-frame');
+    const extensionWebTitle = $('extension-web-title');
 
-    function openPluginWeb(name, url) {
+    function openExtensionWeb(name, url) {
         if (!url) return;
         // 只允许本站相对路径，防止被篡改成外站地址
-        if (!/^\/plugin-web\/[A-Za-z0-9._~%\-\/]+$/.test(url)) {
-            showToast('插件界面地址非法', 'error');
+        if (!/^\/extension-web\/[A-Za-z0-9._~%\-\/]+$/.test(url)) {
+            showToast('wow扩展界面地址非法', 'error');
             return;
         }
-        pluginWebTitle.innerHTML = escapeHtml(name) + ' <span class="badge beta">实验性 / Beta</span>';
-        pluginWebFrame.src = url;
-        pluginWebModal.classList.add('active');
+        extensionWebTitle.innerHTML = escapeHtml(name) + ' <span class="badge beta">实验性 / Beta</span>';
+        extensionWebFrame.src = url;
+        extensionWebModal.classList.add('active');
     }
 
-    function closePluginWeb() {
-        pluginWebModal.classList.remove('active');
+    function closeExtensionWeb() {
+        extensionWebModal.classList.remove('active');
         // 清空 src：否则关闭后 iframe 里的脚本仍在后台运行
-        pluginWebFrame.src = 'about:blank';
+        extensionWebFrame.src = 'about:blank';
     }
 
-    $('plugin-web-close').addEventListener('click', closePluginWeb);
-    pluginWebModal.addEventListener('click', (e) => {
-        if (e.target === pluginWebModal) closePluginWeb();
+    $('extension-web-close').addEventListener('click', closeExtensionWeb);
+    extensionWebModal.addEventListener('click', (e) => {
+        if (e.target === extensionWebModal) closeExtensionWeb();
     });
 
-    async function loadPlugins(filter = '') {
+    async function loadExtensions(filter = '') {
         try {
-            const data = await apiGet('/api/plugins');
-            let plugins = data.plugins || [];
+            const data = await apiGet('/api/extensions');
+            let extensions = data.extensions || [];
             if (filter) {
                 const lower = filter.toLowerCase();
-                plugins = plugins.filter(p => p.name.toLowerCase().includes(lower) || p.author.toLowerCase().includes(lower));
+                extensions = extensions.filter(p => p.name.toLowerCase().includes(lower) || p.author.toLowerCase().includes(lower));
             }
-            if (!plugins.length) { pluginList.innerHTML = '<div class="empty-state">暂无插件</div>'; return; }
-            pluginList.innerHTML = plugins.map(p => `<div class="plugin-item">
+            if (!extensions.length) { extensionList.innerHTML = '<div class="empty-state">暂无wow扩展</div>'; return; }
+            extensionList.innerHTML = extensions.map(p => `<div class="extension-item">
                 <div class="info">
                     <span class="name">${escapeHtml(p.name)} <span class="badge beta">Beta</span></span>
                     <span class="meta">作者: ${escapeHtml(p.author)} v${escapeHtml(p.version)}</span>
                     <span class="meta" style="color:${p.active ? '#4CAF50' : '#667788'};">${p.active ? '已加载' : '未加载'}</span>
-                    ${p.web && !p.web_url ? '<span class="meta" style="color:#997722;">Web UI 未启用（需 allow_plugins_web）</span>' : ''}
+                    ${p.web && !p.web_url ? '<span class="meta" style="color:#997722;">Web UI 未启用（需 allow_extensions_web）</span>' : ''}
                 </div>
                 <div class="actions">
                     ${p.web_url ? `<button class="btn-sm blue" data-action="open" data-url="${escapeHtml(p.web_url)}" data-name="${escapeHtml(p.name)}">打开界面</button>` : ''}
@@ -693,46 +716,158 @@
                     <button class="btn-sm danger" data-action="delete" data-name="${escapeHtml(p.name)}">删除</button>
                 </div>
             </div>`).join('');
-            pluginList.querySelectorAll('[data-action]').forEach(el => {
+            extensionList.querySelectorAll('[data-action]').forEach(el => {
                 el.addEventListener('click', async () => {
                     const { action, name, url } = el.dataset;
-                    if (action === 'open') { openPluginWeb(name, url); return; }
+                    if (action === 'open') { openExtensionWeb(name, url); return; }
                     try {
                         if (action === 'delete') {
-                            if (!confirm(`确定要删除插件 "${name}" 吗？`)) return;
-                            await apiExec('plugin remove', [name]);
-                            showToast(`插件 ${name} 已删除`, 'success');
-                            loadPlugins(pluginFilter.value);
+                            if (!confirm(`确定要删除wow扩展 "${name}" 吗？`)) return;
+                            await apiExec('extension remove', [name]);
+                            showToast(`wow扩展 ${name} 已删除`, 'success');
+                            loadExtensions(extensionFilter.value);
                         } else {
-                            showToast('暂不支持切换插件状态，请使用 wow plugin 命令', 'warning');
+                            showToast('暂不支持切换wow扩展状态，请使用 wow extension 命令', 'warning');
                         }
                     } catch (e) { showToast('操作失败: ' + e.message, 'error'); }
                 });
             });
         } catch (e) {
-            pluginList.innerHTML = `<div class="empty-state" style="color:#f44336;">加载失败: ${escapeHtml(e.message)}</div>`;
+            extensionList.innerHTML = `<div class="empty-state" style="color:#f44336;">加载失败: ${escapeHtml(e.message)}</div>`;
         }
     }
 
-    const pluginInstallModal = $('plugin-install-modal');
-    const pluginInstallSource = $('plugin-install-source');
-    const pluginInstallConfirm = $('plugin-install-confirm');
+    const extensionInstallModal = $('extension-install-modal');
+    const extensionInstallSource = $('extension-install-source');
+    const extensionInstallConfirm = $('extension-install-confirm');
     function closePluginInstall() {
-        pluginInstallModal.classList.remove('active');
-        pluginInstallSource.value = '';
+        extensionInstallModal.classList.remove('active');
+        extensionInstallSource.value = '';
     }
-    async function installPlugin() {
-        const source = pluginInstallSource.value.trim();
-        if (!source) { showToast('请输入插件包路径或 URL', 'warning'); return; }
-        pluginInstallConfirm.disabled = true;
+    async function installExtension() {
+        const source = extensionInstallSource.value.trim();
+        if (!source) { showToast('请输入wow扩展包路径或 URL', 'warning'); return; }
+        extensionInstallConfirm.disabled = true;
         try {
-            await apiExec('plugin install', [source]);
-            showToast('插件安装成功', 'success');
+            await apiExec('extension install', [source]);
+            showToast('wow扩展安装成功', 'success');
             closePluginInstall();
-            loadPlugins(pluginFilter.value);
+            loadExtensions(extensionFilter.value);
         } catch (e) { showToast('安装失败: ' + e.message, 'error'); }
-        finally { pluginInstallConfirm.disabled = false; }
+        finally { extensionInstallConfirm.disabled = false; }
     }
+
+    // ==================== V3.8.0 P1：玩家管理 ====================
+    const playersList = $('players-list');
+    const playersFilter = $('players-filter');
+    const playersSelect = $('players-scheme-select');
+    const playersSchemeBadge = $('players-scheme-badge');
+    const playersServerBadge = $('players-server-badge');
+    const playersHint = $('players-hint');
+    let playersCache = [];
+
+    function selectedPlayerScheme() {
+        return playersSelect.value || '';
+    }
+
+    async function loadPlayerSchemes() {
+        try {
+            const data = await apiGet('/api/schemes');
+            const names = (data.schemes || [])
+                .map(s => (typeof s === 'string' ? s : (s && s.name) || ''))
+                .filter(Boolean);
+            const current = selectedPlayerScheme() || data.current || '';
+            playersSelect.innerHTML = '';
+            for (const n of names) {
+                const opt = document.createElement('option');
+                opt.value = n;
+                opt.textContent = n;
+                playersSelect.appendChild(opt);
+            }
+            if (current && names.includes(current)) playersSelect.value = current;
+        } catch (e) {
+            playersHint.textContent = '方案列表加载失败：' + e.message;
+        }
+    }
+
+    async function loadPlayers() {
+        const scheme = selectedPlayerScheme();
+        const q = scheme ? '?scheme=' + encodeURIComponent(scheme) : '';
+        try {
+            const data = await apiGet('/api/players' + q);
+            playersSchemeBadge.textContent = '方案：' + (data.scheme || '-');
+            playersServerBadge.textContent = data.server_running
+                ? '🟢 运行中 · 走服务器指令' : '⚪ 已停服 · 写名单文件';
+            playersCache = data.known_players || [];
+            renderPlayers();
+        } catch (e) {
+            playersList.innerHTML = `<div class="empty-state" style="color:#f44336;">加载失败: ${escapeHtml(e.message)}</div>`;
+        }
+    }
+
+    function renderPlayers() {
+        const filter = playersFilter.value.trim().toLowerCase();
+        const list = filter
+            ? playersCache.filter(p => String(p.id).toLowerCase().includes(filter))
+            : playersCache;
+        if (!list.length) {
+            playersList.innerHTML = '<div class="empty-state">暂无已知玩家。点「🔄 刷新玩家名单」从 latest.log 提取。</div>';
+            return;
+        }
+        playersList.innerHTML = list.map(p => {
+            const state = p.banned ? '⛔ 黑名单' : (p.whitelisted ? '✅ 白名单' : '· 普通');
+            const color = p.banned ? '#f44336' : (p.whitelisted ? '#4CAF50' : '#667788');
+            return `<div class="extension-item">
+                <div class="info">
+                    <span class="name">${escapeHtml(p.id)}</span>
+                    <span class="meta">首次加入: ${escapeHtml(p.first_join || '-')}</span>
+                    <span class="meta" style="color:${color};">${state}</span>
+                </div>
+                <div class="actions">
+                    <button class="btn-sm active" data-paction="whitelist" data-pid="${escapeHtml(p.id)}" ${p.whitelisted ? 'disabled' : ''}>移入白名单</button>
+                    <button class="btn-sm danger" data-paction="ban" data-pid="${escapeHtml(p.id)}" ${p.banned ? 'disabled' : ''}>移入黑名单</button>
+                </div>
+            </div>`;
+        }).join('');
+        playersList.querySelectorAll('[data-paction]').forEach(el => {
+            el.addEventListener('click', async () => {
+                const action = el.dataset.paction;
+                const id = el.dataset.pid;
+                const label = action === 'ban' ? '黑名单' : '白名单';
+                if (!confirm(`确定把玩家「${id}」移入${label}吗？`)) return;
+                el.disabled = true;
+                try {
+                    const r = await apiPost('/api/players/' + action, { scheme: selectedPlayerScheme(), id });
+                    const via = r.via === 'stdin' ? '服务器指令' : '名单文件';
+                    showToast(`已把 ${id} 移入${label}（${via}）`, 'success');
+                    await loadPlayers();
+                } catch (e) {
+                    showToast('操作失败: ' + e.message, 'error');
+                    el.disabled = false;
+                }
+            });
+        });
+    }
+
+    async function scanPlayers() {
+        const btn = $('players-scan-btn');
+        btn.disabled = true;
+        try {
+            const r = await apiPost('/api/players/scan', { scheme: selectedPlayerScheme() });
+            playersHint.textContent = `扫描完成：新增 ${r.added} 个玩家，累计 ${r.total} 个（仅读取日志尾部 ${r.bytesRead} 字节）`;
+            showToast(`扫描完成，新增 ${r.added} 个玩家`, 'success');
+            await loadPlayers();
+        } catch (e) {
+            showToast('扫描失败: ' + e.message, 'error');
+        } finally {
+            btn.disabled = false;
+        }
+    }
+
+    $('players-scan-btn').addEventListener('click', scanPlayers);
+    $('players-refresh-btn').addEventListener('click', loadPlayers);
+    playersFilter.addEventListener('input', renderPlayers);
+    playersSelect.addEventListener('change', loadPlayers);
 
     // ==================== 主题管理 ====================
     const themeList = $('theme-list');
@@ -910,16 +1045,16 @@
         }
     });
 
-    $('plugin-install-btn').addEventListener('click', () => {
-        pluginInstallModal.classList.add('active');
-        pluginInstallSource.focus();
+    $('extension-install-btn').addEventListener('click', () => {
+        extensionInstallModal.classList.add('active');
+        extensionInstallSource.focus();
     });
-    $('plugin-install-cancel').addEventListener('click', closePluginInstall);
-    pluginInstallConfirm.addEventListener('click', installPlugin);
-    pluginInstallModal.addEventListener('click', (e) => { if (e.target === pluginInstallModal) closePluginInstall(); });
-    pluginInstallSource.addEventListener('keydown', (e) => { if (e.key === 'Enter') installPlugin(); });
-    $('plugin-refresh-btn').addEventListener('click', () => loadPlugins(pluginFilter.value));
-    pluginFilter.addEventListener('input', () => loadPlugins(pluginFilter.value));
+    $('extension-install-cancel').addEventListener('click', closePluginInstall);
+    extensionInstallConfirm.addEventListener('click', installExtension);
+    extensionInstallModal.addEventListener('click', (e) => { if (e.target === extensionInstallModal) closePluginInstall(); });
+    extensionInstallSource.addEventListener('keydown', (e) => { if (e.key === 'Enter') installExtension(); });
+    $('extension-refresh-btn').addEventListener('click', () => loadExtensions(extensionFilter.value));
+    extensionFilter.addEventListener('input', () => loadExtensions(extensionFilter.value));
 
     $('theme-install-btn').addEventListener('click', () => {
         themeInstallModal.classList.add('active');
@@ -1057,10 +1192,12 @@
     // ==================== 初始化 ====================
     async function init() {
         await loadConfig();
-        await loadPlugins();
+        await loadExtensions();
         await loadThemes();
         await loadSchemas();
         await loadAuthConfig();
+        await loadPlayerSchemes();
+        await loadPlayers();
     }
     init();
 
@@ -1069,8 +1206,9 @@
         if (e.origin !== window.location.origin) return;
         if (e.data.type === 'refresh-settings') {
             loadConfig();
-            loadPlugins();
+            loadExtensions();
             loadThemes();
+            loadPlayers();
         }
     });
 })();

@@ -48,7 +48,7 @@ console.log('=== 危险开关集合 ===');
 check('DANGER_KEYS 恰为三个 web.allow_* 且带 danger 标记', () => {
     const derived = security.DERIVED_DANGER_KEYS;
     assert.deepStrictEqual([...derived].sort(), [
-        'web.allow_plugins', 'web.allow_remote_install', 'web.allow_scheme_ops'
+        'web.allow_extensions', 'web.allow_remote_install', 'web.allow_scheme_ops'
     ]);
 });
 check('显式常量 EXPECTED 与派生集合完全一致（双保险）', () => {
@@ -137,8 +137,8 @@ check('Host 缺失（HTTP/1.0）→ 不放宽', () => {
 console.log('=== 写入键提取（三种载荷）===');
 check('单键 {key,value} 显式取 body.key（最危险入口不漏拦）', () => {
     assert.deepStrictEqual(
-        security.extractWriteKeys({ key: 'web.allow_plugins', value: true }, flattenConfigPatch),
-        ['web.allow_plugins']);
+        security.extractWriteKeys({ key: 'web.allow_extensions', value: true }, flattenConfigPatch),
+        ['web.allow_extensions']);
 });
 check('批量 {patch} 能提出嵌套键', () => {
     const keys = security.extractWriteKeys(
@@ -161,7 +161,7 @@ const guard = security.guardDangerKeys({ ctx: () => LOCAL_CTX, flatten: flattenC
 check('本机改危险开关 → next() 放行', () => {
     let next = false;
     const res = mkRes();
-    guard(mkReq({ body: { key: 'web.allow_plugins', value: true } }), res, () => { next = true; });
+    guard(mkReq({ body: { key: 'web.allow_extensions', value: true } }), res, () => { next = true; });
     assert.ok(next, '本机不应拦截');
     assert.strictEqual(res.payload, null);
 });
@@ -198,8 +198,8 @@ check('不含危险键的配置写入 → 放行（不误伤整份保存）', ()
 check('非目标路径 / 非 POST 直接放行', () => {
     let n = 0;
     const g = security.guardDangerKeys({ ctx: () => LOCAL_CTX, flatten: flattenConfigPatch });
-    g(mkReq({ path: '/api/status', body: { key: 'web.allow_plugins' } }), mkRes(), () => { n++; });
-    g(mkReq({ method: 'GET', body: { key: 'web.allow_plugins' } }), mkRes(), () => { n++; });
+    g(mkReq({ path: '/api/status', body: { key: 'web.allow_extensions' } }), mkRes(), () => { n++; });
+    g(mkReq({ method: 'GET', body: { key: 'web.allow_extensions' } }), mkRes(), () => { n++; });
     assert.strictEqual(n, 2);
 });
 check('ctx 抛异常时 fail-closed（收紧，不 fail-open）', () => {
@@ -207,7 +207,7 @@ check('ctx 抛异常时 fail-closed（收紧，不 fail-open）', () => {
         ctx: () => { throw new Error('ctx boom'); }, flatten: flattenConfigPatch
     });
     const res = mkRes();
-    g(mkReq({ body: { key: 'web.allow_plugins' } }), res, () => {});
+    g(mkReq({ body: { key: 'web.allow_extensions' } }), res, () => {});
     assert.strictEqual(res.statusCode, 403);
 });
 

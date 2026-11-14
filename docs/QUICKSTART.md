@@ -59,7 +59,7 @@ wow init
 ```
 
 该命令会：
-- 创建必要的目录结构 (`core/pool/`, `scheme/`, `themes/`, `wow-plugins/`)
+- 创建必要的目录结构 (`core/pool/`, `scheme/`, `themes/`, `wow-extensions/`)
 - 检测 Java 安装（未检测到时，会在启动服务器时自动下载）
 - 生成默认配置文件 `core/wow.yaml`
 - 生成默认主题 `themes/default/`
@@ -278,5 +278,5 @@ wow server start --memory 6G
 - 📖 [完整命令参考](./COMMANDS.md)
 - 📦 [方案管理详解](scheme/SCHEMES.md)
 - 🎨 [主题包开发指南](net/THEMES.md)
-- 🔌 [插件开发指南](other/WOW-PLUGINS.md)
+- 🔌 [wow扩展开发指南](other/WOW-EXTENSIONS.md)
 - 🛠️ [故障排除](trouble/TROUBLE_WINDOWS.md)（[macOS](trouble/TROUBLE_MACOS.md) / [Debian·Ubuntu](trouble/TROUBLE_DEBIAN.md) / [Arch](trouble/TROUBLE_ARCH.md) / [Android 已知限制说明](other/ANDROID_LIMITATIONS.md)）

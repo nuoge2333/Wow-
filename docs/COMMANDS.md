@@ -289,7 +289,34 @@ wow pool stats
 
 ---
 
-## 三、模组管理 (5 个)
+## 三、模组管理 (6 个)
+
+### `mod install <project>` 🔺 V3.8.0
+
+从 Modrinth（默认）/ CurseForge 下载模组或 **Minecraft 服务端插件**，安装到**指定方案**。
+
+```bash
+wow mod install sodium --scheme alpha
+wow mod install luckperms --scheme alpha --kind plugins
+wow mod install sodium --scheme alpha --no-auto --source curseforge
+```
+
+| 选项 | 说明 |
+|------|------|
+| `--scheme <name>` | **必填**。目标方案；下载中心禁止默认塞入当前方案 |
+| `--kind <mods\|plugins>` | 装进 `scheme/<方案>/mods/`（默认）或 `plugins/` |
+| `--source <src>` | `modrinth`（默认）\| `curseforge` |
+| `--version <v>` / `--loader <l>` | 覆盖自动推断；缺省时读目标方案 `scheme.yaml` 的 `version` / `loader` |
+| `--no-auto` | 关闭自动解析：不递归拉前置依赖 |
+
+默认开启**自动解析**：按方案核心版本 + 加载器选最适配文件，并递归抓取必需依赖
+（最多 3 层，API 超时自动降级并给出提示）。文件以 stream 方式下载到方案目录，
+进度会进入 Web 面板「下载队列」Tab。
+
+> ⚠️ 这里的 `--kind plugins` 指 **Minecraft 服务端的 Bukkit/Paper 插件**；
+> wow 自身的扩展请用 `wow extension install`（见第五节）。
+
+---
 
 ### `mod list`
 
@@ -459,91 +486,94 @@ wow theme info <name>
 
 ---
 
-## 五之二、插件管理 (7 个)
+## 五之二、wow扩展管理 (7 个)
 
-> 📌 这里的「插件」指 **wow 自身的 CLI 扩展插件**（`wow-plugins/` 目录），不是 Minecraft 服务端的 Bukkit/Paper 插件。开发指南见 [WOW-PLUGINS.md](other/WOW-PLUGINS.md)。
+> 📌 这里的「wow扩展」指 **wow 自身的 CLI 扩展系统**（`wow-extensions/` 目录），
+> 不是 Minecraft 服务端的 Bukkit/Paper 插件。开发指南见
+> [WOW-EXTENSIONS.md](other/WOW-EXTENSIONS.md)。
+> `wow plugin` 作为隐藏别名保留，兼容旧脚本。
 >
-> ⚠️ 插件与主程序同权限，不是沙箱。首次启用需确认，内容改动后需重新确认。
+> ⚠️ wow扩展与主程序同权限，不是沙箱。首次启用需确认，内容改动后需重新确认。
 
-### `plugin list`
+### `extension list`
 
-列出已安装插件及其信任状态。
+列出已安装 wow扩展及其信任状态。
 
 ```bash
-wow plugin list
+wow extension list
 ```
 
 信任状态三态：`✅ 已信任` / `⏳ 未信任` / `⚠️ 已变更`。
 
 ---
 
-### `plugin info <name>`
+### `extension info <name>`
 
-查看单个插件详情：作者、版本、信任状态、命令一览。
+查看单个 wow扩展详情：作者、版本、信任状态、命令一览。
 
 ```bash
-wow plugin info hello
+wow extension info hello
 ```
 
 ---
 
-### `plugin install <source>`
+### `extension install <source>`
 
-安装插件。`<source>` 可以是 ZIP 包，也可以直接是插件目录（开发期方便）。
+安装 wow扩展。`<source>` 可以是 ZIP 包，也可以直接是扩展目录（开发期方便）。
 
 ```bash
-wow plugin install ./hello.zip
-wow plugin install ./hello          # 目录形态
-wow plugin install ./hello.zip -f   # 覆盖同名插件
+wow extension install ./hello.zip
+wow extension install ./hello          # 目录形态
+wow extension install ./hello.zip -f   # 覆盖同名 wow扩展
 ```
 
-安装只做两件事：断言文件是 ZIP（文件头 `PK`）、断言包内有合法的 `plugin.json`。**不验证来源、不验证签名**——是否信任由你决定。
+安装只做两件事：断言文件是 ZIP（文件头 `PK`）、断言包内有合法的 `extension.json`。**不验证来源、不验证签名**——是否信任由你决定。
 
 ---
 
-### `plugin remove <name>`
+### `extension remove <name>`
 
-卸载插件：删除 `wow-plugins/<name>/` 目录，同时撤销信任记录。
-
-```bash
-wow plugin remove hello
-```
-
----
-
-### `plugin trust <name>`
-
-信任插件：记录它**当前内容**的 SHA-256 指纹，之后启动不再询问。
+卸载 wow扩展：删除 `wow-extensions/<name>/` 目录，同时撤销信任记录。
 
 ```bash
-wow plugin trust hello
+wow extension remove hello
 ```
 
 ---
 
-### `plugin untrust <name>`
+### `extension trust <name>`
 
-撤销信任。下次启动时该插件会被当作新插件，重新要求确认。
+信任 wow扩展：记录它**当前内容**的 SHA-256 指纹，之后启动不再询问。
 
 ```bash
-wow plugin untrust hello
+wow extension trust hello
 ```
 
 ---
 
-### `plugin path`
+### `extension untrust <name>`
 
-打印插件目录与信任表位置，并给出目录结构示意。
+撤销信任。下次启动时该 wow扩展会被当作新扩展，重新要求确认。
 
 ```bash
-wow plugin path
+wow extension untrust hello
 ```
 
 ---
 
-### 插件注册的自定义命令
+### `extension path`
 
-插件可以在 `plugin.json` 里声明命令，安装并信任后它们会变成 wow 的**顶层命令**：
+打印 wow扩展目录与信任表位置，并给出目录结构示意。
+
+```bash
+wow extension path
+```
+
+---
+
+### wow扩展注册的自定义命令
+
+wow扩展可以在 `extension.json` 里声明命令，安装并信任后它们会变成 wow 的**顶层命令**：
 
 ```bash
 wow hello --name Steve
@@ -552,7 +582,7 @@ wow hello --name Steve
 | 场景 | 行为 |
 |------|------|
 | CLI 终端 | ✅ 正常执行 |
-| **Web 面板** | ❌ 默认禁止。需在配置中打开 `web.allow_plugins: true` |
+| **Web 面板** | ❌ 默认禁止。需在配置中打开 `web.allow_extensions: true` |
 | **开服控制台** | ❌ 显式拒绝，不会转发给 Minecraft 服务端 |
 
 ---
@@ -765,13 +795,39 @@ wow config server max-players 50
 
 ### `config white <action> [player]`
 
-白名单管理。
+白名单管理（直接改 `whitelist.json`，**仅在停服时使用**）。
 
 ```bash
 wow config white list
 wow config white add Steve
 wow config white remove Steve
 ```
+
+> ⚠️ 这条旧命令不检查服务器是否在跑。运行中改白名单请用
+> `wow config players whitelist <id>`（自动走服务器指令）。
+
+---
+
+### `config players <action>` 🔺 V3.8.0
+
+玩家管理：从日志追踪已知玩家，并把玩家移入白/黑名单。
+
+```bash
+wow config players scan                 # 从 logs/latest.log 尾部回溯提取 joined the game
+wow config players list                 # 列出 known_players 及白/黑名单状态
+wow config players whitelist Steve      # 移入白名单
+wow config players ban Griefer          # 移入黑名单
+wow config players list --scheme alpha  # 指定方案（缺省用当前激活方案）
+```
+
+**铁律①（防翻车）**：服务器运行时，`whitelist` / `ban` 通过服务器指令
+（`whitelist add` / `ban`）即时生效，**绝不直接改 JSON**（避免与运行中的服务端
+抢写文件）；只有停服时才写 `whitelist.json` / `banned-players.json`。
+玩家 ID 强制校验 `^[a-zA-Z0-9_]{3,16}$`，防止指令注入。
+
+`scan` 只读日志**末尾最多 5MB**（流式回溯），不会把整份 `latest.log` 读进内存；
+结果按 ID 去重合并进 `scheme/<方案>/scheme.yaml` 的 `known_players`，
+已有条目保留原 `first_join`。
 
 ---
 

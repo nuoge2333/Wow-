@@ -102,7 +102,7 @@ function makeSilentIO(answers = {}) {
 /** 真实终端交互（仅在 TTY 且用户没给 --yes 时使用） */
 function makeTerminalIO() {
     // 走 stdin_session 而不是自建 readline：本函数在「非 REPL 的独立运行」
-    // 场景下才会被选中，但仍可能有别的消费者（例如插件确认框）在场。
+    // 场景下才会被选中，但仍可能有别的消费者（例如扩展确认框）在场。
     // 由单例统一裁决谁先用，比各自 createInterface 安全。
     const stdinSession = require('./stdin_session');
     let lease = null;

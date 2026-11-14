@@ -21,3 +21,9 @@ core/test export-ignore
 # scripts 是发版打包脚本——两者对装好 wow 的用户都没有用处。
 deploy/cfproxy-worker export-ignore
 scripts export-ignore
+
+# 维护者内部文档不进发行包（仓库内保留，维护者照常使用）：
+# 发版规则只描述发布节奏与动作边界，对装好 wow 的用户没有用处。
+# TUI.md 的独立副本放在 .docs-legacy/（已 gitignore），同样不进归档。
+docs/RELEASE_POLICY.md export-ignore
+.docs-legacy export-ignore

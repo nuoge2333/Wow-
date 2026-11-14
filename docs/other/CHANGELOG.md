@@ -42,7 +42,9 @@
 
 | 版本 | 状态 | 发布时间 |
 |------|------|------|
-| **3.7.3-26.46** | 当前版本（M 模式画面独占 + 三处线上问题） | 2026-11-09 |
+| **3.8.0-26.48** | 当前版本（下载中心重构 + 玩家管理 + 三条铁律 + wow扩展改名） | 2026-11-14 |
+| **3.7.4-26.47** | 上一版本（发版周期合并内容见 RELEASE_POLICY.md 第五节） | 2026-11-13 |
+| **3.7.3-26.46** | 上一版本（M 模式画面独占 + 三处线上问题） | 2026-11-09 |
 | **3.7.2-26.45** | 上一版本 |2026-11-08|
 | **3.7.1-26.44** | 上一版本 |2026-11-08|
 | **3.7.0-26.43** | 上一版本 |2026-11-08|
@@ -116,6 +118,60 @@
 | **3.0.0** | 上一版本 |2026-07-23|
 | **2.0.0** | 内部迭代 |2026-02-27|
 | **1.0.0** | 内部迭代 |2026-02-07|
+
+---
+
+## [3.8.0-26.48] — 2026-11-14：尚书省 3.8.0 模组/插件生态与玩家管理完善令
+
+> 一个版本同时处理四件事：下载中心重构（P0）、玩家追踪与名单管理（P1）、
+> 三条防翻车铁律落地、以及 wow 扩展系统的彻底改名。
+
+### 一、P0 下载中心重构（`web/down.html`）
+
+- **默认源改为 Modrinth**：Web/CLI 搜索缺省值统一 `modrinth`，CurseForge 降为次选
+  （仍走 `cf_client` 三层降级：代理 → BYOK → 缓存）。
+- **筛选增强**：新增类别（科技/魔法/优化/冒险/API·库）、MC 版本、加载器三个维度；
+  Modrinth 用 `project_type` / `categories` / `versions` facet，CF 用 classId + gameVersion。
+- **新增「插件搜索」Tab**：与模组搜索同样支持来源/类别/版本/加载器筛选，
+  加载器为 Bukkit/Spigot/Paper/Purpur/Folia，`projectType=plugin`。
+- **下载必须选方案**：点「下载」弹出选方案弹窗（默认项为空、绝不预填当前方案），
+  确认后提交 `mod install` 异步任务到下载队列，安装到 `scheme/<方案>/mods|plugins/`；
+  不再 `down <url> -o pool/mods/` 直落共享池。
+- **自动解析开关**：默认勾选；按目标方案 `scheme.yaml` 的 MC 版本 + 加载器选最适配文件，
+  并递归抓取必需依赖。
+- 依赖按钮改为展示「项目详情 + 依赖清单」，不再是形同虚设的重复下载。
+
+### 二、P1 玩家追踪与名单管理
+
+- `player_tracker.js`：从 `scheme/<方案>/logs/latest.log` 用正则
+  `([a-zA-Z0-9_]{3,16}) joined the game` 提取玩家，合并进 `scheme.yaml` 的
+  `known_players`（去重 + 首次加入时间）。
+- CLI `wow config players list|scan|whitelist|ban`；Web 设置页新增「👥 玩家管理」卡片
+  （`GET /api/players`、`POST /api/players/scan|whitelist|ban`）。
+
+### 三、三条防翻车铁律
+
+1. **运行时名单走 stdin**：`player_manager.js` 按 `server.isRunning()` 分发 ——
+   运行时优先经控制台中继队列发 `whitelist add` / `ban`（兜底写 stdin），
+   绝不直接改 JSON；stdin 发送失败也不降级改 JSON；停服才写
+   `whitelist.json` / `banned-players.json`。玩家 ID 强制校验防指令注入。
+2. **依赖递归 ≤ 3 层**：`dep_resolver.js` 用 `MAX_DEPTH=3` + `visited` 防环 +
+   15s 超时降级；单点失败只记录提示、不影响本体与其它依赖下载。
+3. **日志禁止整文件读**：`player_tracker.js` 用 `fs.statSync` 取大小 +
+   `createReadStream({start})` 只回溯末尾最多 5MB，逐行匹配；源码静态守卫
+   禁止出现 `readFileSync` 调用。
+
+### 四、术语彻底改名：wow插件 → wow扩展
+
+- 全仓库（含代码标识符）把 wow 自身扩展系统的说法统一改为「wow扩展」；
+  Minecraft 服务端的 `plugins/`（Bukkit/Paper 插件）保持「插件」不变。
+- 文件 `plugin_*.js → extension_*.js`、测试与文档同步 `git mv`；
+  类名/工厂键/命令/API/配置键一并改：`PluginManager→ExtensionManager`、
+  `wow plugin→wow extension`（保留 `plugin` 隐藏别名）、`/api/plugins→/api/extensions`、
+  `web.allow_plugins→web.allow_extensions`、`wow-plugins/→wow-extensions/`、
+  `.plugins.trust.json→.extensions.trust.json`、`plugin.json→extension.json`。
+- 新增 `mod_search`、`dep_resolver`、`content_installer`、`player_manager`、
+  `player_tracker` 等单测；全量回归 63 个测试文件全绿。
 
 ---
 

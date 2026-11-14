@@ -204,15 +204,15 @@ const SCHEMA = [
         advanced: true, danger: true
     },
     {
-        key: 'web.allow_plugins', type: 'boolean', group: 'Web 面板', label: '允许执行插件命令',
-        desc: '放开插件注册的自定义命令经面板执行。⚠️ 插件是第三方代码、与主程序同权限，默认关闭。',
+        key: 'web.allow_extensions', type: 'boolean', group: 'Web 面板', label: '允许执行扩展命令',
+        desc: '放开扩展注册的自定义命令经面板执行。⚠️ 扩展是第三方代码、与主程序同权限，默认关闭。',
         advanced: true, danger: true
     },
     {
-        key: 'web.allow_plugins_web', type: 'boolean', group: 'Web 面板',
-        label: '允许挂载插件 Web UI（实验性）',
-        desc: '把插件包内声明的前端目录挂到同源 /plugin-web/<插件>/ 下（对应 allow-plugins-web）。' +
-              '⚠️ 插件前端与主面板同源，默认关闭；开启后响应头强制 frame-ancestors / connect-src 限同源。',
+        key: 'web.allow_extensions_web', type: 'boolean', group: 'Web 面板',
+        label: '允许挂载 wow扩展 Web UI（实验性）',
+        desc: '把扩展包内声明的前端目录挂到同源 /extension-web/<扩展>/ 下（对应 allow-plugins-web）。' +
+              '⚠️ 扩展前端与主面板同源，默认关闭；开启后响应头强制 frame-ancestors / connect-src 限同源。',
         advanced: true
     },
     {

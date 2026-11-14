@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * V3.5.21：插件信任表（plugin_trust.js）
+ * V3.5.21：插件信任表（extension_trust.js）
  * ----------------------------------------------------------------
  * 锁定的行为：
  *   1. 指纹对「文件内容」敏感——改一个字节就变；
@@ -16,7 +16,7 @@ const fs = require('fs-extra');
 const os = require('os');
 const path = require('path');
 
-const trust = require('../src/plugin_trust');
+const trust = require('../src/extension_trust');
 
 let passed = 0;
 let failed = 0;
@@ -50,7 +50,7 @@ function makePlugin(name, files) {
 console.log('\n指纹计算\n');
 
 check('同一目录两次计算结果相同', () => {
-    const dir = makePlugin('p1', { 'plugin.json': '{"name":"p1"}', 'index.js': 'module.exports={}' });
+    const dir = makePlugin('p1', { 'extension.json': '{"name":"p1"}', 'index.js': 'module.exports={}' });
     assert.strictEqual(trust.fingerprint(dir), trust.fingerprint(dir));
 });
 
@@ -81,8 +81,8 @@ check('重命名文件指纹改变（文件名参与计算）', () => {
 });
 
 check('同名同内容、创建顺序不同 → 指纹相同', () => {
-    const a = makePlugin('orderA', { 'index.js': 'X', 'plugin.json': 'Y' });
-    const b = makePlugin('orderB', { 'plugin.json': 'Y', 'index.js': 'X' });
+    const a = makePlugin('orderA', { 'index.js': 'X', 'extension.json': 'Y' });
+    const b = makePlugin('orderB', { 'extension.json': 'Y', 'index.js': 'X' });
     assert.strictEqual(trust.fingerprint(a), trust.fingerprint(b));
 });
 

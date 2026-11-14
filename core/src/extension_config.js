@@ -1,18 +1,18 @@
 'use strict';
 
 /**
- * 插件配置持久化（plugin-config）
+ * 扩展配置持久化（plugin-config）
  * ----------------------------------------------------------------
- * 物理布局（与插件代码物理隔离，插件目录被整体删除也不丢配置）：
+ * 物理布局（与扩展代码物理隔离，扩展目录被整体删除也不丢配置）：
  *
  *   core/plugin-config/
- *     <插件名>/
+ *     <扩展名>/
  *       config.json          当前配置（默认值 + 用户改动合并后的结果）
  *       config.json.tmp-*    写入中间态（rename 成功后即消失）
  *
  * 三条硬约束：
  *
- *  1. **路径不许穿越**。插件名是外部输入（plugin.json 的 name / 目录名），
+ *  1. **路径不许穿越**。扩展名是外部输入（extension.json 的 name / 目录名），
  *     `../../src/cli` 这种值若直接拼进路径，就能让「写配置」变成「改主程序源码」。
  *     这里用 safeResolve 双层校验：名字必须单段，解析结果必须仍在根目录内。
  *
@@ -20,12 +20,12 @@
  *     rename 在同一文件系统内是原子的：要么是旧内容，要么是新内容，
  *     不会出现「写了一半的 JSON」——断电时尤其重要。
  *
- *  3. **坏文件不许拖垮插件**。config.json 被手改成非法 JSON 时，
+ *  3. **坏文件不许拖垮扩展**。config.json 被手改成非法 JSON 时，
  *     备份成 config.json.corrupt-<时间戳> 并退回默认值，
- *     而不是让插件在启动时直接抛异常。
+ *     而不是让扩展在启动时直接抛异常。
  *
- * 注意：插件与主程序同进程同权限，本模块防的是**误用与路径穿越**，
- * 不是恶意代码（恶意代码可以直接 require('fs') 删库，见 plugin_context.js）。
+ * 注意：扩展与主程序同进程同权限，本模块防的是**误用与路径穿越**，
+ * 不是恶意代码（恶意代码可以直接 require('fs') 删库，见 extension_context.js）。
  */
 
 const fs = require('fs-extra');
@@ -50,7 +50,7 @@ const FORBIDDEN_KEY_SEGMENTS = new Set(['__proto__', 'prototype', 'constructor']
 function assertSafeName(name) {
     const raw = String(name == null ? '' : name);
     if (!utils.isSafeSchemeName(raw)) {
-        throw new Error(`插件名「${raw}」不合法：必须是不含路径分隔符的单段名称`);
+        throw new Error(`扩展名「${raw}」不合法：必须是不含路径分隔符的单段名称`);
     }
     return raw.trim();
 }
@@ -118,11 +118,11 @@ function sanitize(value, depth = 0) {
     return undefined; // function / symbol / undefined 落不下来
 }
 
-class PluginConfig {
+class ExtensionConfig {
     /**
      * @param {object} options
-     * @param {string} options.pluginName 插件名（必须与 manifest 的 name 一致）
-     * @param {object} [options.defaults] plugin.json 里声明的 config 默认值
+     * @param {string} options.pluginName 扩展名（必须与 manifest 的 name 一致）
+     * @param {object} [options.defaults] extension.json 里声明的 config 默认值
      * @param {string} [options.root] 配置根目录（测试用）
      */
     constructor(options = {}) {
@@ -224,7 +224,7 @@ class PluginConfig {
     }
 
     /**
-     * 整体替换（仍然会保留默认值里的键，避免插件升级后丢默认项）。
+     * 整体替换（仍然会保留默认值里的键，避免扩展升级后丢默认项）。
      * @param {object} patch
      */
     merge(patch) {
@@ -241,7 +241,7 @@ class PluginConfig {
     }
 
     /**
-     * 串行写队列：同一插件的多次写按调用顺序落地。
+     * 串行写队列：同一扩展的多次写按调用顺序落地。
      * @private
      */
     _enqueueWrite(data, removeFirst = false) {
@@ -283,12 +283,12 @@ class PluginConfig {
                 try { fs.closeSync(fd); } catch (e2) { /* ignore */ }
             }
             try { if (fs.existsSync(tmp)) fs.removeSync(tmp); } catch (e2) { /* ignore */ }
-            throw new Error(`写入插件配置失败（${this.pluginName}）：${e.message}`);
+            throw new Error(`写入扩展配置失败（${this.pluginName}）：${e.message}`);
         }
     }
 
     /**
-     * 列出所有已有配置的插件名。
+     * 列出所有已有配置的扩展名。
      * @returns {string[]}
      */
     static list(root) {
@@ -302,8 +302,8 @@ class PluginConfig {
     }
 }
 
-module.exports = PluginConfig;
-module.exports.PluginConfig = PluginConfig;
+module.exports = ExtensionConfig;
+module.exports.ExtensionConfig = ExtensionConfig;
 module.exports.DEFAULT_ROOT = DEFAULT_ROOT;
 module.exports.CONFIG_FILENAME = CONFIG_FILENAME;
 module.exports._internals = { safeResolve, splitKey, deepMerge, sanitize, assertSafeName };
