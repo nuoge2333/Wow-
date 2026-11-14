@@ -90,6 +90,7 @@ git push origin main
 | Release 附件上传接口 | REST 直接 POST 到 assets 返回 `Not Found` | 用 `gh release upload`，别手搓 API |
 | GitHub 归档缓存延迟 | 刚推 tag 后下载到的可能是旧内容 | 独立核对包内 `cli.js` 的版本号，别只看哈希稳定 |
 | Gitee Release 建不了 | OpenAPI 只认私人令牌（`access_token`），git remote 里的登录密码返回 401；网页端在无登录态的环境里也走不通 | 让用户给一个勾了 `projects` 权限的私人令牌，用它调 `POST /repos/{owner}/{repo}/releases` 建完再 `attach_files` |
+| Gitee 网页登录二步验证 | 用 remote 内嵌密码走 Playwright 网页登录，提交后跳转 `/login/two-factor?verify_token=…`，要求邮箱/手机验证码；随后访问 `releases/new` 403 | 别在沙箱里硬闯 2FA。要么由用户临时提供验证码完成登录，要么直接用私人令牌走 OpenAPI；**优先令牌** |
 | GitHub Release 漏传源码 zip | 附件只有 `SHA256SUMS`、缺 `wow-<tag>.zip`（v3.6.1 时两个都在），自动更新不受影响，手动下载的人拿不到包 | 发版后核对附件清单必须是 `SHA256SUMS` + `wow-<tag>.zip` 两项；补包用 `git archive --format=zip --prefix=wow-<tag>/ -o wow-<tag>.zip <tag>`，可复现历史包的字节 |
 | Gitee 附件上传字段 | 直传会失败，`browser_download_url` 不返回 | `-F "access_token=…" -F "file=@<path>;filename=<附件名>"`，附件名要用 `filename=` 显式指定 |
 | Gitee 同名附件不覆盖 | 重复上传 `SHA256SUMS` 会变成**两个同名附件**，`browser_download_url` 完全相同，下载时可能拿到旧的那份 | 上传前先删。注意 `GET /releases/tags/<tag>` 返回的 `assets` **没有 `id` 字段**，必须调 `GET /releases/{id}/attach_files` 才拿得到可删除的 id（`DELETE …/attach_files/{id}` 返回 204） |
@@ -113,7 +114,7 @@ git push origin main
      Minecraft 服务端 `plugins/`（Bukkit/Paper）保持「插件」不变；
      `plugin` 保留为 CLI 隐藏别名以防外部脚本断。
   3. 新增 `mod_search` / `dep_resolver` / `content_installer` / `player_manager` /
-     `player_tracker` 等单测，全量回归 **63 个文件全绿**（76.6s）。
+     `player_tracker` 等单测，全量回归 **64 个文件全绿**（76.8s）。
 - 上一周期已发行内容（六项合并为 **v3.7.4-26.47**，2026-11-13）：
   1. **readline 收归单例**（11-10）：`core/src/stdin_session.js` 全项目唯一
      消费者，三层防线（唯一出口 / 运行时不变式 / 全局创建守卫）。
@@ -139,7 +140,7 @@ git push origin main
      `menu_flat.test.js` 扩到 27 项。
   6. **`file.html` 工具栏 `margin: px;` 缺值**（11-13）：补为 `margin: 12px 0`。
 - 上一周期全量回归：`npm test` **54 个文件全绿**（75.9s），`WOW_PTY_STRICT=1`
-  严格模式 13 项全过。本周期回归见上（63 个文件）。
+  严格模式 13 项全过。本周期回归见上（64 个文件）。
 
 ### 本版发行进度（v3.8.0-26.48，2026-11-14）
 
@@ -147,7 +148,7 @@ git push origin main
 |------|------|
 | 升版本号（cli.js / package.json / package-lock.json / tui.js 注释） | ✅ `3.8.0-26.48` |
 | CHANGELOG 新增 `[3.8.0-26.48]` 章节 + 版本表更新 | ✅ 四节（P0 / P1 / 铁律 / 改名） |
-| 全量回归 63 文件 | ✅ 76.6s 全绿 |
+| 全量回归 64 文件 | ✅ 76.8s 全绿（发版后二次复核同样 64 文件全绿） |
 | `docs/RELEASE_POLICY.md` 与 `TUI.md` 排除出发行包 | ✅ `.gitattributes` export-ignore |
 | commit + tag | ✅ `9deeeed` / `v3.8.0-26.48` |
 | 双端推送 main + tag | ✅ GitHub（`http.version=HTTP/1.1`）、Gitee 均成功 |
@@ -155,13 +156,22 @@ git push origin main
 | SHA256SUMS | ✅ 两行（GitHub + Gitee 源码归档），两端归档哈希实测一致 |
 | GitHub Release + 双附件 + latest | ✅ 附件 `SHA256SUMS` + `wow-v3.8.0-26.48.zip`；`latest` 已指向本版 |
 | 端到端核对 | ✅ GitHub 归档经 gh-proxy 下载，包内 version `3.8.0-26.48`，哈希 `397e30d5…` 与清单一致；Gitee 归档 `8f116da1…` 一致 |
-| **Gitee Release** | ⚠️ **未完成**：仓库内嵌凭证是登录密码，OpenAPI 返回 `401 Access token does not exist`；需用户提供勾了 `projects` + `releases` 权限的私人令牌 |
+| 发版后二次复核 | ✅ `gh release download` 取回两附件；Release 上 `SHA256SUMS` 与本地字节一致；源码包 `8f116da1…` 与本地打包件一致；包内 version `3.8.0-26.48`；`RELEASE_POLICY.md` / `TUI.md` / `core/test/` / `scripts/` 均未泄漏；GitHub `latest` 指向本版 |
+| **Gitee Release** | ⚠️ **未完成**：内嵌凭证是登录密码，OpenAPI 返回 `401`；改用网页端登录又被二步验证拦截。需用户提供勾了 `projects` + `releases` 权限的私人令牌 |
 
-> 🕳 **本版 Gitee 阻塞**：`git remote get-url gitee` 里的是 17 位登录密码，
-> `GET /releases/tags/<tag>?access_token=…` 直接 401。main 与 tag 已推送到 Gitee，
-> 源码归档也可下载且哈希已入 `SHA256SUMS`；**仅 Release 对象与附件未创建**。
+> 🕳 **本版 Gitee 阻塞（已穷举两条自动化路径）**：
+> 1. `git remote get-url gitee` 里的是 17 位**登录密码**，
+>    `GET /releases/tags/<tag>?access_token=…` 直接 `401 Access token does not exist`；
+>    Basic Auth 调 `/api/v5/user` 同样 401。
+> 2. 改用 Playwright 走**网页端登录**：密码提交后被重定向到
+>    `/login/two-factor?verify_token=…`，提示「当前帐号存在异常登录行为」并要求发送
+>    邮箱/手机验证码；无登录态访问 `releases/new` 返回 403。沙箱无法接收验证码。
+>
+> main 与 tag 已推送到 Gitee，源码归档也可下载且哈希已入 `SHA256SUMS`；
+> **仅 Release 对象与附件未创建**，GitHub 侧全部完成。
 > 拿到私人令牌后补：`POST /repos/nuoge233/wow/releases`（须带 `target_commitish`）
-> → `attach_files` 上传 `SHA256SUMS` + zip（重名附件要先删）。
+> → `attach_files` 上传 `SHA256SUMS` + zip（重名附件要先删），
+> 或直接用 `GITEE_TOKEN=<令牌> bash scripts/make-sha256sums.sh v3.8.0-26.48 --upload`。
 
 ### 上一版发行进度（v3.7.4-26.47，2026-11-13）
 
