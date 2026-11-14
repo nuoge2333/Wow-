@@ -61,3 +61,7 @@ desktop.ini
 # V3.7.4：TUI.md 内容已并入 docs/COMMANDS.md（第十一节 M/L 模式），
 # 独立副本仅留作本地参考，不进入 git tag 源码归档（发行包）。
 .docs-legacy/
+
+# 发版时本地打的源码附件包 / 校验清单只作为 Release 产物，不入库。
+SHA256SUMS
+wow-*.zip

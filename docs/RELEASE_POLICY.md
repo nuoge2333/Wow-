@@ -149,7 +149,19 @@ git push origin main
 | CHANGELOG 新增 `[3.8.0-26.48]` 章节 + 版本表更新 | ✅ 四节（P0 / P1 / 铁律 / 改名） |
 | 全量回归 63 文件 | ✅ 76.6s 全绿 |
 | `docs/RELEASE_POLICY.md` 与 `TUI.md` 排除出发行包 | ✅ `.gitattributes` export-ignore |
-| commit + tag + 双端推送 + Release + 双附件 + SHA256SUMS | 见下方执行记录 |
+| commit + tag | ✅ `9deeeed` / `v3.8.0-26.48` |
+| 双端推送 main + tag | ✅ GitHub（`http.version=HTTP/1.1`）、Gitee 均成功 |
+| 源码附件 zip | ✅ `wow-v3.8.0-26.48.zip`（911 KB，包内 `version` 已核对） |
+| SHA256SUMS | ✅ 两行（GitHub + Gitee 源码归档），两端归档哈希实测一致 |
+| GitHub Release + 双附件 + latest | ✅ 附件 `SHA256SUMS` + `wow-v3.8.0-26.48.zip`；`latest` 已指向本版 |
+| 端到端核对 | ✅ GitHub 归档经 gh-proxy 下载，包内 version `3.8.0-26.48`，哈希 `397e30d5…` 与清单一致；Gitee 归档 `8f116da1…` 一致 |
+| **Gitee Release** | ⚠️ **未完成**：仓库内嵌凭证是登录密码，OpenAPI 返回 `401 Access token does not exist`；需用户提供勾了 `projects` + `releases` 权限的私人令牌 |
+
+> 🕳 **本版 Gitee 阻塞**：`git remote get-url gitee` 里的是 17 位登录密码，
+> `GET /releases/tags/<tag>?access_token=…` 直接 401。main 与 tag 已推送到 Gitee，
+> 源码归档也可下载且哈希已入 `SHA256SUMS`；**仅 Release 对象与附件未创建**。
+> 拿到私人令牌后补：`POST /repos/nuoge233/wow/releases`（须带 `target_commitish`）
+> → `attach_files` 上传 `SHA256SUMS` + zip（重名附件要先删）。
 
 ### 上一版发行进度（v3.7.4-26.47，2026-11-13）
 
