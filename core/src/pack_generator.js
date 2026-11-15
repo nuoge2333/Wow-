@@ -48,6 +48,35 @@ class PackGenerator {
     }
 
     /**
+     * 解析整合包加载器标识（CurseForge manifest 的 minecraft.modLoaders[].id
+     * 形如 fabric-0.16.10 / forge-47.3.0）。
+     *
+     * wow 不精确追踪加载器版本，这里按「默认版本表 → 已安装 jar 文件名推断」兜底，
+     * 客户端启动器（Prism / GDLauncher / 官方）导入时会按 MC 版本再校正，
+     * 关键是把 manifestType / modLoaders 字段补齐，让整合包能被正确识别。
+     *
+     * @param {string} loader 加载器名（forge/fabric/quilt/neoforge）
+     * @param {string} serverDir 方案目录（用于扫描已安装 jar）
+     * @returns {string} 形如 `fabric-0.16.10`
+     */
+    _resolveLoaderId(loader, serverDir) {
+        const base = String(loader || 'forge').toLowerCase();
+        const DEFAULT_LOADER_VERSION = {
+            fabric: '0.16.10', quilt: '0.25.0', neoforge: '20.6.115', forge: '47.3.0'
+        };
+        let ver = DEFAULT_LOADER_VERSION[base] || 'latest';
+        try {
+            const files = fs.readdirSync(serverDir);
+            const re = new RegExp(base + '[\\-. _](\\d[\\d.]+)', 'i');
+            for (const f of files) {
+                const m = f.match(re);
+                if (m) { ver = m[1]; break; }
+            }
+        } catch (e) { /* 读不到就用默认版本 */ }
+        return `${base}-${ver}`;
+    }
+
+    /**
      * 安装客户端整合包
      * @param {string} source - 整合包文件路径或 URL
      */
@@ -107,6 +136,7 @@ class PackGenerator {
         });
 
         // 6. 安装模组
+        // 6a. 可远程下载的模组（第三方 manifest 的 files/mods[] 带 url）
         if (manifest.mods && manifest.mods.length > 0) {
             console.log(`📥 安装 ${manifest.mods.length} 个模组...`);
             for (const mod of manifest.mods) {
@@ -122,9 +152,36 @@ class PackGenerator {
                 }
             }
         }
+        // 6b. 随包分发（overrides/mods）的模组：直接复制进当前方案 mods/
+        const overridesModsSrc = manifest.overrides
+            ? path.join(extractDir, manifest.overrides, 'mods')
+            : path.join(extractDir, 'mods');
+        if (fs.existsSync(overridesModsSrc)) {
+            const schemeModsDir = path.join(this.serverDir, 'mods');
+            fs.ensureDirSync(schemeModsDir);
+            fs.copySync(overridesModsSrc, schemeModsDir);
+            console.log('✅ 随包模组已复制到方案 mods/');
+        }
 
-        // 7. 复制配置文件
-        const configSrc = path.join(extractDir, 'config');
+        // 6c. Modrinth 索引里「非模组」的远程文件（config / 资源包 / 脚本等）：
+        // 随包文件已由 6b/7 从解压目录复制，这里只补下载链接型文件。
+        if (manifest.extraFiles && manifest.extraFiles.length) {
+            console.log(`📥 下载 ${manifest.extraFiles.length} 个整合包附加文件（config / 资源包等）...`);
+            for (const ef of manifest.extraFiles) {
+                try {
+                    const dest = path.join(this.serverDir, ef.relPath);
+                    fs.ensureDirSync(path.dirname(dest));
+                    await this.installer.downloadFile(ef.url, dest);
+                } catch (e) {
+                    console.warn(`⚠️ 文件 ${ef.relPath} 下载失败: ${e.message}`);
+                }
+            }
+        }
+
+        // 7. 复制配置文件（优先 overrides/config，其次顶层 config）
+        const configSrc = manifest.overrides
+            ? path.join(extractDir, manifest.overrides, 'config')
+            : path.join(extractDir, 'config');
         if (fs.existsSync(configSrc)) {
             const configDest = path.join(this.serverDir, 'config');
             fs.copySync(configSrc, configDest);
@@ -190,7 +247,7 @@ class PackGenerator {
      */
     async generate(name, options = {}) {
         const version = options.version || config.getConfig('server.version', '1.20.1');
-        const loader = options.loader || 'forge';
+        const loader = (options.loader || 'forge').toLowerCase();
         const outputDir = options.output || path.join(this.tempDir, 'packs');
 
         console.log(`📦 生成整合包: ${name}`);
@@ -198,54 +255,50 @@ class PackGenerator {
         console.log(`  加载器: ${loader}`);
 
         const packDir = path.join(outputDir, name);
-        fs.ensureDirSync(packDir);
+        fs.emptyDirSync(packDir);
 
-        // 1. 收集模组列表
+        // 1. 收集模组列表，原样打进 overrides/mods（随包分发，客户端导入即可识别）
         const mods = this.modManager.listMods(loader, version);
-        const modList = [];
+        const overridesMods = path.join(packDir, 'overrides', 'mods');
+        fs.ensureDirSync(overridesMods);
         for (const mod of mods) {
-            // 这里简化处理，实际需要从模组 jar 中提取元数据或从 pool 中获取
-            modList.push({
-                name: mod.name,
-                version: mod.version || 'unknown',
-                url: `file://${mod.path}` // 或使用 pool 中的相对路径
-            });
+            const destPath = path.join(overridesMods, path.basename(mod.path));
+            if (!fs.existsSync(destPath)) fs.copyFileSync(mod.path, destPath);
         }
 
-        // 2. 收集配置文件
+        // 2. 复制配置文件到 overrides/config
         const configSrc = path.join(this.serverDir, 'config');
         if (fs.existsSync(configSrc)) {
-            const configDest = path.join(packDir, 'config');
-            fs.copySync(configSrc, configDest);
+            fs.copySync(configSrc, path.join(packDir, 'overrides', 'config'));
         }
 
-        // 3. 生成 manifest.json
+        // 3. 生成符合 CurseForge 规范的 manifest.json
+        //    manifestType / manifestVersion / minecraft.modLoaders / overrides
+        //    为客户端启动器（Prism / GDLauncher / 官方）识别整合包的必备字段。
+        //    模组走 overrides/mods 随包分发，故 files（CurseForge 远程解析项）留空。
+        const loaderId = this._resolveLoaderId(loader, this.serverDir);
         const manifest = {
-            name: name,
+            manifestType: 'minecraftModpack',
+            manifestVersion: 1,
+            name,
             version: '1.0.0',
-            minecraft: version,
-            loader: loader,
-            mods: modList,
-            generated: new Date().toISOString()
+            author: 'wow',
+            minecraft: {
+                version,
+                modLoaders: [{ id: loaderId, primary: true }]
+            },
+            files: [],
+            overrides: 'overrides'
         };
         fs.writeFileSync(path.join(packDir, 'manifest.json'), JSON.stringify(manifest, null, 2));
 
-        // 4. 复制模组文件到 pack/mods
-        const modsDest = path.join(packDir, 'mods');
-        fs.ensureDirSync(modsDest);
-        for (const mod of mods) {
-            const srcPath = mod.path;
-            const destPath = path.join(modsDest, path.basename(srcPath));
-            if (!fs.existsSync(destPath)) {
-                fs.copyFileSync(srcPath, destPath);
-            }
-        }
-
-        // 5. 打包成 ZIP
+        // 4. 打包成 ZIP
         const zipPath = path.join(outputDir, `${name}.zip`);
+        if (fs.existsSync(zipPath)) fs.removeSync(zipPath);
         await this._zipDirectory(packDir, zipPath);
 
         console.log(`✅ 整合包已生成: ${zipPath}`);
+        console.log(`   模组 ${mods.length} 个已随包打包（overrides/mods），客户端导入即可识别`);
         return zipPath;
     }
 
@@ -285,24 +338,87 @@ class PackGenerator {
     }
 
     /**
-     * 解析 manifest
+     * 解析 manifest（CurseForge manifest.json 或 Modrinth modrinth.index.json）
      */
     async _parseManifest(extractDir) {
-        const possibleFiles = ['manifest.json', 'modpack.json', 'pack.json'];
+        const possibleFiles = ['manifest.json', 'modpack.json', 'pack.json', 'modrinth.index.json'];
         for (const file of possibleFiles) {
             const manifestPath = path.join(extractDir, file);
-            if (fs.existsSync(manifestPath)) {
-                const data = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-                // 标准化格式
-                return {
-                    minecraft: data.minecraft || data.version || '1.20.1',
-                    loader: data.loader || data.modLoader || 'forge',
-                    mods: data.mods || data.files || [],
-                    config: data.config || {}
-                };
+            if (!fs.existsSync(manifestPath)) continue;
+            const data = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+
+            // —— Modrinth mrpack 格式（modrinth.index.json）——
+            if (this._isModrinthIndex(data)) {
+                return this._parseModrinthIndex(data);
             }
+
+            // —— CurseForge 规范：minecraft.version + minecraft.modLoaders[].id ——
+            const mc = data.minecraft || data.version || '1.20.1';
+            const mcVersion = (typeof mc === 'string') ? mc : (mc.version || '1.20.1');
+            // modLoaders id 形如 fabric-0.16.10 / forge-47.3.0 → 取前缀作为加载器名
+            const rawLoader = data.loader || (Array.isArray(data.modLoaders) && data.modLoaders[0] && data.modLoaders[0].id) || data.modLoader || 'forge';
+            const loader = String(rawLoader).split('-')[0] || 'forge';
+            // 随包分发的模组/配置目录（CF 规范用 overrides；旧格式平铺在顶层）
+            const overrides = data.overrides || null;
+            // 可远程下载的模组（第三方 manifest 可能带 url；wow 生成的包 files 留空）
+            const mods = (data.mods || data.files || []).filter(m => m && (m.url || m.file || m.projectID));
+            return { minecraft: mcVersion, loader, mods, overrides, config: data.config || {}, extraFiles: [] };
         }
         return null;
+    }
+
+    /**
+     * 判定是否为 Modrinth mrpack 索引（modrinth.index.json）。
+     * 特征：含 formatVersion 且 game === 'minecraft'，依赖写在 dependencies 里。
+     */
+    _isModrinthIndex(data) {
+        return !!(data && typeof data.formatVersion !== 'undefined' &&
+            data.game === 'minecraft' && data.dependencies && typeof data.dependencies === 'object');
+    }
+
+    /**
+     * 解析 Modrinth mrpack 索引（modrinth.index.json）为内部统一结构。
+     *
+     * Modrinth 与 CurseForge 关键差异：
+     *   - 版本/加载器写在 `dependencies`（minecraft + fabric/forge/quilt/neoforge），
+     *     而非 minecraft.modLoaders[]。
+     *   - 文件在 `files[]`，每条带 `path`（相对方案根，如 mods/a.jar）与
+     *     `downloads[]`（远程直链）；无下载链接的文件随包内嵌于解压目录，
+     *     由 install() 的 6b/7 兜底复制，本解析器只处理远程链接型文件。
+     *
+     * 归一化结果：`mods` = 带下载链接的模组（交给 install 6a 远程安装）；
+     * `extraFiles` = 其余带下载链接的文件（config / 资源包等，install 6c 下载）。
+     *
+     * @param {object} data 已解析的 modrinth.index.json
+     * @returns {object} 与 CurseForge 解析一致的内部结构
+     */
+    _parseModrinthIndex(data) {
+        const deps = data.dependencies || {};
+        const mcVersion = deps.minecraft ||
+            (typeof data.version === 'string' ? data.version : '1.20.1');
+        // 加载器：dependencies 里除 minecraft 外的已知加载器键（按优先级取第一个命中的）
+        const LOADER_KEYS = ['neoforge', 'forge', 'fabric', 'quilt'];
+        let loader = 'forge';
+        for (const k of LOADER_KEYS) {
+            if (deps[k]) { loader = k; break; }
+        }
+
+        const files = Array.isArray(data.files) ? data.files : [];
+        const isModPath = (p) => /^mods[\\/][^\\/]+$/i.test(p) || /\.jar$/i.test(p);
+        const mods = [];
+        const extraFiles = [];
+        for (const f of files) {
+            if (!f || !f.path) continue;
+            const rel = String(f.path).replace(/\\/g, '/');
+            const dl = Array.isArray(f.downloads) ? f.downloads : [];
+            if (!dl.length) continue; // 无下载链接的随包文件由 6b/7 从解压目录复制
+            if (isModPath(rel)) {
+                mods.push({ name: path.basename(rel), url: dl[0], file: rel });
+            } else {
+                extraFiles.push({ relPath: rel, url: dl[0], size: f.fileSize || 0 });
+            }
+        }
+        return { minecraft: mcVersion, loader, mods, overrides: null, config: {}, extraFiles, inZipFiles: [] };
     }
 
     /**

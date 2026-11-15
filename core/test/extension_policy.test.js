@@ -189,8 +189,16 @@ check('内置命令行为不变：lan status 允许执行', () => {
     assert.strictEqual(classify('lan status').action, 'run');
 });
 
-check('内置命令行为不变：server start 被拒', () => {
-    assert.strictEqual(classify('server start').action, 'deny');
+check('P1-8：服务器未运行时 server start / restart 放行（不再误拦截）', () => {
+    // classifyConsoleInput 拿不到实例时保守视为「未运行」→ 放行 start / restart
+    assert.strictEqual(classify('server start').action, 'run');
+    assert.strictEqual(classify('server restart').action, 'run');
+});
+
+check('P1-8：服务器运行时 server start / restart 仍被拦截（避免重复拉起）', () => {
+    const runningServer = { isRunning: () => true };
+    assert.strictEqual(ServerManager.classifyConsoleInput('server start', runningServer).action, 'deny');
+    assert.strictEqual(ServerManager.classifyConsoleInput('server restart', runningServer).action, 'deny');
 });
 
 check('内置命令行为不变：op Steve 当 MC 指令', () => {

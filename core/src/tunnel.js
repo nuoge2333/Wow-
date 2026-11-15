@@ -44,14 +44,15 @@ const TUNNEL_DIR = path.join(__dirname, '../tunnel');
  * （1f99fb518b83dec2ba8d870a7cc991d82a77e6196295a3d2754ba17ab9f91872）。
  * 即便如此，下载后仍会做长度校验（见 downloadFile），换源不等于降低要求。
  *
- * 顺序：国内镜像 → GitHub 官方兜底（海外用户走第一家会多绕一跳，
- * 但三家镜像对海外也都能通，代价可接受；国内用户则显著受益）。
+ * 顺序：ghfast.top（默认优先，速度最稳）→ gh-proxy.com → ghproxy.net →
+ * GitHub 官方兜底（海外用户走第一家会多绕一跳，但三家镜像对海外也都能通，
+ * 代价可接受；国内用户则显著受益）。
  * 可用 `wow config wow web.tunnel_mirror <url>` 或环境变量
  * WOW_CLOUDFLARED_MIRROR 覆盖，见 resolveMirrors()。
  */
 const CF_MIRRORS = [
-    { name: 'gh-proxy.com', base: 'https://gh-proxy.com' },
     { name: 'ghfast.top', base: 'https://ghfast.top' },
+    { name: 'gh-proxy.com', base: 'https://gh-proxy.com' },
     { name: 'ghproxy.net', base: 'https://ghproxy.net' }
 ];
 
@@ -74,7 +75,7 @@ const CF_OFFICIAL = 'https://github.com/cloudflare/cloudflared/releases/latest/d
 function resolveMirrors(getConfig) {
     const list = [];
     // 镜像站要求的是「完整目标 URL」，但不同代理的规范不同：
-    //   gh-proxy.com  / ghfast.top  / ghproxy.net  -> <镜像>/<https://github.com/...>
+    //   ghfast.top  / gh-proxy.com  / ghproxy.net  -> <镜像>/<https://github.com/...>
     // 所以这里统一拼「带协议的完整 URL」，不要去掉协议头。
     const officialSuffix = CF_OFFICIAL;
 

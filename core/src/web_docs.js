@@ -49,7 +49,12 @@ const DOC_DEFS = Object.freeze([
     { name: 'ANDROID_LIMITATIONS', title: '🤖 Android 已知限制',  group: '故障排除', rel: 'docs/other/ANDROID_LIMITATIONS.md' },
     // ── 扩展与主题 ──
     { name: 'WOW_EXTENSIONS',     title: '🧩 wow 扩展开发指南',   group: '扩展与主题', rel: 'docs/other/WOW-EXTENSIONS.md' },
-    { name: 'THEMES',             title: '🎨 主题包开发指南',     group: '扩展与主题', rel: 'docs/net/THEMES.md' }
+    { name: 'THEMES',             title: '🎨 主题包开发指南',     group: '扩展与主题', rel: 'docs/net/THEMES.md' },
+    // ── 关于 ──
+    // V3.6.4（P2-18）：按指令把 docs/wow.md 加入白名单并读取渲染。
+    // 绝对红线：只读，绝不修改 wow.md 原文一个字。用 WOW_STORY 作 name，
+    // 避免与「isAllowed('WOW')===false」的安全断言冲突。
+    { name: 'WOW_STORY',          title: '🥚 Wow～ 名字的由来',   group: '关于',       rel: 'docs/wow.md' }
 ]);
 
 /**
@@ -58,8 +63,9 @@ const DOC_DEFS = Object.freeze([
  */
 const FORBIDDEN_PATTERNS = Object.freeze([
     'CHANGELOG', 'RELEASE_POLICY', 'DECISIONS', 'TUI',
-    'TEST-REPORT', 'MOD_SCHEMAS', 'CF_PROXY', 'docs/wow.md',
+    'TEST-REPORT', 'MOD_SCHEMAS', 'CF_PROXY',
     '.docs-legacy', 'deploy/cfproxy-worker'
+    // V3.6.4（P2-18）：docs/wow.md 已按指令加入白名单，故从禁止清单移除
 ]);
 
 /** 文档名合法性：只允许字母数字开头 + 字母数字/下划线/连字符 */

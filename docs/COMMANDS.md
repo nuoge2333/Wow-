@@ -486,6 +486,25 @@ wow theme info <name>
 
 ---
 
+### `theme update [name]`
+
+检查并更新主题包（需主题在 `theme.json` 声明 `update_url`）。支持 Git 仓库主页自动转 API、通用 zip 直链；更新带备份/校验/失败自动回滚。
+
+```bash
+wow theme update <name>            # 检查并更新单个主题
+wow theme update --all             # 更新所有声明了 update_url 的主题
+wow theme update <name> --check    # 仅检查是否有新版本，不改动文件
+wow theme update <name> --force    # 忽略版本比对，强制重装
+```
+
+| 选项 | 说明 |
+|------|------|
+| `--all` | 遍历所有带 `update_url` 的主题，单个失败不影响其余 |
+| `--check` | 只检查版本，不落盘 |
+| `--force` | 忽略版本比对，强制用更新源内容重装 |
+
+---
+
 ## 五之二、wow扩展管理 (7 个)
 
 > 📌 这里的「wow扩展」指 **wow 自身的 CLI 扩展系统**（`wow-extensions/` 目录），

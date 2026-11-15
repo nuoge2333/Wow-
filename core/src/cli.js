@@ -87,7 +87,7 @@ function logger() {
 program
     .name('wow')
     .description('Minecraft 服务器管理工具 - 默认优先，可以修改')
-    .version('3.8.1-26.49', '-V');
+    .version('3.8.2-26.4a', '-V');
 
 // ==================== init ====================
 
@@ -276,22 +276,34 @@ modCmd
 
 modCmd
     .command('list')
-    .description('列出已安装模组')
+    .description('列出已安装模组（全方案扫描）')
     .option('--loader <loader>', '过滤加载器')
     .option('-v, --mc-version <version>', '过滤版本')
     .action((options) => {
         const ModManager = load('./mod_manager');
         if (!ModManager) return;
         const modManager = new ModManager();
-        const mods = modManager.listMods(options.loader, options.mcVersion);
-        if (mods.length === 0) {
-            console.log('未安装模组');
+        const groups = modManager.listModsAllSchemes(options.loader, options.mcVersion);
+        if (!groups.length) {
+            console.log('未发现任何方案');
             return;
         }
-        console.log(`共 ${mods.length} 个模组:`);
-        for (const mod of mods) {
-            console.log(`  ${mod.enabled ? '✅' : '❌'} ${mod.name} (${mod.loader}/${mod.version})`);
+        const printList = (list, label) => {
+            if (!list.length) { console.log(`  ${label}：（无）`); return 0; }
+            console.log(`  ${label}（${list.length}）:`);
+            for (const m of list) {
+                const idPart = m.modId ? ` modID=${m.modId}` : '';
+                console.log(`    ${m.enabled ? '✅' : '❌'} ${m.name}${idPart} (${m.loader}/${m.version})`);
+            }
+            return list.length;
+        };
+        let total = 0;
+        for (const g of groups) {
+            console.log(`\n📦 方案「${g.scheme}」${g.active ? '（当前激活）' : ''}　MC ${g.version || '?'} / ${g.loader || '?'}`);
+            total += printList(g.mods, '模组 mods/');
+            total += printList(g.plugins, '插件 plugins/');
         }
+        console.log(`\n合计：${groups.length} 个方案，${total} 个模组/插件`);
     });
 
 modCmd
@@ -1055,6 +1067,67 @@ themeCmd
         }
     });
 
+// V3.9.0 主题更新：检查并更新。更新源只从主题自己的 theme.json 读取，
+// 不接受把 URL 当作参数从 Web 传入，避免面板变成任意远程下载入口。
+themeCmd
+    .command('update [name]')
+    .description('检查并更新主题包（需主题声明 update_url）')
+    .option('--all', '检查/更新所有声明了 update_url 的主题')
+    .option('--check', '仅检查是否有新版本，不执行更新')
+    .option('--force', '忽略版本比对，强制重装当前更新源的内容')
+    .action(async (name, options) => {
+        const ThemeManager = load('./theme_manager');
+        if (!ThemeManager) return;
+        const themeManager = new ThemeManager();
+        const opts = { force: !!options.force };
+
+        const runOne = async (themeName) => {
+            try {
+                if (options.check) {
+                    const r = await themeManager.checkUpdate(themeName);
+                    if (r.hasUpdate) {
+                        console.log(`🔔 主题 ${themeName} 有新版本: v${r.localVersion} → v${r.remoteVersion}`);
+                    } else {
+                        console.log(`✅ 主题 ${themeName} 已是最新版本（v${r.localVersion}）`);
+                    }
+                    return { name: themeName, ok: true };
+                }
+                const r = await themeManager.update(themeName, opts);
+                if (r.updated) {
+                    console.log(`✅ 主题 ${themeName} 已更新: v${r.from} → v${r.to}`);
+                } else {
+                    console.log(`✅ ${r.reason}`);
+                }
+                return { name: themeName, ok: true };
+            } catch (e) {
+                console.error(`❌ 主题 ${themeName} 更新失败: ${e.message}`);
+                return { name: themeName, ok: false, error: e.message };
+            }
+        };
+
+        if (options.all) {
+            const targets = themeManager.list().filter(t => t.update_url);
+            if (!targets.length) {
+                console.log('没有声明 update_url 的主题，无需更新');
+                return;
+            }
+            const results = [];
+            for (const t of targets) results.push(await runOne(t.name));
+            const failed = results.filter(r => !r.ok);
+            console.log(`\n共 ${results.length} 个主题，成功 ${results.length - failed.length} 个，失败 ${failed.length} 个`);
+            if (failed.length) process.exitCode = 1;
+            return;
+        }
+
+        if (!name) {
+            console.error('用法: wow theme update <name> 或 wow theme update --all [--check] [--force]');
+            process.exitCode = 1;
+            return;
+        }
+        const r = await runOne(name);
+        if (!r.ok) process.exitCode = 1;
+    });
+
 // ==================== plugin（V3.5.21：外部扩展管理） ====================
 // 扩展是「主程序 + 外部扩展」微内核架构的扩展点：
 //   代码放 <项目根>/wow-extensions/<名字>/，永不进 core/；
@@ -1561,8 +1634,20 @@ function runConfigWow(key, value, opts = {}) {
             console.log(`✅ ${key} = ${value}`);
         }
     } else {
-        const val = config.getConfig(key);
-        console.log(`${key} = ${val !== undefined ? val : 'null'}`);
+        // V3.6.4（P2-14）：布尔类型配置未提供 value → 在 true / false 间自动切换。
+        // 非布尔 / 未知键保持原「读取当前值」语义。
+        let field = null;
+        try { field = require('./config_schema').getField(key); } catch (e) { /* 模块不可用则退回读取 */ }
+        if (field && field.type === 'boolean') {
+            const cur = config.getConfig(key, false);
+            const truthy = cur === true || cur === 'true' || cur === 1 || cur === '1';
+            const next = !truthy;
+            config.setConfig(key, next);
+            console.log(`🔁 ${key}: ${truthy} → ${next}（布尔值已切换，如需显式指定可用 config set ${key} true|false）`);
+        } else {
+            const val = config.getConfig(key);
+            console.log(`${key} = ${val !== undefined ? val : 'null'}`);
+        }
     }
 }
 
@@ -1708,8 +1793,8 @@ schemaCmd
     });
 
 configCmd
-    .command('set <key> <value>')
-    .description('设置启动器配置（写入 wow.yaml），如 config set web.auth_token xxx')
+    .command('set <key> [value]')
+    .description('设置启动器配置（写入 wow.yaml），如 config set web.auth_token xxx；布尔值省略 value 则自动切换')
     .action((key, value) => {
         runConfigWow(key, value);
     });
@@ -2220,12 +2305,19 @@ configCmd
     });
 
 configCmd
-    .command('server-reset <key>')
-    .description('重置 server.properties 属性为默认值')
+    .command('server-reset [key]')
+    .description('重置 server.properties 属性为默认值（省略 key = 全部重置）')
     .action((key) => {
         const ServerProperties = config.ServerProperties;
         const props = new ServerProperties(utils.getServerDir());
-        const result = props.reset(key);
+        // V3.6.4（P2-16）：空输入（未给 key）→ 执行全部重置
+        if (!key || !String(key).trim()) {
+            const keys = Object.keys(ServerProperties.DEFAULTS);
+            for (const k of keys) props.reset(k);
+            console.log(`✅ 已将全部 ${keys.length} 项服务端属性重置为默认值`);
+            return;
+        }
+        const result = props.reset(String(key).trim());
         console.log(`✅ ${result.key} 已重置为 ${result.value}`);
     });
 
@@ -2601,6 +2693,13 @@ async function registerPlugins() {
     if (process.argv.length <= 2) {
         await enterMainMenu('无参数启动');
     } else {
+        // V3.6.4（P2-13）：`wow -v` 作为 `wow -V` 的 alias，输出版本号。
+        // 不能把 -v 注册成 commander 的全局 version flag：commander 会在整个
+        // argv 里匹配全局 -v 并提前触发 version 退出，从而遮蔽各子命令自己的
+        // `-v, --mc-version`（如 `mod list -v 1.20.1`、`install -v ...`），
+        // 那正是 P1-9 依赖的版本参数。故只在「顶层首个参数恰为 -v」时归一化成 -V，
+        // 子命令里的 -v 一律原样保留，交由各自子命令解析。
+        if (process.argv[2] === '-v') process.argv[2] = '-V';
         program.parse(process.argv);
     }
 })();

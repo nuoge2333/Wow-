@@ -567,7 +567,7 @@ function copyWhitelisted(opts = {}) {
     // 目标根目录：若它在复制源内部（用户把方案库放在客户端目录下），必须跳过，
     // 否则会「复制自己正在写的目录」→ 无限递归直到 ENAMETOOLONG。
     const destRoot = opts.destRoot ? path.resolve(opts.destRoot) : null;
-    const result = { copied: 0, skipped: [], failed: [], critical: [], bytes: 0 };
+    const result = { copied: 0, skipped: [], failed: [], critical: [], permissionFailed: [], bytes: 0 };
 
     if (!fs.existsSync(srcDir)) return result;
 
@@ -618,6 +618,7 @@ function copyWhitelisted(opts = {}) {
             };
             addPrefix(result.skipped, 'skipped');
             addPrefix(result.failed, 'failed');
+            addPrefix(result.permissionFailed, 'permissionFailed');
             addPrefix(result.critical, 'critical');
             continue;
         }
@@ -634,13 +635,27 @@ function copyWhitelisted(opts = {}) {
             result.copied++;
             result.bytes += stat.size;
         } catch (e) {
-            const entry = { path: name, reason: e.message };
-            if (isCriticalPath(name) || isCriticalPath(destPath)) {
-                result.critical.push(entry);
-                result.failed.push(entry);
+            // V3.8.2：EACCES 是系统底层权限保护（源文件属于其他用户），非 wow 的 Bug。
+            // 保持 try-catch、继续跳过该文件（程序不崩溃），但给出明确指引，
+            // 并在报告中单独标记为「因系统权限跳过」，避免用户误判。
+            if (e.code === 'EACCES' || /EACCES|permission denied/i.test(e.message)) {
+                const base = path.basename(srcPath);
+                const entry = {
+                    path: name,
+                    reason: `权限拒绝（EACCES）：源文件可能属于其他用户，请在终端使用 sudo 重新运行，或修改源目录权限（chmod -R 755 <源目录>）`
+                };
+                // 只计入 permissionFailed（单独标记，不混入通用 failed，避免重复列出）
+                result.permissionFailed.push(entry);
+                io.warn(`   ⚠️ 复制失败（继续）: ${base} —— 权限拒绝。👉 请用 sudo 重跑，或 chmod -R 755 <源目录>`);
             } else {
-                result.failed.push(entry);
-                io.warn(`   ⚠️ 复制失败（继续）: ${entry.path} —— ${entry.reason}`);
+                const entry = { path: name, reason: e.message };
+                if (isCriticalPath(name) || isCriticalPath(destPath)) {
+                    result.critical.push(entry);
+                    result.failed.push(entry);
+                } else {
+                    result.failed.push(entry);
+                    io.warn(`   ⚠️ 复制失败（继续）: ${entry.path} —— ${entry.reason}`);
+                }
             }
         }
     }
@@ -1157,6 +1172,17 @@ function buildReport(r) {
             L.push(`   - ${f.path}：${f.reason}`);
         }
         if (r.copyStats.failed.length > 10) L.push(`   …… 其余 ${r.copyStats.failed.length - 10} 个`);
+    }
+    // V3.8.2：因系统权限（EACCES）跳过的文件单独标记，明确告知用户「这不是 wow 的 Bug」。
+    if (r.copyStats && (r.copyStats.permissionFailed || []).length > 0) {
+        const permSkipped = r.copyStats.permissionFailed || [];
+        L.push('');
+        L.push(`🔒 因系统权限跳过 ${permSkipped.length} 个文件（非 wow 问题）：`);
+        for (const f of r.copyStats.permissionFailed.slice(0, 10)) {
+            L.push(`   - ${f.path}`);
+        }
+        if (permSkipped.length > 10) L.push(`   …… 其余 ${permSkipped.length - 10} 个`);
+        L.push('   👉 源文件可能属于其他用户：请用 sudo 重新运行，或 chmod -R 755 <源目录>');
     }
     if (r.poolErrors && r.poolErrors.length > 0) {
         L.push('');

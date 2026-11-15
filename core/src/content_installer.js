@@ -24,6 +24,18 @@ const depResolver = require('./dep_resolver');
 const ModSearch = require('./mod_search');
 const cf = require('./cf_client');
 
+// V3.6.4（P1-12）：Modrinth 等下载源在国内网络较慢，120s 常被误判超时。
+// 延长到 300s，并在超时时给出「配置代理 / 重试」的明确指引。
+const DOWNLOAD_TIMEOUT_MS = 300000;
+const TIMEOUT_HINT = '网络较慢，建议配置代理或重试';
+
+/** 判断一个下载异常是否为「超时」类 */
+function isTimeoutError(e) {
+    if (!e) return false;
+    return e.code === 'ECONNABORTED' || e.code === 'ETIMEDOUT' ||
+        /timeout|超时|exceeded/i.test(String(e.message || ''));
+}
+
 /**
  * 安装到方案
  * @param {Object} arg
@@ -140,7 +152,7 @@ function streamDownload(url, destPath, onProgress) {
         fs.ensureDirSync(path.dirname(destPath));
         axios.get(url, {
             responseType: 'stream',
-            timeout: 120000,
+            timeout: DOWNLOAD_TIMEOUT_MS,
             maxRedirects: 5
         }).then(resp => {
             const total = parseInt((resp.headers && resp.headers['content-length']) || '0', 10);
@@ -156,8 +168,13 @@ function streamDownload(url, destPath, onProgress) {
             writer.on('finish', () => resolve(destPath));
             writer.on('error', e => reject(e));
             resp.data.on('error', e => reject(e));
-        }).catch(e => reject(e));
+        }).catch(e => {
+            if (isTimeoutError(e)) {
+                e.message = `${TIMEOUT_HINT}（下载超时 ${Math.round(DOWNLOAD_TIMEOUT_MS / 1000)}s）`;
+            }
+            reject(e);
+        });
     });
 }
 
-module.exports = { installToScheme, resolveSingleFile, streamDownload };
+module.exports = { installToScheme, resolveSingleFile, streamDownload, isTimeoutError, DOWNLOAD_TIMEOUT_MS, TIMEOUT_HINT };

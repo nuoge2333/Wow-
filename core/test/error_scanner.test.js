@@ -440,12 +440,22 @@ check('44 诊断器不发起任何网络请求（不依赖 fetch / axios / http 
     assert.ok(!/https?:\/\/[^\s'"`]/.test(code), '不应包含任何 http(s) 地址字面量');
 });
 
-check('45 正常退出（code === 0）不触发诊断', () => {
+check('45 正常退出（code === 0 / 143 / 137）与主动停止都不触发诊断', () => {
     const src = read('server.js');
-    const elseIdx = src.indexOf("} else {\n                console.log(`服务器进程退出，退出码: ${code}`);");
-    assert.ok(elseIdx > 0, '未找到 else 分支');
-    const elseBody = src.slice(elseIdx, elseIdx + 300);
-    assert.ok(!/_diagnoseCrash/.test(elseBody), '正常退出分支不该调用诊断');
+    // V3.8.2（P0-1）：exit 处理改为「主动停止 或 干净退码」→ 正常停止，
+    // 只有 else（非主动 + 异常退码 1/255 等）才允许 _diagnoseCrash。
+    assert.ok(/const intentional = this\._stopRequested === true/.test(src), '缺少主动停止判定');
+    assert.ok(/const cleanSignal = \(code === 0 \|\| code === 143 \|\| code === 137\)/.test(src),
+        '缺少 0/143/137 干净退码判定');
+    assert.ok(/if \(intentional \|\| cleanSignal\)/.test(src), '缺少正常停止分支');
+    // 正常停止分支内绝不能调用诊断
+    const branch = src.slice(src.indexOf('if (intentional || cleanSignal)'));
+    const normalBody = branch.slice(0, branch.indexOf('} else {'));
+    assert.ok(!/_diagnoseCrash/.test(normalBody), '正常停止分支不该调用诊断');
+    assert.ok(/✅ 服务器已停止/.test(normalBody), '正常停止应输出「服务器已停止」');
+    // 诊断只出现在 else（异常）分支
+    const elseBody = branch.slice(branch.indexOf('} else {'), branch.indexOf('} else {') + 300);
+    assert.ok(/_diagnoseCrash/.test(elseBody), '异常退出分支应调用诊断');
 });
 
 // ==================== 7. i18n 预留 ====================

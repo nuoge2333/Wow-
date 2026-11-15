@@ -58,11 +58,11 @@ console.log('\n===== V3.5.22 cloudflared 国内镜像 / 下载完整性 =====\n'
 // ==================== 1. 镜像顺序 ====================
 console.log('【镜像源顺序】');
 
-check('内置镜像列表为三家国内代理', () => {
+check('内置镜像列表为三家国内代理（ghfast.top 优先）', () => {
     const bases = tunnel.CF_MIRRORS.map(m => m.base);
     assert.deepStrictEqual(bases, [
-        'https://gh-proxy.com',
         'https://ghfast.top',
+        'https://gh-proxy.com',
         'https://ghproxy.net'
     ]);
 });
@@ -78,8 +78,8 @@ check('无自定义源时：顺序为 三家镜像 → 官方', () => {
     delete process.env.WOW_CLOUDFLARED_MIRROR;
     const list = tunnel.resolveMirrors(() => '');
     assert.strictEqual(list.length, 4, `应为 4 个源，实际 ${list.length}`);
-    assert.ok(list[0].startsWith('https://gh-proxy.com/'), list[0]);
-    assert.ok(list[1].startsWith('https://ghfast.top/'), list[1]);
+    assert.ok(list[0].startsWith('https://ghfast.top/'), list[0]);
+    assert.ok(list[1].startsWith('https://gh-proxy.com/'), list[1]);
     assert.ok(list[2].startsWith('https://ghproxy.net/'), list[2]);
     assert.strictEqual(list[3], tunnel.CF_OFFICIAL, '官方必须排最后兜底');
 });
@@ -157,7 +157,7 @@ check('内置镜像拼接出的是「镜像/完整目标URL」形态（代理站
     const list = tunnel.resolveMirrors(() => '');
     assert.strictEqual(
         list[0],
-        'https://gh-proxy.com/https://github.com/cloudflare/cloudflared/releases/latest/download',
+        'https://ghfast.top/https://github.com/cloudflare/cloudflared/releases/latest/download',
         list[0]
     );
 });

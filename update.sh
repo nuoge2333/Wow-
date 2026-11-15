@@ -50,6 +50,39 @@ get_latest_tag() {
         | sort -k1,1n -k2,2n -k3,3n | tail -1 | awk '{print $NF}'
 }
 
+# 版本比较：返回 0 表示 $1 > $2（支持 X.Y.Z 与可选的 -YY.NN 后缀；
+# YY=2 位年，NN=十六进制发行包序号）。用于「Gitee 未更新时再比一遍 GitHub」。
+version_gt() {
+    local a="${1#v}" b="${2#v}"
+    [ -z "$a" ] || [ -z "$b" ] && return 1
+    local a_base="${a%%-*}" b_base="${b%%-*}"
+    local a1 a2 a3 b1 b2 b3
+    IFS='.' read -r a1 a2 a3 <<< "$a_base"
+    IFS='.' read -r b1 b2 b3 <<< "$b_base"
+    for v in a1 a2 a3 b1 b2 b3; do [ -z "${!v}" ] && printf -v "$v" 0; done
+    if   [ "$((a1))" -gt "$((b1))" ]; then return 0
+    elif [ "$((a1))" -lt "$((b1))" ]; then return 1; fi
+    if   [ "$((a2))" -gt "$((b2))" ]; then return 0
+    elif [ "$((a2))" -lt "$((b2))" ]; then return 1; fi
+    if   [ "$((a3))" -gt "$((b3))" ]; then return 0
+    elif [ "$((a3))" -lt "$((b3))" ]; then return 1; fi
+    # 主版本相同，比较 -YY.NN 后缀
+    local a_suf="${a#*-}" b_suf="${b#*-}"
+    [ "$a" = "$a_base" ] && a_suf=""
+    [ "$b" = "$b_base" ] && b_suf=""
+    local a_y a_n b_y b_n
+    IFS='.' read -r a_y a_n <<< "${a_suf:-0.0}"
+    IFS='.' read -r b_y b_n <<< "${b_suf:-0.0}"
+    [ -z "$a_y" ] && a_y=0; [ -z "$a_n" ] && a_n=0
+    [ -z "$b_y" ] && b_y=0; [ -z "$b_n" ] && b_n=0
+    if   [ "$((a_y))" -gt "$((b_y))" ]; then return 0
+    elif [ "$((a_y))" -lt "$((b_y))" ]; then return 1; fi
+    # NN 为十六进制序号
+    if   [ "$((16#$a_n))" -gt "$((16#$b_n))" ]; then return 0
+    elif [ "$((16#$a_n))" -lt "$((16#$b_n))" ]; then return 1; fi
+    return 1
+}
+
 echo "========================================"
 echo "  wow~ 自动更新工具"
 echo "========================================"
@@ -57,27 +90,42 @@ echo ""
 
 echo "正在检查最新版本..."
 
-# 依次尝试：Gitee（主）→ GitHub（兜底），任一解析到合法 tag 即采用
+# 读取本地版本（供后续比对）
+CURRENT_TAG=""
+if [ -f "$SCRIPT_DIR/core/package.json" ]; then
+    CURRENT_TAG=$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$SCRIPT_DIR/core/package.json" | head -1)
+fi
+
+# 主源（Gitee）与兜底源（GitHub）都解析一遍最新 tag，再决定用哪个。
+# 设计：Gitee 优先；但若 Gitee 显示「未更新」（其最新 tag ≤ 本地版本），
+# 仍要再查一遍 GitHub —— Gitee 同步可能滞后，GitHub 上可能已有更新的版本。
 LATEST_TAG=""
 RELEASE_HOST=""
-for SRC in "gitee" "github"; do
-    if [ "$SRC" = "gitee" ]; then
-        BASE="https://gitee.com/api/v5"
-        REPO="$GITEE_REPO"
-    else
-        BASE="https://api.github.com"
-        REPO="$GITHUB_REPO"
+GITEE_TAG=""
+GITHUB_TAG=""
+
+echo "  尝试 [gitee]..."
+GITEE_TAG=$(get_latest_tag "https://gitee.com/api/v5" "$GITEE_REPO")
+echo "  尝试 [github]..."
+GITHUB_TAG=$(get_latest_tag "https://api.github.com" "$GITHUB_REPO")
+
+# 决策：Gitee 有更新 → 用 Gitee（主源）；否则若 GitHub 有更新 → 用 GitHub。
+if [ -n "$GITEE_TAG" ] && version_gt "$GITEE_TAG" "$CURRENT_TAG"; then
+    LATEST_TAG="$GITEE_TAG"
+    RELEASE_HOST="gitee"
+elif [ -n "$GITHUB_TAG" ] && version_gt "$GITHUB_TAG" "$CURRENT_TAG"; then
+    LATEST_TAG="$GITHUB_TAG"
+    RELEASE_HOST="github"
+    if [ -n "$GITEE_TAG" ]; then
+        echo "  ℹ️ Gitee 未更新（仍为 $GITEE_TAG），改用 GitHub 最新版本"
     fi
-    echo "  尝试 [$SRC]..."
-    TAG=$(get_latest_tag "$BASE" "$REPO")
-    if [ -n "$TAG" ]; then
-        LATEST_TAG="$TAG"
-        RELEASE_HOST="$SRC"
-        break
-    fi
-done
+fi
 
 if [ -z "$LATEST_TAG" ]; then
+    if [ -n "$GITEE_TAG" ] || [ -n "$GITHUB_TAG" ]; then
+        echo "✅ 当前已是最新版本 ($CURRENT_TAG)，无需更新"
+        exit 0
+    fi
     echo "⚠️ 无法访问 Gitee / GitHub（网络受限），跳过自动更新（不影响启动）"
     exit 0
 fi
@@ -85,17 +133,7 @@ fi
 echo "最新版本: $LATEST_TAG (源: $RELEASE_HOST)"
 echo ""
 
-# 版本比对：本地已是最新则直接跳过，避免每次启动都重复下载并覆盖自身
-CURRENT_TAG=""
-if [ -f "$SCRIPT_DIR/core/package.json" ]; then
-    CURRENT_TAG=$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$SCRIPT_DIR/core/package.json" | head -1)
-fi
 if [ -n "$CURRENT_TAG" ]; then
-    # 统一去掉前导 v 后比较
-    if [ "${LATEST_TAG#v}" = "${CURRENT_TAG#v}" ]; then
-        echo "✅ 当前已是最新版本 ($CURRENT_TAG)，无需更新"
-        exit 0
-    fi
     echo "本地版本: $CURRENT_TAG → 将更新到 $LATEST_TAG"
     echo ""
 fi

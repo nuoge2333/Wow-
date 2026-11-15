@@ -493,6 +493,13 @@ class SchemeManager {
      * 强制瘦身方案
      */
     async prune(name) {
+        // V3.8.2：回车 = 当前方案 —— 空名时回退到当前激活方案，避免「方案 undefined 不存在」。
+        if (!name) {
+            name = this.currentScheme;
+        }
+        if (!name) {
+            throw new Error('未指定方案且无当前激活方案（请先 scheme switch 或显式给出方案名）');
+        }
         if (!this._schemeExists(name)) {
             throw new Error(`方案 ${name} 不存在`);
         }

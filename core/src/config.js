@@ -93,7 +93,7 @@ const DEFAULT_CONFIG = {
         // 声明后一律强制登录，且危险开关的 Web 写入口保持锁定。
         trust_proxy: false,
         // V3.5.22：cloudflared 二进制的自定义镜像前缀。
-        // 留空 = 用内置的国内镜像列表（gh-proxy.com / ghfast.top / ghproxy.net）+ GitHub 官方兜底。
+        // 留空 = 用内置的国内镜像列表（ghfast.top 优先 / gh-proxy.com / ghproxy.net）+ GitHub 官方兜底。
         // 可填镜像根（https://my.mirror）或完整的 releases/latest/download 前缀。
         tunnel_mirror: ''
     },

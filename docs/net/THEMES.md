@@ -45,7 +45,8 @@
     "author": "作者名",
     "version": "1.0.0",
     "compatible": "3.0.0",
-    "description": "简短描述"
+    "description": "简短描述",
+    "update_url": "https://github.com/作者/仓库"
 }
 ```
 
@@ -56,8 +57,31 @@
 | `name` | ✅ | 主题显示名称 |
 | `author` | ✅ | 作者名 |
 | `version` | ✅ | 版本号（语义化版本） |
-| `compatible` | ✅ | 兼容的 wow 版本（如 `3.0.0`） |
+| `compatible` | ✅ | 兼容的 wow 版本（如 `3.0.0`），更新时按「最低版本」校验 |
 | `description` | ✅ | 简短描述（显示在列表中） |
+| `update_url` | ❌ | 可选，主题的更新源（见下文「更新源」） |
+
+---
+
+## 更新源 `update_url`（可选）
+
+在 `theme.json` 里声明 `update_url` 后，Web 面板主题列表会出现「检查更新」按钮，也可用 CLI：
+
+```bash
+wow theme update <name>          # 检查并更新单个主题
+wow theme update --all           # 更新所有声明了 update_url 的主题
+wow theme update <name> --check  # 仅检查，不改动文件
+wow theme update <name> --force  # 忽略版本比对，强制重装
+```
+
+**支持的更新源类型**
+
+| 类型 | 识别规则 | 处理方式 |
+|------|----------|----------|
+| Git 仓库 | 含 `github.com` / `gitee.com` / `gitlab.com` 且非 `.zip` 结尾 | 自动转 API 取最新 release 的 zip（GitHub 走 `releases/latest` 的 `zipball_url`，失败回退 tags / 归档直链） |
+| 通用直链 | 其余情况（网盘、静态博客、`.zip` 直链等） | 直接下载，自动跟随重定向（等价 `curl -L`） |
+
+**安全机制（防炸机）**：更新前把 `themes/<name>/` 备份为 `themes/<name>_bak/`，解压复用 Zip Slip 防御，并校验新包的 `name`（必须与旧包一致，防止顺回别的主题）与 `compatible`（不兼容则中止）。任一环节失败自动回滚还原旧版与 `web/`，保证面板不白屏；网络超时 30 秒会提示「检查网络」。更新成功后再删除备份。
 
 ---
 

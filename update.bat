@@ -21,7 +21,9 @@ echo.
 :: Create temp dir
 mkdir "%TEMP_DIR%" 2>nul
 
-:: Resolve latest tag: releases/latest -> tags API (max semver, filter non-version tags)
+:: Resolve latest tag from BOTH Gitee and GitHub, then pick the newer one.
+:: Gitee is primary; if Gitee is stale (GitHub strictly newer), GitHub is used instead
+:: (Gitee mirror sync may lag behind GitHub). Fallback to whichever is reachable.
 powershell -Command ^
   "$ErrorActionPreference='SilentlyContinue';" ^
   "function Get-LatestTag($base,$repo){" ^
@@ -31,11 +33,25 @@ powershell -Command ^
   "      $n=$_.name.TrimStart('v');" ^
   "      if($n -match '^(\d+)\.(\d+)\.(\d+)'){ [PSCustomObject]@{name=$_.name; k=([int]$Matches[1]*1000000+[int]$Matches[2]*1000+[int]$Matches[3])} } };" ^
   "    return (($vs | Sort-Object k | Select-Object -Last 1).name) } catch {}" ^
-  "  return $null" ^
-  "}" ^
+  "  return $null }" ^
+  "function VerCmp($a,$b){" ^
+  "  $a=$a.TrimStart('v'); $b=$b.TrimStart('v');" ^
+  "  $ba=($a -split '-')[0].Split('.'); $bb=($b -split '-')[0].Split('.');" ^
+  "  for($i=0;$i -lt 3;$i++){ $x=[int]$ba[$i]; $y=[int]$bb[$i]; if($x -ne $y){return $x-$y} }" ^
+  "  $ya=if(($a -split '-').Length -gt 1){($a -split '-')[1].Split('.')}else{@('0','0')};" ^
+  "  $yb=if(($b -split '-').Length -gt 1){($b -split '-')[1].Split('.')}else{@('0','0')};" ^
+  "  $xy=[int]$ya[0]; $yy=[int]$yb[0]; if($xy -ne $yy){return $xy-$yy};" ^
+  "  $nx=if($ya.Length -gt 1){[convert]::ToInt32($ya[1],16)}else{0};" ^
+  "  $ny=if($yb.Length -gt 1){[convert]::ToInt32($yb[1],16)}else{0};" ^
+  "  return $nx-$ny }" ^
   "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12;" ^
-  "$hosts = @(@('gitee','https://gitee.com/api/v5','nuoge233/wow'), @('github','https://api.github.com','nuoge2333/Wow-'));" ^
-  "foreach($h in $hosts){ $t=Get-LatestTag -base $h[1] -repo $h[2]; if($t){ Write-Output ($h[0] + '|' + $t); break } }" ^
+  "$g=Get-LatestTag -base 'https://gitee.com/api/v5' -repo 'nuoge233/wow';" ^
+  "$h=Get-LatestTag -base 'https://api.github.com' -repo 'nuoge2333/Wow-';" ^
+  "$chosen=''; $hostName='';" ^
+  "if($g -and $h){ if((VerCmp $h $g) -gt 0){ $chosen=$h; $hostName='github' } else { $chosen=$g; $hostName='gitee' } }" ^
+  "elseif($g){ $chosen=$g; $hostName='gitee' }" ^
+  "elseif($h){ $chosen=$h; $hostName='github' }" ^
+  "if($chosen){ Write-Output ($hostName + '|' + $chosen) }" ^
   > "%TEMP_DIR%\resolve.txt" 2>nul
 
 set RELEASE_HOST=

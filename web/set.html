@@ -892,6 +892,7 @@
                     </div>
                     <div class="actions">
                         ${!isActive ? `<button class="btn-sm active" data-action="switch" data-name="${escapeHtml(t.name)}">切换</button>` : ''}
+                        ${t.update_url ? `<button class="btn-sm info" data-action="update" data-name="${escapeHtml(t.name)}">检查更新</button>` : ''}
                         ${t.name !== 'default' ? `<button class="btn-sm danger" data-action="delete" data-name="${escapeHtml(t.name)}">删除</button>` : ''}
                     </div>
                 </div>`;
@@ -904,6 +905,11 @@
                             if (!confirm(`确定要删除主题 "${name}" 吗？`)) return;
                             await apiExec('theme delete', [name]);
                             showToast(`主题 ${name} 已删除`, 'success');
+                            loadThemes(themeFilter.value);
+                        } else if (action === 'update') {
+                            if (!confirm(`确定要检查并更新主题 "${name}" 吗？更新失败会自动回滚保留旧版。`)) return;
+                            const r = await apiExec('theme update', [name]);
+                            showToast(r.output ? r.output.trim().split('\n').slice(-1)[0] : `主题 ${name} 检查更新完成`, 'success');
                             loadThemes(themeFilter.value);
                         } else {
                             await apiExec('theme switch', [name]);

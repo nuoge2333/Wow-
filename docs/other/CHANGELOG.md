@@ -42,7 +42,8 @@
 
 | 版本 | 状态 | 发布时间 |
 |------|------|------|
-| **3.8.1-26.49** | 当前版本（内置帮助文档抽屉 + Web 内容页留白 + 移动端菜单抽屉） | 2026-11-14 |
+| **3.8.2-26.4a** | 当前版本（公测前 18 项 Bug 修复 + 主题包更新机制） | 2026-11-15 |
+| **3.8.1-26.49** | 上一版本（内置帮助文档抽屉 + Web 内容页留白 + 移动端菜单抽屉） | 2026-11-14 |
 | **3.8.0-26.48** | 上一版本（下载中心重构 + 玩家管理 + 三条铁律 + wow扩展改名） | 2026-11-14 |
 | **3.7.4-26.47** | 上一版本（发版周期合并内容见 RELEASE_POLICY.md 第五节） | 2026-11-13 |
 | **3.7.3-26.46** | 上一版本（M 模式画面独占 + 三处线上问题） | 2026-11-09 |
@@ -119,6 +120,61 @@
 | **3.0.0** | 上一版本 |2026-07-23|
 | **2.0.0** | 内部迭代 |2026-02-27|
 | **1.0.0** | 内部迭代 |2026-02-07|
+
+---
+
+## [3.8.2-26.4a] — 2026-11-15：公测前全量 Bug 修复 + 主题包更新机制
+
+> 冻结期内按优先级完成公测前 18 项真实环境测试 Bug 修复，随后解冻新增主题包更新机制。
+> 全量回归 **67 个测试文件全绿**（原 66 + 新增 `theme_update` 1）。
+
+### 一、🚨 P0 级：阻断流程、假象崩溃与核心逻辑错误
+
+| # | 修复 | 要点 |
+|---|------|------|
+| 1 | `server stop` 控制流重构 | SIGTERM 后 5 秒轮询等待保存世界（最长 30s）、超时强杀（137）提示；`_stopRequested` + `cleanSignal(0/143/137)` 双重红线，**主动停止绝不触发** `error_scanner`；正常退出输出「✅ 服务器已停止」 |
+| 2 | `:mc` 视图退出判定重写 | 禁止以「日志静默时长」判退出；唯一退出条件为真实子进程退出或用户主动退出；进程存活但静默超 10s 原地打印灰色「⏳ 正在加载模组/等待服务器输出...（进程存活中）」继续挂起；**未触碰 readline / TUI 渲染层** |
+| 3 | 硬编码 `server/` 残留清理 | 全局统一走 `getServerDir()`；根目录回退目录加入 `.gitignore` |
+| 4 | `scheme prune` 回车选当前方案 | 空名回退 `currentScheme` + 判空兜底，修复「方案 undefined 不存在」 |
+| 5 | Clone-Client `EACCES` | 保持 try-catch 继续跳过；提示改为「权限拒绝 → sudo 重跑 / `chmod -R 755 <源目录>`」；报告单独标记「🔒 因系统权限跳过」 |
+| 6 | 生成的整合包客户端无法识别 | `manifest.json` 严格对齐 CurseForge 规范（`manifestType` / `manifestVersion` / `minecraft.modLoaders[]` / `overrides`），mods/config 落入 `overrides/` |
+
+### 二、⚠️ P1 级：功能缺陷与跨进程逻辑冲突
+
+| # | 修复 | 要点 |
+|---|------|------|
+| 7 | `m` 视图跳转 | `server start` 后输入 `m` 正确跳数字菜单，不再误判为 `:mc` |
+| 8 | `:wow` 视图指令拦截 | 先调 `server.isRunning()`，已停止则放行 `server start/restart` 等危险指令 |
+| 9 | `-v`/`-t` 未优先调用镜像 | `_vanillaDownloadCandidates()` 统一候选源，BMCLAPI 国内镜像恒优先于 mojang |
+| 10 | Modrinth 整合包解析 | 新增 `modrinth.index.json` 解析器（`dependencies` / `files[].downloads` / `path`），修复无法安装 `.mrpack` |
+| 11 | `mod list` 全方案扫描 | 支持扫描所有方案目录下的 `mods/` 与 `plugins/` 并读取 `modID`，按方案分组展示 |
+| 12 | Modrinth 下载超时 | 120s → **300s**，超时提示「网络较慢，建议配置代理或重试」 |
+
+### 三、💡 P2 级：交互体验与细节优化
+
+| # | 修复 | 要点 |
+|---|------|------|
+| 13 | `wow -v` 无效 | 顶层仅 `-v` 归一化为 `-V`（不污染子命令 `-v` 的 `--mc-version`） |
+| 14 | `config set` 布尔切换 | 布尔配置缺 `<value>` 时自动在 `true`/`false` 间切换 |
+| 15 | `server status` 存档检测 | 扫描 `world/` / `level.dat`（尊重 `level-name`），无则提示「未找到存档文件夹」 |
+| 16 | `server-reset` 空输入 | 直接回车执行全部重置（CLI 与交互双入口） |
+| 17 | M 视图不显示已安装方案 | `schemeList()` 由「只打印表头」改为渲染完整方案行 |
+| 18 | `wow.md` 加入 Web 文档白名单 | 以 `WOW_STORY` 条目读取渲染；**`docs/wow.md` 原文一字未改**（SHA256 前后一致） |
+
+> ⏸️ 模组管理因环境原因无法真实测试，按令暂缓，等下一轮。
+
+### 四、主题包更新机制（`core/src/theme_updater.js`）
+
+- **数据结构**：`theme.json` 新增可选 `update_url`（Git 仓库主页或 zip 直链）。
+- **源类型智能识别**：GitHub / Gitee / GitLab 仓库主页（非 `.zip` 结尾）自动转 API 取 `releases/latest` 的 `zipball_url`/`tarball_url`，失败回退 tags / 归档直链；其余一律当通用直链，axios `maxRedirects` 跟随重定向（等价 `curl -L`）。
+- **🚨 防炸机回滚（P0 红线）**：更新前把 `themes/<name>/` 重命名为 `<name>_bak/`；解压到临时目录后校验 `compatible`（版本不兼容提示「已保留旧版」）与 `name`（防顺回主题 B）；全部通过才移入新包并删 `_bak`，任何解压/校验/网络失败自动还原旧版，当前主题还连带还原 `web/`。另有「只剩 `_bak`」的崩溃自愈。
+- **安全边界**：复用 `file_manager.extract` 的 Zip Slip 四道防线；网络 30s 超时、失败提示「检查网络」；更新 URL 只从服务端 `theme.json` 读取，不接受前端传参。
+- **CLI / Web**：`wow theme update [name]`（`--all` / `--check` / `--force`）；Web 主题列表对含 `update_url` 的主题显示「检查更新」按钮（`web/set.html` 与 `themes/default/set.html` 逐字节一致）。
+- 新增 `core/test/theme_update.test.js`（27 项，本地 HTTP server + 字节级伪造恶意 zip，不打真实网络）。
+
+### 五、测试同步
+
+回归初跑的 3 处失败均为**断言旧代码形态**的测试，按新逻辑同步断言（非放水）：`extension_policy` 增加「停止→放行 / 运行→拦截」双向断言、`config_cli` 兼容 `[value]`、`error_scanner` #45 改校验新红线。
 
 ---
 

@@ -57,7 +57,11 @@ try {
 
     check('config --help 列出 set / get / unset', () => {
         const { out } = runCli(['config', '--help']);
-        for (const sub of ['set <key> <value>', 'get <key>', 'unset <key>']) {
+        // V3.6.4（P2-14）：set 的 value 改为可选 [value]（布尔值省略时自动切换）
+        if (!/set <key> \[value\]|set <key> <value>/.test(out)) {
+            throw new Error('帮助里缺少 set 子命令（set <key> [value]）');
+        }
+        for (const sub of ['get <key>', 'unset <key>']) {
             if (!out.includes(sub)) throw new Error(`帮助里缺少 ${sub}`);
         }
     });
@@ -129,7 +133,10 @@ try {
 
     check('CLI 已注册 config set（防止再次退化）', () => {
         const src = fs.readFileSync(CLI, 'utf8');
-        if (!/\.command\('set <key> <value>'\)/.test(src)) throw new Error('cli.js 缺少 set 子命令');
+        // V3.6.4（P2-14）：value 可选（[value]），布尔配置省略 value 时自动切换
+        if (!/\.command\('set <key> \[value\]'\)/.test(src) && !/\.command\('set <key> <value>'\)/.test(src)) {
+            throw new Error('cli.js 缺少 set 子命令');
+        }
         if (!/\.command\('unset <key>'\)/.test(src)) throw new Error('cli.js 缺少 unset 子命令');
         if (!/\.command\('get <key>'\)/.test(src)) throw new Error('cli.js 缺少 get 子命令');
     });

@@ -65,14 +65,14 @@ class ModManager {
     }
 
     /**
-     * 列出已安装的模组（当前方案）
+     * 列出**指定目录**下的模组（供「全方案扫描」复用，不依赖当前方案）。
+     * @param {string} modDir 模组目录绝对路径
+     * @param {string} [loader] 按加载器过滤
+     * @param {string} [version] 按 MC 版本过滤
+     * @returns {Array<object>} 模组信息数组
      */
-    listMods(loader = null, version = null) {
-        const modDir = this.serverMods;
-        if (!fs.existsSync(modDir)) {
-            console.log('模组目录不存在');
-            return [];
-        }
+    listModsInDir(modDir, loader = null, version = null) {
+        if (!modDir || !fs.existsSync(modDir)) return [];
 
         const files = fs.readdirSync(modDir);
         const mods = files.filter(f => f.endsWith('.jar') || f.endsWith('.zip'));
@@ -99,6 +99,88 @@ class ModManager {
         }
 
         return result;
+    }
+
+    /**
+     * 列出已安装的模组（当前方案）
+     */
+    listMods(loader = null, version = null) {
+        if (!fs.existsSync(this.serverMods)) {
+            console.log('模组目录不存在');
+            return [];
+        }
+        return this.listModsInDir(this.serverMods, loader, version);
+    }
+
+    /**
+     * 从 jar / zip 里读取 modID（"读 modID"）。
+     *  - 模组：fabric.mod.json / quilt.mod.json 的 id，META-INF/mods.toml 的 modId，
+     *    mcmod.info 的 modid —— 复用 client_mod_filter.readModMeta 的成熟解析。
+     *  - 插件（Bukkit/Spigot/Paper）：plugin.yml / paper-plugin.yml 的 name。
+     * 读不到一律返回 null（损坏包 / 资源包 / 无元数据），绝不抛错。
+     * @param {string} jarPath jar 绝对路径
+     * @param {'mods'|'plugins'} kind 所在目录类别
+     * @returns {string|null}
+     */
+    _readJarModId(jarPath, kind = 'mods') {
+        if (kind === 'plugins') {
+            try {
+                const AdmZip = require('adm-zip');
+                const zip = new AdmZip(jarPath);
+                const pick = (name) => {
+                    const e = zip.getEntries().find(x => String(x.entryName).toLowerCase() === name);
+                    return e ? e.getData().toString('utf8') : null;
+                };
+                const yml = pick('plugin.yml') || pick('paper-plugin.yml');
+                if (yml) {
+                    const m = yml.match(/^\s*name\s*:\s*['"]?([^\s'"#]+)/m);
+                    if (m) return m[1];
+                }
+            } catch (e) { /* 读不了就交给下面兜底 */ }
+        }
+        try {
+            const cmf = require('./client_mod_filter');
+            const meta = cmf.readModMeta(jarPath);
+            if (meta && meta.ok && Array.isArray(meta.mods) && meta.mods.length) {
+                return meta.mods.map(m => m.modId).filter(Boolean).join(', ') || null;
+            }
+        } catch (e) { /* 元数据不可读 */ }
+        return null;
+    }
+
+    /**
+     * 全方案扫描：列出**所有方案**（含当前激活方案）的模组 / 插件，按方案分组。
+     *
+     * V3.6.4（P1-11）：原先 `mod list` 只能看当前方案的 mods/，
+     * 多方案用户无法一眼看清每个方案装了什么，也看不到插件与 modID。
+     * 这里遍历 scheme/ 下各方案的 **mods/ 与 plugins/**，逐个读取 modID，
+     * 返回分组结构，由调用方（CLI / 菜单）分组展示。
+     *
+     * @param {string} [loader] 按加载器过滤
+     * @param {string} [version] 按 MC 版本过滤
+     * @returns {Array<{scheme:string, active:boolean, version:string, loader:string,
+     *                  mods:Array, plugins:Array}>}
+     */
+    listModsAllSchemes(loader = null, version = null) {
+        const SchemeManager = require('./scheme_manager');
+        const sm = new SchemeManager();
+        const schemes = sm.list() || [];
+        const groups = [];
+        const scan = (dir, kind) => this.listModsInDir(dir, loader, version)
+            .map(m => ({ ...m, kind, modId: this._readJarModId(m.path, kind) }));
+        for (const s of schemes) {
+            const schemePath = path.join(sm.schemesDir, s.name);
+            groups.push({
+                scheme: s.name,
+                active: !!s.active,
+                version: s.version,
+                loader: s.loader,
+                type: s.type,
+                mods: scan(path.join(schemePath, 'mods'), 'mods'),
+                plugins: scan(path.join(schemePath, 'plugins'), 'plugins')
+            });
+        }
+        return groups;
     }
 
     /**
@@ -175,7 +257,8 @@ class ModManager {
                 method: 'get',
                 url: url,
                 responseType: 'stream',
-                timeout: 120000,
+                // V3.6.4（P1-12）：Modrinth 等源较慢，120s→300s
+                timeout: 300000,
                 maxRedirects: 5
             }).then(response => {
                 const totalLength = parseInt(response.headers['content-length'] || '0', 10);
@@ -195,7 +278,14 @@ class ModManager {
                 response.data.pipe(writer);
                 writer.on('finish', () => resolve(destPath));
                 writer.on('error', (err) => reject(err));
-            }).catch(err => reject(err));
+            }).catch(err => {
+                // V3.6.4（P1-12）：超时给「配置代理 / 重试」的明确指引
+                if (err && (err.code === 'ECONNABORTED' || err.code === 'ETIMEDOUT' ||
+                    /timeout|超时|exceeded/i.test(String(err.message || '')))) {
+                    err.message = '网络较慢，建议配置代理或重试（下载超时 300s）';
+                }
+                reject(err);
+            });
         });
     }
 

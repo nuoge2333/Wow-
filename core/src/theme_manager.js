@@ -136,6 +136,8 @@ class ThemeManager {
         const currentTheme = config.getConfig('web.theme', 'default');
 
         for (const name of themes) {
+            // 更新事务期间的备份目录 / 临时目录不应当作主题展示
+            if (name.startsWith('.') || name.endsWith('_bak')) continue;
             const themePath = path.join(this.themesDir, name);
             if (fs.statSync(themePath).isDirectory()) {
                 const metaPath = path.join(themePath, 'theme.json');
@@ -151,7 +153,10 @@ class ThemeManager {
                     author: meta?.author || '未知',
                     version: meta?.version || '未知',
                     description: meta?.description || '无描述',
-                    has_meta: !!meta
+                    has_meta: !!meta,
+                    // V3.9.0 主题更新：透出更新源，供 Web 面板判断是否显示「检查更新」按钮
+                    update_url: meta?.update_url || null,
+                    compatible: meta?.compatible || null
                 });
             }
         }
@@ -258,8 +263,27 @@ class ThemeManager {
             author: meta.author || '未知',
             version: meta.version || '未知',
             compatible: meta.compatible || '未知',
-            description: meta.description || '无描述'
+            description: meta.description || '无描述',
+            update_url: meta.update_url || null
         };
+    }
+
+    /**
+     * V3.9.0：检查主题是否有新版本（只读，不修改任何文件）。
+     * 真正实现在 theme_updater.js，这里保持薄委托，避免本模块膨胀。
+     */
+    async checkUpdate(name, opts = {}) {
+        const ThemeUpdater = require('./theme_updater');
+        return new ThemeUpdater(this, opts).checkUpdate(name);
+    }
+
+    /**
+     * V3.9.0：检查并更新单个主题（事务化，失败自动回滚）。
+     * @returns {{name, updated:boolean, reason?:string, from?:string, to?:string}}
+     */
+    async update(name, opts = {}) {
+        const ThemeUpdater = require('./theme_updater');
+        return new ThemeUpdater(this, opts).update(name, opts);
     }
 }
 

@@ -81,7 +81,7 @@ const DENIED_CONSOLE = new Set([
  *  - action 'run'  : 作为 wow 指令，由子进程执行（args 为已规范化的参数数组）
  *  - action 'deny' : 禁用指令（危险 / 冲突 / 长驻），返回 reason
  */
-function classifyConsoleInput(rawLine) {
+function classifyConsoleInput(rawLine, server = null) {
     const line = (rawLine || '').trim();
     if (!line) return { action: 'mc' };
 
@@ -89,8 +89,8 @@ function classifyConsoleInput(rawLine) {
     if (tokens[0].toLowerCase() === 'wow') tokens = tokens.slice(1); // 允许行首带 wow
     if (tokens.length === 0) return { action: 'mc' };
 
-    // V3.5.8：旧菜单命令 m / M 已移除（无参数启动即进数字菜单）。
-    // 这里保留拦截并给新指引，避免 `wow m` 被当成 MC 指令转发后报 unknown command。
+    // 裸 `m` 已在路由层（MODE_ALIASES）被解析为 `:m` 菜单，不会走到这里。
+    // 这里兜底拦截 `wow m` 这类「把 m 当子命令」的写法，避免被当成 MC 指令转发后报 unknown command。
     if (tokens[0] === 'm' || tokens[0] === 'M') {
         return { action: 'deny', reason: '菜单命令已调整：直接运行 wow（无参数）即进入数字菜单；长命令模式为 wow L' };
     }
@@ -142,6 +142,19 @@ function classifyConsoleInput(rawLine) {
         return { action: 'deny', reason: '快捷设置配置会改动运行中的方案文件，开服控制台中不可用，请另开终端执行' };
     }
 
+    // V3.6.4（P1-8）：服务器已停止时，放行 `server start` / `server restart`
+    // —— restart 此时等价于 start（无正在运行的进程可冲突），start 直接拉起即可。
+    // 服务器仍在运行时保持拦截，避免重复拉起 / 重启冲突。
+    // running 优先用调用方传入的实例（开服控制台 this 即 ServerManager），
+    // 拿不到实例时保守视为「未运行」，让 start/restart 放行（冲突由 ServerManager 自身判定）。
+    let running = false;
+    if (server && typeof server.isRunning === 'function') {
+        try { running = !!server.isRunning(); } catch (e) { running = false; }
+    }
+    if (!running && (two === 'server start' || two === 'server restart')) {
+        return { action: 'run', args: tokens.map(t => t.toLowerCase()) };
+    }
+
     if (DENIED_CONSOLE.has(two) || DENIED_CONSOLE.has(head)) {
         return { action: 'deny', reason: '该指令会修改运行中的方案文件 / 与开服进程冲突 / 抢占终端，开服控制台中不可用，请另开终端执行' };
     }
@@ -173,7 +186,9 @@ const CONSOLE_MODES = {
 const MODE_ALIASES = {
     ':mc': 'mc', ':minecraft': 'mc', ':1': 'mc', ':服务端': 'mc',
     ':wow': 'wow', ':2': 'wow', ':长命令': 'wow',
-    ':m': 'menu', ':menu': 'menu', ':菜单': 'menu',
+    // V3.6.4（P1-7）：裸 `m` 直接进数字菜单，与 `:m` 等价——修复「server start
+    // 后输入 m 不跳菜单、被误导向 :mc」的问题。这里优先于 classifyConsoleInput 命中。
+    'm': 'menu', ':m': 'menu', ':menu': 'menu', ':菜单': 'menu',
     ':web': 'web'
 };
 
@@ -406,7 +421,7 @@ class ServerManager {
      * @param {import('readline').Interface} rl 当前控制台的 readline
      */
     async _handleConsoleLine(line, rl) {
-        const d = classifyConsoleInput(line);
+        const d = classifyConsoleInput(line, this);
 
         if (d.action === 'deny') {
             console.log(`⛔ ${d.reason}`);
@@ -708,7 +723,7 @@ class ServerManager {
                     rl.prompt();
                     return;
                 }
-                const d = classifyConsoleInput(line);
+                const d = classifyConsoleInput(line, this);
                 if (d.action === 'deny') {
                     console.log(`⛔ ${d.reason}`);
                 } else if (d.action === 'mc') {
@@ -835,7 +850,7 @@ class ServerManager {
         this._printConsoleBanner('mc');
         await this._printConsoleTail('mc');
         console.log('  输入 Minecraft 指令（如 op Steve、say hi、stop）直接发送给服务端。');
-        console.log('  :m 进菜单　:wow 长命令　:web 面板地址　单次 Ctrl+C 安全退出（不停服）。');
+        console.log('  m / :m 进菜单　:wow 长命令　:web 面板地址　单次 Ctrl+C 安全退出（不停服）。');
     }
 
     /** :web 只打印面板地址，不切视图、不造第二个 stdin 消费者 */
@@ -873,6 +888,7 @@ class ServerManager {
             const mark = k === 'mc' ? '← 当前' : '';
             console.log(`     ${m.switchCmd.padEnd(10)} ${m.icon} ${m.name} ${mark}`);
         }
+        console.log('   m / :m      进入数字菜单（Q/W/E/R/T/Y 切页、L 进长命令）');
         console.log('   :wowlog     查看 wow 指令控制台最后 10 条日志');
         console.log('   :log        重新显示 :mc 最后 10 条服务端日志');
         console.log('   :help       显示本帮助');
@@ -1468,11 +1484,13 @@ class ServerManager {
                 if (this._mode === 'mc' && !tuiOwnsScreen()) process.stdout.write(data);
                 logStream.write(data);
                 this._logMcChunk(data);
+                this._lastLogAt = Date.now();
             });
             this.process.stderr.on('data', (data) => {
                 if (this._mode === 'mc' && !tuiOwnsScreen()) process.stderr.write(data);
                 logStream.write(data);
                 this._logMcChunk(data);
+                this._lastLogAt = Date.now();
             });
 
             // 接管 stdin：readline 读取用户输入，按当前控制台视图路由
@@ -1494,6 +1512,20 @@ class ServerManager {
                 this._detachConsole('wow').catch(() => {});
             };
             process.once('SIGINT', this._sigintHandler);
+
+            // V3.8.2：:mc 防假死监视。唯一退出依据是「MC 子进程真正退出」或用户主动
+            // 输入退出指令；绝不靠「多久没读到日志」判定退出。这里只是进程存活但日志
+            // 静默时（加载模组 / 等待输出）原地打印灰色提示，证明没有卡死，然后继续挂起。
+            this._lastLogAt = Date.now();
+            this._mcSilenceTimer = setInterval(() => {
+                if (this._mode !== 'mc') return;                 // 只在实际停在 :mc 实时日志时提示
+                if (!this.process || this.process.killed) return;
+                if (!this.isRunning()) return;                   // 进程真退了交给 exit 处理
+                if (Date.now() - (this._lastLogAt || 0) > 10000) {
+                    console.log('\x1b[90m⏳ 正在加载模组/等待服务器输出...（进程存活中）\x1b[39m');
+                }
+            }, 10000);
+            if (this._mcSilenceTimer.unref) this._mcSilenceTimer.unref();
         } else {
             // 非交互模式（Web 面板 / Docker）：
             // **不能**把 stdio 直接设成 logStream——那样 Node 会把
@@ -1547,6 +1579,11 @@ class ServerManager {
                 try { this._rl.close(); } catch (e) {}
                 this._rl = null;
             }
+            // V3.8.2：进程退出即停掉 :mc 防假死监视
+            if (this._mcSilenceTimer) {
+                clearInterval(this._mcSilenceTimer);
+                this._mcSilenceTimer = null;
+            }
             // 归还可能因强关终端而残留的 stdin 租约（不建新实例）
             if (this._consoleLease) {
                 try { this._consoleLease.release(); } catch (e) { /* 忽略 */ }
@@ -1559,17 +1596,21 @@ class ServerManager {
             // V3.5.19：进程没了，中继与心跳一并收掉，避免面板误判「还能发指令」
             this._stopConsoleRelay();
             if (logStream) logStream.end();
-            if (code && code !== 0) {
+            // V3.8.2 红线：主动停止（用户 stop / kill / 关闭终端兜底）或
+            // 143(SIGTERM) / 137(SIGKILL) 一律视为正常停止，**绝对禁止**触发 error_scanner；
+            // 只有非主动停止（崩溃 / 异常退码 1、255 等）才允许崩溃诊断。
+            const intentional = this._stopRequested === true;
+            const cleanSignal = (code === 0 || code === 143 || code === 137);
+            if (intentional || cleanSignal) {
+                console.log('✅ 服务器已停止');
+                logger.info(`Minecraft 进程已正常停止（退出码 ${code}）`);
+            } else {
                 logger.erro(`Minecraft 进程异常退出（退出码 ${code}），疑似崩溃`);
                 logger.markCrash();
                 // V3.5.18：异常退出时做本地初级诊断（纯本地正则 + 模组扫描，不联网）。
-                // 放在 logStream.end() 之后调用，但诊断器自己读 latest.log，
-                // 该文件由 MC 自身写出、与 logStream（wow-stdout）无关，不受影响。
                 this._diagnoseCrash(code);
-            } else {
-                console.log(`服务器进程退出，退出码: ${code}`);
-                logger.info('Minecraft 进程已正常退出');
             }
+            this._stopRequested = false;
             this._removePid();
             this.process = null;
         });
@@ -1740,60 +1781,61 @@ class ServerManager {
             // V3.3.0 关闭联机房间（陶瓦），与服务器停止同步
             _stopLanIfRunning();
 
+            // V3.8.2 红线：标记「主动停止」。无论后续走 stdin stop 指令还是 SIGTERM/SIGKILL，
+            // 退码 143(SIGTERM) / 137(SIGKILL) 一律视为用户主动停止，exit 处理里绝不触发 error_scanner。
+            this._stopRequested = true;
+
             if (!this.isRunning()) {
                 console.log('服务器未运行');
                 logger.info('停止服务器：服务器未运行');
+                this._stopRequested = false;
                 return;
             }
+
+            // 统一等待轮询：每 5 秒检测一次，最长 timeout（默认 30s）。
+            // 期间只打印「正在等待服务器保存世界」，不靠日志静默判定退出。
+            const waitForExit = async (isAlive, label) => {
+                console.log(`   ⏳ ${label}（最长 ${Math.round(timeout / 1000)} 秒）...`);
+                const startTime = Date.now();
+                while (isAlive() && (Date.now() - startTime) < timeout) {
+                    await new Promise(resolve => setTimeout(resolve, 5000));
+                    if (isAlive() && (Date.now() - startTime) < timeout) {
+                        const waited = Math.round((Date.now() - startTime) / 1000);
+                        console.log(`   ⏳ 正在等待服务器保存世界...（已等待 ${waited}s / 最长 ${Math.round(timeout / 1000)}s）`);
+                    }
+                }
+                return !isAlive();
+            };
 
             const pid = this._readPid();
-
-            // 优先尝试通过 stdin 发送 stop 命令
             console.log('正在停止服务器...');
-            logger.impt('正在停止服务器（发送 stop 指令）...');
+            logger.impt('正在停止服务器...');
+
+            // 同一进程：优先通过 stdin 发送 stop 命令（Minecraft 会优雅保存并退出）
             const sent = this.sendCommand('stop');
+            let exited = false;
             if (sent) {
-                console.log('已发送 stop 命令，等待服务器保存并退出...');
-                const startTime = Date.now();
-                while (this.isRunning() && (Date.now() - startTime) < timeout) {
-                    await new Promise(resolve => setTimeout(resolve, 500));
-                }
-
-                if (this.isRunning()) {
-                    console.warn('服务器未在超时时间内退出，使用强制终止');
-                    this.kill();
-                } else {
-                    console.log('✅ 服务器已正常停止');
-                }
-                return;
-            }
-
-            // 跨进程：无法通过 stdin，使用 SIGTERM（Minecraft 会优雅退出）
-            if (pid && this._isProcessAlive(pid)) {
-                console.log('跨进程模式：发送 SIGTERM 信号...');
+                exited = await waitForExit(() => this.isRunning(), '正在等待服务器保存世界');
+            } else if (pid && this._isProcessAlive(pid)) {
+                // 跨进程：无法通过 stdin，使用 SIGTERM（Minecraft 会优雅退出）
                 try {
+                    console.log('跨进程模式：发送 SIGTERM 信号...');
                     process.kill(pid, 'SIGTERM');
-                    console.log('等待服务器保存并退出...');
-
-                    const startTime = Date.now();
-                    while (this._isProcessAlive(pid) && (Date.now() - startTime) < timeout) {
-                        await new Promise(resolve => setTimeout(resolve, 500));
-                    }
-
-                    if (this._isProcessAlive(pid)) {
-                        console.warn('服务器未响应 SIGTERM，使用强制终止');
-                        process.kill(pid, 'SIGKILL');
-                        await new Promise(resolve => setTimeout(resolve, 1000));
-                    }
-
-                    if (!this._isProcessAlive(pid)) {
-                        this._removePid();
-                        console.log('✅ 服务器已停止');
-                    }
+                    exited = await waitForExit(() => this._isProcessAlive(pid), '正在等待服务器保存世界');
                 } catch (e) {
                     console.warn('进程已不存在');
                     this._removePid();
+                    exited = true;
                 }
+            }
+
+            // 30 秒未退出（判定为卡死 / OOM）→ 强制 kill（SIGKILL）。
+            // kill() 会再次置 _stopRequested（已是 true）并发 SIGKILL；进程退出后
+            // 由 exit 处理统一打印 ✅ 服务器已停止，这里不再重复。
+            if (!exited) {
+                console.warn('⚠️ 服务器在 30 秒内未响应，已强制终止');
+                logger.warn('服务器 30 秒内未响应，执行强制终止');
+                this.kill();
             }
         } finally {
             this._stopping = false;
@@ -1807,6 +1849,9 @@ class ServerManager {
     kill() {
         // V3.3.0 关闭联机房间（陶瓦）
         _stopLanIfRunning();
+
+        // V3.8.2：强制终止同样属于「主动停止」—— 退码 137(SIGKILL) 绝不触发 error_scanner。
+        this._stopRequested = true;
 
         const pid = this._readPid();
         if (!pid) {
@@ -1859,6 +1904,41 @@ class ServerManager {
         const pid = this._readPid();
 
         console.log(`服务器状态: ${running ? '运行中' : '已停止'}`);
+
+        // V3.6.4（P2-15）：输出前扫描方案目录是否有存档（world/ 或 level.dat）。
+        // level-name 可在 server.properties 里改，故优先按配置名找，再兜底 world/，
+        // 最后扫一层子目录里的 level.dat（覆盖自定义世界名的情形）。
+        try {
+            let levelName = 'world';
+            try {
+                const props = new (require('./config').ServerProperties)(this.serverDir);
+                const configured = props.get('level-name');
+                if (configured) levelName = configured;
+            } catch (e) { /* 读不到 properties 就用默认 world */ }
+
+            let found = null;
+            const candidate = path.join(this.serverDir, levelName);
+            if (fs.existsSync(path.join(candidate, 'level.dat'))) {
+                found = `${levelName}/level.dat`;
+            } else if (fs.existsSync(path.join(this.serverDir, 'level.dat'))) {
+                found = 'level.dat';
+            } else if (fs.existsSync(candidate) && fs.statSync(candidate).isDirectory()) {
+                found = `${levelName}/（目录存在，暂无 level.dat）`;
+            } else {
+                // 兜底：扫一层子目录，找含 level.dat 的世界（自定义 level-name 与配置不一致时）
+                try {
+                    for (const name of fs.readdirSync(this.serverDir)) {
+                        const sub = path.join(this.serverDir, name);
+                        if (fs.statSync(sub).isDirectory() && fs.existsSync(path.join(sub, 'level.dat'))) {
+                            found = `${name}/level.dat`;
+                            break;
+                        }
+                    }
+                } catch (e) { /* 目录不可读 */ }
+            }
+            console.log(found ? `  存档: ${found}` : '  ⚠️ 未找到存档文件夹（首次启动后将自动创建）');
+        } catch (e) { /* 存档检测失败不影响状态输出 */ }
+
         if (running && pid) {
             console.log(`  PID: ${pid}`);
             console.log(`  日志: ${this.logFile}`);

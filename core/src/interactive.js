@@ -1040,9 +1040,16 @@ async function propsWizard(env, hintText) {
 async function propsResetOne(env, hintText) {
     printHeader(hintText || '重置服务端属性');
     const { props } = await propsCtx();
-    const key = await ioAsk(env.io, env.rl, '要重置的属性名: ');
-    if (!key) { console.log('未输入属性名，已取消。'); return false; }
-    const result = props.reset(key);
+    const key = await ioAsk(env.io, env.rl, '要重置的属性名（回车 = 全部重置）: ');
+    // V3.6.4（P2-16）：空输入（直接回车）→ 执行全部重置，而不是取消
+    if (!key || !String(key).trim()) {
+        const config = require('./config');
+        const keys = Object.keys(config.ServerProperties.DEFAULTS);
+        for (const k of keys) props.reset(k);
+        console.log(`✅ 已将全部 ${keys.length} 项服务端属性重置为默认值`);
+        return false;
+    }
+    const result = props.reset(String(key).trim());
     console.log(`✅ ${result.key} 已重置为 ${result.value}`);
     return false;
 }
@@ -1150,8 +1157,28 @@ async function schemeSwitch(env) {
     return false;
 }
 
-async function schemeList() {
+async function schemeList(env) {
     printHeader('全部方案');
+    // V3.6.4（P2-17）：原来这里只打印标题，W3 action 里 `sm.list()` 的返回值
+    // （数组）被丢弃，导致 TUI 页面看不到任何已安装方案。现在真正把列表渲染出来。
+    let sm = env && env.options ? env.options.schemeManager : null;
+    if (!sm) {
+        try {
+            const SchemeManager = require('./scheme_manager');
+            sm = new SchemeManager();
+        } catch (e) { console.log(`方案管理模块加载失败: ${e.message}`); return false; }
+    }
+    let schemes = [];
+    try { schemes = sm.list() || []; } catch (e) {
+        console.log(`读取方案列表失败: ${e.message}`);
+        return false;
+    }
+    if (!schemes.length) { console.log('没有方案（可用 W 页 1「新建方案」创建）。'); return false; }
+    console.log(`共 ${schemes.length} 个方案:`);
+    for (const s of schemes) {
+        const active = s.active ? ' (当前激活)' : '';
+        console.log(`  ${s.active ? '▶' : ' '} ${s.name} - ${s.version} / ${s.loader} [${s.type || '-'}]${active}`);
+    }
     return false;
 }
 
@@ -1192,10 +1219,13 @@ async function schemePrune(env) {
     const schemeManager = env.options.schemeManager;
     if (!schemeManager) { console.log('方案管理模块未加载'); return false; }
     const name = (await ioAsk(env.io, env.rl, '方案名 (回车 = 当前方案): ')).trim();
+    // V3.8.2：回车（空名）时显式回退到当前激活方案，避免把 undefined 传进 prune。
+    const target = name || schemeManager.currentScheme;
+    if (!target) { console.log('未指定方案且无当前方案'); return false; }
     const confirm = (await ioAsk(env.io, env.rl, '将删除未引用的资源，确定继续? (y/N): ')).trim().toLowerCase();
     if (confirm !== 'y') { console.log('已取消。'); return false; }
     try {
-        await schemeManager.prune(name || undefined);
+        await schemeManager.prune(target);
         console.log('✅ 瘦身完成');
     } catch (e) {
         console.log(`❌ 瘦身失败: ${e.message}`);
@@ -1230,12 +1260,7 @@ async function packGenerate(env) {
 
 action('W', 1, (env) => schemeCreate(env));
 action('W', 2, (env) => schemeSwitch(env));
-action('W', 3, async (env) => {
-    const r = await schemeList();
-    const sm = env.options.schemeManager;
-    if (sm) sm.list();
-    return r;
-});
+action('W', 3, (env) => schemeList(env));
 action('W', 4, (env) => schemeDelete(env));
 action('W', 5, (env) => schemeInfo(env));
 action('W', 6, (env) => packInstall(env, 'local'));

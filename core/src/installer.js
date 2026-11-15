@@ -258,7 +258,10 @@ class Installer {
         let downloadUrl;
         let fallbackUrls = [];
         if (type === 'vanilla') {
-            downloadUrl = await this._getVanillaDownloadUrl(version);
+            // V3.6.4：恢复 BMCLAPI 国内镜像最高优先级（-v 直装原版也走镜像）
+            const vCandidates = await this._vanillaDownloadCandidates(version);
+            downloadUrl = vCandidates[0];
+            fallbackUrls = vCandidates.slice(1);
         } else if (type === 'mohist') {
             // 构建标识现为 git sha；未显式指定（-b）时通过 API 解析最新构建
             let buildId = build;
@@ -376,17 +379,8 @@ class Installer {
         const vanillaInfo = this._resolveInstallerVanillaTarget(installerPath, mc, installDir);
         if (vanillaInfo) {
             try {
-                const vanillaUrl = await this._getVanillaDownloadUrl(vanillaInfo.mc);
-                let sha1 = null;
-                const m = vanillaUrl.match(/v1\/objects\/([0-9a-f]+)\//);
-                if (m) sha1 = m[1];
-                const vanillaCandidates = [];
-                // 1) BMCLAPI2 按 SHA1 精确寻址：与官方对象字节一致，且国内快、稳
-                if (sha1) vanillaCandidates.push(`${BMCLAPI2}/v1/objects/${sha1}/server.jar`);
-                // 2) mojang 官方（精确但慢，兜底）
-                vanillaCandidates.push(vanillaUrl);
-                // 3) BMCLAPI2 按版本（备用）
-                vanillaCandidates.push(`${BMCLAPI2}/version/${vanillaInfo.mc}/server`);
+                // V3.6.4：统一走 _vanillaDownloadCandidates，保证 BMCLAPI 镜像优先于 mojang
+                const vanillaCandidates = await this._vanillaDownloadCandidates(vanillaInfo.mc);
 
                 // 仅对缺失的目标下载（避免重复），下载一次后复制到其余目标以省流量
                 const missing = vanillaInfo.targetPaths.filter(p => !fs.existsSync(p));
@@ -523,14 +517,8 @@ class Installer {
             return; // 已存在且完整，运行启动器会直接复用
         }
         try {
-            const vanillaUrl = await this._getVanillaDownloadUrl(mc);
-            let sha1 = null;
-            const m = vanillaUrl.match(/v1\/objects\/([0-9a-f]+)\//);
-            if (m) sha1 = m[1];
-            const candidates = [];
-            if (sha1) candidates.push(`${BMCLAPI2}/v1/objects/${sha1}/server.jar`);
-            candidates.push(vanillaUrl);
-            candidates.push(`${BMCLAPI2}/version/${mc}/server`);
+            // V3.6.4：统一走 _vanillaDownloadCandidates，保证 BMCLAPI 镜像优先于 mojang
+            const candidates = await this._vanillaDownloadCandidates(mc);
             console.log(`预拉原版核心到根目录（${mc}），供 ${type} 运行时启动器复用，避免其从 mojang 拉取...`);
             fs.ensureDirSync(installDir);
             await this._downloadFirst(candidates, target);
@@ -940,6 +928,29 @@ class Installer {
         }
         const detailResponse = await axios.get(versionInfo.url, { timeout: 10000 });
         return detailResponse.data.downloads.server.url;
+    }
+
+    /**
+     * 原版核心下载候选源列表（V3.8.2 修复）：
+     * **国内 BMCLAPI 镜像最高优先级**，mojang 官方兜底。
+     *   1. BMCLAPI 按 SHA1 精确寻址（与官方字节一致、国内最快）——若能从 mojang 直链解析出 sha1；
+     *   2. BMCLAPI 按版本直链（无需 sha1，国内直连）；
+     *   3. mojang 官方直链（海外 / 镜像全挂时最后兜底）。
+     * 此前顺序把 mojang 排在最前，导致国内用户直接走官方慢源。
+     *
+     * @param {string} version MC 版本
+     * @returns {Promise<string[]>}
+     */
+    async _vanillaDownloadCandidates(version) {
+        const mojangUrl = await this._getVanillaDownloadUrl(version);
+        let sha1 = null;
+        const m = mojangUrl.match(/v1\/objects\/([0-9a-f]+)\//);
+        if (m) sha1 = m[1];
+        const candidates = [];
+        if (sha1) candidates.push(`${BMCLAPI2}/v1/objects/${sha1}/server.jar`);
+        candidates.push(`${BMCLAPI2}/version/${version}/server`);
+        candidates.push(mojangUrl);
+        return candidates;
     }
 
     /**
