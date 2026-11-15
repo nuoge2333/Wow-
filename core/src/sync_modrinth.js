@@ -170,7 +170,8 @@ async function downloadToTemp(url, destPath, log, expectedSize = 0, maxOverallMs
             }, overallMs);
             if (timer.unref) timer.unref();
             const done = (fn, arg) => { clearTimeout(timer); fn(arg); };
-            resp.data.on('error', e => done(reject, e));
+            // A2：网络流断开（含超时）都要销毁写入流再 reject，外层 catch 会清理残file
+            resp.data.on('error', e => { try { ws.destroy(); } catch (_) {} done(reject, e); });
             ws.on('error', e => done(reject, e));
             ws.on('finish', () => done(resolve));
             resp.data.pipe(ws);

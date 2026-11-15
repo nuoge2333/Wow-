@@ -8,7 +8,7 @@
 
 const fs = require('fs-extra');
 const path = require('path');
-const { spawn, exec } = require('child_process');
+const { spawn, exec, execSync } = require('child_process');
 const utils = require('./utils');
 const config = require('./config');
 const JreManager = require('./jre_manager');
@@ -965,8 +965,14 @@ class ServerManager {
             responseType: 'stream',
             timeout: 60000
         });
-        downloadResp.data.pipe(writer);
         await new Promise((resolve, reject) => {
+            // A2：网络流断开必须销毁写入流并 reject，防止残留损坏文件
+            downloadResp.data.on('error', (e) => {
+                try { writer.destroy(); } catch (_) {}
+                try { if (fs.existsSync(jarPath)) fs.unlinkSync(jarPath); } catch (_) {}
+                reject(e);
+            });
+            downloadResp.data.pipe(writer);
             writer.on('finish', resolve);
             writer.on('error', reject);
         });
@@ -993,8 +999,12 @@ class ServerManager {
     _isProcessAlive(pid) {
         try {
             if (utils.getOS() === 'windows') {
-                const result = exec(`tasklist /FI "PID eq ${pid}"`, { timeout: 2000 });
-                return result.stdout.includes(`${pid}`);
+                // B1：exec 是异步的，返回 ChildProcess 而非结果，同步读 stdout 永远为空；
+                // 必须用 execSync 同步拿到输出。windowsHide 避免闪烁控制台窗口。
+                const out = execSync(`tasklist /FI "PID eq ${pid}"`, {
+                    timeout: 2000, encoding: 'utf8', windowsHide: true
+                });
+                return new RegExp(`\\b${pid}\\b`).test(out);
             }
             process.kill(pid, 0);
             return true;
@@ -1867,10 +1877,14 @@ class ServerManager {
 
         try {
             if (utils.getOS() === 'windows') {
-                const result = exec(`taskkill /F /PID ${pid}`, { timeout: 5000 });
-                if (result.stderr && !result.stderr.includes('SUCCESS')) {
-                    console.error(`强制终止失败: ${result.stderr}`);
-                    logger.erro(`强制终止服务器失败: ${result.stderr}`);
+                // B1：同上，exec 异步导致 taskkill 从未真正执行完成即返回；改用 execSync。
+                // execSync 返回 stdout；无 NO such process 等错误即视为成功。
+                const out = execSync(`taskkill /F /PID ${pid}`, {
+                    timeout: 5000, encoding: 'utf8', windowsHide: true
+                });
+                if (/ERROR|没有找到|失败/i.test(out) && !/SUCCESS|成功/i.test(out)) {
+                    console.error(`强制终止失败: ${out.trim()}`);
+                    logger.erro(`强制终止服务器失败: ${out.trim()}`);
                     return;
                 }
             } else {

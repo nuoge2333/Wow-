@@ -217,7 +217,11 @@ async function downloadFile(url, dest, label) {
                     process.stdout.write(`\r  ${label} 下载中... ${pct}%`);
                 }
             });
-            resp.data.on('error', reject);
+            // A2：网络流断开必须销毁写入流（catch 中会 destroy + unlink 临时文件）
+            resp.data.on('error', (e) => {
+                try { writer.destroy(); } catch (_) {}
+                reject(e);
+            });
             writer.on('error', reject);
             writer.on('finish', resolve);
             resp.data.pipe(writer);

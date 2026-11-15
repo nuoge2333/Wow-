@@ -427,6 +427,12 @@ class JreManager {
                     progress.tick(chunk.length);
                 });
 
+                // A2：网络流断开必须销毁写入流并 reject，防止残留损坏文件
+                response.data.on('error', (err) => {
+                    try { writer.destroy(); } catch (_) {}
+                    try { if (fs.existsSync(filePath)) fs.unlinkSync(filePath); } catch (_) {}
+                    reject(err);
+                });
                 response.data.pipe(writer);
 
                 writer.on('finish', () => {

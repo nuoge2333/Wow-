@@ -245,10 +245,17 @@ function validateUploadTarget(schemeName, relPath, declaredSize, totalSoFar) {
 
 /** staging 区的写入路径 */
 function stagingFor(schemeName, sha256) {
+    // D2 安全：sha256 来自客户端，绝不能原样拼进路径（可造成 ../../ 穿越落盘）。
+    // 只接受标准 64 位十六进制摘要；合法值本身即安全文件名。归一化小写后原样使用，
+    // 以兼容 finalizeScheme 从文件名反推 sha256 的逻辑（见 staged 组装处）。
+    const hash = String(sha256 || '');
+    if (!/^[a-f0-9]{64}$/i.test(hash)) {
+        throw new Error(`非法 sha256，拒绝作为暂存文件名: ${hash.slice(0, 80)}`);
+    }
     const base = utils.resolvePath(sync.STAGING_DIR);
     const dir = path.join(base, String(schemeName).replace(/[\\/:*?"<>|]/g, '_'));
     fs.ensureDirSync(dir);
-    return path.join(dir, `${sha256}.part`);
+    return path.join(dir, `${hash.toLowerCase()}.part`);
 }
 
 // ==================== 组装 ====================

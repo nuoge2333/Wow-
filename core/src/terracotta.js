@@ -245,6 +245,11 @@ function downloadFile(url, destPath) {
                 });
                 const writer = fs.createWriteStream(destPath);
                 response.data.on('data', chunk => bar.tick(chunk.length));
+                // A2：网络流断开必须销毁写入流并 reject（catch 中会清理临时文件）
+                response.data.on('error', (err) => {
+                    try { writer.destroy(); } catch (_) {}
+                    reject(err);
+                });
                 response.data.pipe(writer);
                 writer.on('finish', resolve);
                 writer.on('error', reject);

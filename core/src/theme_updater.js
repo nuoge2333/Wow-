@@ -209,10 +209,14 @@ class ThemeUpdater {
         try {
             await new Promise((resolve, reject) => {
                 const writer = fs.createWriteStream(dest);
+                // A2：网络流断开必须销毁写入流并 reject（外层 catch 会 removeSync(dest)）
+                resp.data.on('error', (e) => {
+                    try { writer.destroy(); } catch (_) {}
+                    reject(e);
+                });
                 resp.data.pipe(writer);
                 writer.on('finish', resolve);
                 writer.on('error', reject);
-                resp.data.on('error', reject);
             });
         } catch (e) {
             fs.removeSync(dest);

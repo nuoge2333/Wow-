@@ -2019,7 +2019,17 @@ function startWeb(options = {}) {
                 `attachment; filename="${asciiName}"; filename*=UTF-8''${encodeURIComponent(info.name)}`);
             res.setHeader('Content-Length', info.size);
             res.setHeader('Content-Type', 'application/octet-stream');
-            fs.createReadStream(info.abs).pipe(res);
+            // A1：读流失败（文件被删/权限变化）必须兜底，否则未捕获的 'error'
+            // 会抛出并使请求永久挂起。若响应头尚未发出则回 500，否则直接断开连接。
+            const stream = fs.createReadStream(info.abs);
+            stream.on('error', (err) => {
+                if (!res.headersSent) {
+                    res.status(500).json({ success: false, error: `读取文件失败: ${err.message}` });
+                } else {
+                    res.destroy(err);
+                }
+            });
+            stream.pipe(res);
         } catch (e) {
             const code = e.code === 'EPATH' ? 403 : (e.code === 'ENOENT' ? 404 : 400);
             res.status(code).json({ success: false, error: e.message });
@@ -3261,9 +3271,13 @@ async function countOnlinePlayers() {
         const stat = fs.statSync(logPath);
         const start = Math.max(stat.size - MAX_READ, 0);
         const fd = fs.openSync(logPath, 'r');
+        // C1：readSync 若抛错（日志轮转、权限变化），必须仍关闭 fd，否则每次异常都泄漏一个描述符
         const buf = Buffer.alloc(stat.size - start);
-        fs.readSync(fd, buf, 0, buf.length, start);
-        fs.closeSync(fd);
+        try {
+            fs.readSync(fd, buf, 0, buf.length, start);
+        } finally {
+            fs.closeSync(fd);
+        }
 
         const text = buf.toString('utf8');
         const patterns = [

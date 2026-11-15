@@ -275,6 +275,12 @@ class ModManager {
                     if (totalLength > 0) progress.tick(chunk.length);
                 });
 
+                // A2：网络流断开必须销毁写入流并 reject，防止残留损坏文件
+                response.data.on('error', (err) => {
+                    try { writer.destroy(); } catch (_) {}
+                    try { if (fs.existsSync(destPath)) fs.unlinkSync(destPath); } catch (_) {}
+                    reject(err);
+                });
                 response.data.pipe(writer);
                 writer.on('finish', () => resolve(destPath));
                 writer.on('error', (err) => reject(err));

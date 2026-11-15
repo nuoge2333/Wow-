@@ -31,6 +31,10 @@ class LogHandler {
         console.log('按 Ctrl+C 退出');
 
         const tail = spawn('tail', ['-f', this.logFile], { stdio: 'inherit' });
+        // P7：Windows 默认无 tail 命令，spawn 会触发 error 事件；不监听则进程崩溃。
+        tail.on('error', (err) => {
+            console.error(`⚠️ 无法启动 tail（Windows 可改用 Git Bash 或安装 coreutils）：${err.message}`);
+        });
         process.on('SIGINT', async () => {
             tail.kill();
             // 若本进程恰好持有 MC 子进程，先优雅停服再退出

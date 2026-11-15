@@ -96,7 +96,15 @@ async function installToScheme(arg) {
     const installed = [];
     const skipped = [];
     for (const it of items) {
-        const fname = it.filename || path.basename(new URL(it.fileUrl).pathname);
+        // D1 安全：远程返回的 filename 完全不可信——先统一反斜杠为 /，再用 basename
+        // 剥掉一切路径前缀，最后严格拒绝盘符、点目录与残留分隔符，确保只是纯文件名。
+        const rawName = String(it.filename || path.basename(new URL(it.fileUrl).pathname));
+        let fname = path.basename(rawName.replace(/\\/g, '/'));
+        if (!fname || fname === '.' || fname === '..' || /^[a-zA-Z]:/.test(fname) || /[\/\\]/.test(fname)) {
+            warnings.push(`文件名不合法，已跳过 ${it.projectId}（${rawName}）`);
+            skipped.push({ projectId: it.projectId, error: '非法文件名' });
+            continue;
+        }
         const dest = path.join(destDir, fname);
         try {
             await streamDownload(it.fileUrl, dest, onProgress);
@@ -164,10 +172,15 @@ function streamDownload(url, destPath, onProgress) {
                     onProgress({ url, received: got, total });
                 });
             }
+            // A2：网络流断开时销毁写入流并 reject，防止半截文件与挂起的 Promise
+            resp.data.on('error', e => {
+                try { writer.destroy(); } catch (_) {}
+                try { if (fs.existsSync(destPath)) fs.unlinkSync(destPath); } catch (_) {}
+                reject(e);
+            });
             resp.data.pipe(writer);
             writer.on('finish', () => resolve(destPath));
             writer.on('error', e => reject(e));
-            resp.data.on('error', e => reject(e));
         }).catch(e => {
             if (isTimeoutError(e)) {
                 e.message = `${TIMEOUT_HINT}（下载超时 ${Math.round(DOWNLOAD_TIMEOUT_MS / 1000)}s）`;

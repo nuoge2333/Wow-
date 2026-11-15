@@ -87,6 +87,12 @@ async function downloadFile(url, dest) {
     const writer = fs.createWriteStream(dest);
     response.data.pipe(writer);
     return new Promise((resolve, reject) => {
+        // A2：网络流断开必须销毁写入流并 reject，防止残留损坏文件
+        response.data.on('error', (e) => {
+            try { writer.destroy(); } catch (_) {}
+            try { if (fs.existsSync(dest)) fs.unlinkSync(dest); } catch (_) {}
+            reject(e);
+        });
         writer.on('finish', resolve);
         writer.on('error', reject);
     });
