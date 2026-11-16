@@ -207,6 +207,9 @@ const CONSOLE_TAIL_LINES = 10;
 // 持有 stdin 的进程每 250ms 取走队列并写入 MC stdin。纯文件实现，跨平台且无端口占用。
 const CONSOLE_QUEUE_FILE = path.join(__dirname, '../.console.queue');
 const CONSOLE_ALIVE_FILE = path.join(__dirname, '../.console.alive');
+// P0：跨进程「主动停止」标记（stop / kill / 超时强杀时写入，exit 回调消费）。
+// 放在 core/ 下与控制台文件同级，保证 CLI 进程与服务器进程共享同一路径。
+const MANUAL_STOP_FILE = path.join(__dirname, '../.manual-stop.flag');
 const CONSOLE_RELAY_INTERVAL = 250;
 
 
@@ -1046,6 +1049,34 @@ class ServerManager {
     }
 
     /**
+     * P0：写入「主动停止」标记。stop / kill / 超时强杀时调用，
+     * 供真正持有 MC 子进程的那个进程在 exit 回调里读取（跨进程场景）。
+     */
+    _writeManualStopFlag() {
+        try {
+            fs.ensureDirSync(path.dirname(MANUAL_STOP_FILE));
+            fs.writeFileSync(MANUAL_STOP_FILE, String(Date.now()), 'utf8');
+        } catch (e) { /* 标记失败不能影响停止流程 */ }
+    }
+
+    /**
+     * P0：读取并消费「主动停止」标记。只认 60 秒内的标记，避免陈旧标记
+     * 把下一次真实崩溃误判为主动停止。
+     */
+    _consumeManualStopFlag() {
+        try {
+            if (!fs.existsSync(MANUAL_STOP_FILE)) return false;
+            const raw = fs.readFileSync(MANUAL_STOP_FILE, 'utf8').trim();
+            try { fs.unlinkSync(MANUAL_STOP_FILE); } catch (e) { /* 忽略 */ }
+            const ts = parseInt(raw, 10);
+            if (!Number.isFinite(ts)) return true; // 无时间戳：保守视为主动停止
+            return (Date.now() - ts) < 60000;
+        } catch (e) {
+            return false;
+        }
+    }
+
+    /**
      * V3.5.13：诊断并报告「配置指向的方案目录不存在」。
      *
      * getServerDir() 在方案目录缺失时会静默回退到 scheme 根目录，导致原本的
@@ -1580,7 +1611,7 @@ class ServerManager {
             }, 4000);
         }
 
-        this.process.on('exit', (code) => {
+        this.process.on('exit', (code, signal) => {
             if (this._sigintHandler) {
                 process.removeListener('SIGINT', this._sigintHandler);
                 this._sigintHandler = null;
@@ -1606,10 +1637,17 @@ class ServerManager {
             // V3.5.19：进程没了，中继与心跳一并收掉，避免面板误判「还能发指令」
             this._stopConsoleRelay();
             if (logStream) logStream.end();
-            // V3.8.2 红线：主动停止（用户 stop / kill / 关闭终端兜底）或
+            // V3.8.2 红线：主动停止（用户 stop / kill / 超时强杀 / 关闭终端兜底）或
             // 143(SIGTERM) / 137(SIGKILL) 一律视为正常停止，**绝对禁止**触发 error_scanner；
             // 只有非主动停止（崩溃 / 异常退码 1、255 等）才允许崩溃诊断。
-            const intentional = this._stopRequested === true;
+            // P0：跨进程 kill 时本进程 _stopRequested 读不到、被信号杀死时 code 为 null，
+            // 因此综合「标记文件 + 终止信号 + 本进程标志」算出 isManualStop 并透传给底层。
+            const manualFlag = this._consumeManualStopFlag();
+            const signalStop = (signal === 'SIGKILL' || signal === 'SIGTERM'
+                || signal === 'SIGHUP' || signal === 'SIGINT');
+            const isManualStop = this._stopRequested === true || manualFlag || signalStop;
+            this._isManualStop = isManualStop;
+            const intentional = this._stopRequested === true || isManualStop;
             const cleanSignal = (code === 0 || code === 143 || code === 137);
             if (intentional || cleanSignal) {
                 console.log('✅ 服务器已停止');
@@ -1660,10 +1698,13 @@ class ServerManager {
     _diagnoseCrash(code) {
         const run = () => {
             try {
+                // 双保险：即便误入本方法，主动停止也绝不调用 error_scanner。
+                if (this._isManualStop === true) return;
                 const scanner = require('./error_scanner');
                 const result = scanner.diagnoseOnCrash({
                     exitCode: code,
-                    logFile: this.logFile
+                    logFile: this.logFile,
+                    isManualStop: this._isManualStop === true
                 });
                 if (result && result.ok) {
                     logger.erro(`本地诊断：${result.summary}`);
@@ -1794,6 +1835,7 @@ class ServerManager {
             // V3.8.2 红线：标记「主动停止」。无论后续走 stdin stop 指令还是 SIGTERM/SIGKILL，
             // 退码 143(SIGTERM) / 137(SIGKILL) 一律视为用户主动停止，exit 处理里绝不触发 error_scanner。
             this._stopRequested = true;
+            this._writeManualStopFlag(); // P0：跨进程可见的主动停止标记
 
             if (!this.isRunning()) {
                 console.log('服务器未运行');
@@ -1862,6 +1904,7 @@ class ServerManager {
 
         // V3.8.2：强制终止同样属于「主动停止」—— 退码 137(SIGKILL) 绝不触发 error_scanner。
         this._stopRequested = true;
+        this._writeManualStopFlag(); // P0：跨进程可见的主动停止标记
 
         const pid = this._readPid();
         if (!pid) {

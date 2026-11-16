@@ -416,11 +416,23 @@ const PLACEHOLDER_IDS = new Set([
     'test', 'demo', 'sample', 'yourmod', 'mymod', 'class', 'main', 'null'
 ]);
 
+/**
+ * P1：非模组停用词。日志里高频出现但绝不指向真实模组——
+ * 堆栈前缀(in/at)、英文虚词(more)、线程名(thread)、异常类名(Exception/Error)。
+ * 这些词一旦被当成模组名，就会生成 `wow mod remove in` 这类荒唐建议。
+ */
+const NON_MOD_STOP_WORDS = new Set([
+    'in', 'at', 'more', 'thread', 'exception', 'error',
+    'and', 'the', 'for', 'from', 'with', 'was', 'were', 'has', 'have',
+    'this', 'that', 'then', 'than', 'but', 'not', 'you', 'are', 'its'
+]);
+
 /** 判断一个候选 ID 是否可信（不是占位名/泛化词） */
 function isPlausibleModId(id) {
     const s = String(id || '').toLowerCase();
     if (!s || s.length < 2) return false;
     if (PLACEHOLDER_IDS.has(s)) return false;
+    if (NON_MOD_STOP_WORDS.has(s)) return false; // P1：停用词绝不认作模组
     if (IGNORED_PACKAGES.has(s) || GENERIC_PACKAGE_SEGS.has(s)) return false;
     if (IGNORED_BRACKETS.has(s)) return false;
     // 纯数字或纯符号
@@ -435,7 +447,9 @@ function isPlausibleModId(id) {
 function normalizeModId(raw) {
     let s = String(raw || '').trim();
     if (!s) return '';
-    s = s.replace(/\.(jar|zip)$/i, '');
+    // P1：.jar / .zip 之后的一切全部截断（如 jna-5.12.1.jar:5 → jna-5.12.1 → jna）。
+    // 用 lookahead 边界避免误伤 jarvis 之类的普通单词。
+    s = s.replace(/\.(jar|zip)(?=[^a-z0-9]|$).*$/i, '');
 
     // 反复剥离尾部「版本号」与「加载器/平台标记」，直到稳定。
     // 例：sodium-fabric-0.5.8 → sodium-fabric → sodium
@@ -540,7 +554,8 @@ function extractModsFromLineDetailed(line) {
         found.push({ id: normalizeModId(candidate), kind: 'package', weight: 20 + idx * 5 });
     }
 
-    return found;
+    // P1：两条提取路径的候选统一过一遍停用词黑名单
+    return found.filter(item => !NON_MOD_STOP_WORDS.has(item.id));
 }
 
 /**
@@ -746,7 +761,12 @@ function scanLog(logContent, options = {}) {
         ? logContent
         : String(logContent == null ? '' : logContent).split(/\r?\n/);
 
-    const localMods = scanLocalMods(options.modsDir);
+    // P1：解析真实 mods 目录，供 mod remove 建议做 fs.existsSync 存在性校验
+    const resolvedModsDir = options.modsDir || (() => {
+        try { return path.join(require('./utils').getServerDir(), 'mods'); }
+        catch (e) { return null; }
+    })();
+    const localMods = scanLocalMods(resolvedModsDir);
 
     if (!lines.length || (lines.length === 1 && !lines[0].trim())) {
         return {
@@ -855,7 +875,7 @@ function scanLog(logContent, options = {}) {
     }
 
     // —— 生成建议 ——
-    const advice = buildAdvice(findings, localMods);
+    const advice = buildAdvice(findings, localMods, resolvedModsDir);
     const generic = t('generic.advice');
 
     // 「定位不到模组」只对「本来该有模组」的错误类型成立。
@@ -908,7 +928,7 @@ function buildContext(lines, index, span = 2) {
 }
 
 /** 根据发现生成可执行建议（命令必须真实存在） */
-function buildAdvice(findings, localMods) {
+function buildAdvice(findings, localMods, modsDir) {
     const out = [];
     const seen = new Set();
 
@@ -922,6 +942,15 @@ function buildAdvice(findings, localMods) {
             // {mod} 替换：优先真实模组名，其次「该模组」
             const modName = f.mod || '该模组';
             s = s.replace(/\{mod\}/g, modName);
+
+            // P1：mod remove / mod toggle 是高危命令——只有确认 mods/ 下真实存在
+            // 对应 Jar 包才输出该建议；猜出来的模组名一律不生成删除建议。
+            if (f.mod && /\bwow mod (remove|toggle)\b/.test(s)) {
+                const matched = findLocalMod(f.mod, localMods);
+                const jarExists = Boolean(matched && matched.file && modsDir
+                    && fs.existsSync(path.join(modsDir, matched.file)));
+                if (!jarExists) return null;
+            }
 
             // {missing} 替换：前置缺失场景
             if (s.includes('{missing}')) {
@@ -1059,6 +1088,14 @@ function renderReport(result, opts = {}) {
  * @returns {object|null} scanLog 的结果；读取失败返回 null
  */
 function diagnoseOnCrash(opts = {}) {
+    // P0 底线：主动停止（server stop / kill / 超时强杀）时传递 isManualStop:true，
+    // 此处直接拒绝诊断——即使上层误调，也绝不扫描、绝不打印崩溃报告。
+    if (opts.isManualStop === true) {
+        return {
+            ok: false, findings: [], suspects: [], localMods: [],
+            advice: [], fallback: false, aiHint: null, summary: '主动停止，跳过诊断'
+        };
+    }
     const print = opts.print !== false;
     try {
         let logFile = opts.logFile;
@@ -1122,5 +1159,6 @@ module.exports = {
     // 常量
     CLIENT_MOD_IDS,
     RENDER_CLASS_IDS,
-    IGNORED_PACKAGES
+    IGNORED_PACKAGES,
+    NON_MOD_STOP_WORDS
 };
