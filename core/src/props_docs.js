@@ -234,6 +234,73 @@ const DOCS = {
     'require-resource-pack': {
         label: '强制资源包',
         desc: 'true = 玩家不接受资源包就被踢出。'
+    },
+
+    // ── 其他常见键（未归入上方 7 个分组，会落在页面「其他配置」卡片里） ──
+    // 这些键同样由 /api/props 的 docs 透传给前端，收录后即可显示中文名 + 悬停说明。
+    'enable-status': {
+        label: '列表显示服务器状态',
+        desc: 'true = 在多人游戏列表显示服务器状态；false = 列表显示「无法连接」，但玩家仍能正常连入。'
+    },
+    'hide-online-players': {
+        label: '隐藏在线玩家',
+        desc: 'true = 多人游戏列表里不显示在线玩家名单，不影响实际连接。'
+    },
+    'sync-chunk-writes': {
+        label: '区块同步写入',
+        desc: '控制区块是否同步写入磁盘。关闭可减少保存时的卡顿，但极端情况（断电）可能丢失少量进度。'
+    },
+    'spawn-radius': {
+        label: '出生点搜索半径',
+        desc: '自动寻找安全出生点时的搜索半径（方块）；0 = 禁用自动寻找。'
+    },
+    'initial-tick-limit': {
+        label: '初始刻上限',
+        desc: '世界生成阶段允许的最大游戏刻数，超出的区块会在玩家进入时继续生成（新版本项）。'
+    },
+    'pause-when-empty-seconds': {
+        label: '无人自动暂停（秒）',
+        desc: '在线人数为 0 持续该秒数后暂停世界运行以节省资源；0 = 不暂停（新版本项）。'
+    },
+    'allow-end': {
+        label: '允许末地',
+        desc: 'false = 关闭末地传送门，玩家无法进入末地（新版本项）。'
+    },
+    'function-permission-level': {
+        label: '函数权限等级',
+        desc: '数据包中的函数执行命令时使用的权限等级（1~4，越高可执行的命令越强）。'
+    },
+    'teleport-target-radius': {
+        label: '传送落点搜索半径',
+        desc: '/tp 等命令寻找安全落点时的搜索半径（方块）。'
+    },
+    'resource-pack-prompt': {
+        label: '资源包提示文字',
+        desc: '玩家进服时询问是否下载资源包所显示的文字，支持 § 颜色代码。'
+    },
+    'resource-pack-id': {
+        label: '资源包 ID',
+        desc: '资源包的唯一 UUID，通常由服务端自动生成；手动填写需与资源包匹配。'
+    },
+    'enable-jmx-monitoring': {
+        label: '启用 JMX 监控',
+        desc: '允许 JConsole 等 Java 工具连接监控服务器性能，默认关闭，普通服无需开启。'
+    },
+    'text-filtering-config': {
+        label: '文本过滤配置',
+        desc: '聊天消息过滤服务的配置文件地址，需配合聊天签名使用；一般留空。'
+    },
+    'text-filtering-version': {
+        label: '文本过滤版本',
+        desc: '文本过滤协议版本号，保持默认即可。'
+    },
+    'rate-limit': {
+        label: '网络包速率限制',
+        desc: '限制客户端每秒可发送的数据包数量，防止恶意刷包；0 = 不限制（新版本项）。'
+    },
+    'enable-metrics': {
+        label: '匿名指标上报（旧版）',
+        desc: '旧版本的匿名统计数据上报开关；新版本由「匿名统计上报」（snooper-enabled）控制。'
     }
 };
 
