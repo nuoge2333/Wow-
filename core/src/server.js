@@ -31,6 +31,16 @@ function tuiOwnsScreen() {
     try { return require('./tui').isScreenActive(); } catch (e) { return false; }
 }
 
+/**
+ * P0（提示符路由）：开服控制台停在 :mc 视图，提示符必须是 [MC 控制台]>。
+ * 惰性取 mc_console 的常量，模块不可用时退回内置字符串（不放进 _createConsoleRl，
+ * 避免把 expectedOwners 声明挤出测试锁定的窗口）。
+ */
+function mcConsolePrompt() {
+    try { return require('./mc_console').MC_PROMPT || '[MC 控制台]> '; }
+    catch (e) { return '[MC 控制台]> '; }
+}
+
 // ==================== 开服控制台：wow 指令拦截 ====================
 // 在 `wow server start` 的交互终端中，用户输入既可发给 MC 服务端（如 /stop、op），
 // 也可直接输入 wow 指令（如 lan host、server status）。此处定义「允许 / 禁用」清单，
@@ -528,6 +538,7 @@ class ServerManager {
         }
         const lease = stdinSession.acquireSync('server.console', {
             terminal: true,
+            prompt: mcConsolePrompt(),
             // `wow L` / `wow web start` 的 REPL 里敲 `server start` 时，
             // stdin 从 repl 交到开服控制台是设计内交接：cli.js 的 close
             // 回调已按 lease.released 静默让出（不 exit、不误杀 MC）。
@@ -790,6 +801,42 @@ class ServerManager {
             const line = (raw || '').trim();
             if (!line) return;
             const lower = line.toLowerCase();
+
+            // P0（输入路由）：当前停在 :mc 视图时，视图切换指令之外的任何输入
+            // 一律原样转发给 MC，绝不走 classifyConsoleInput 的 wow 命令解析。
+            // 用与顶层 `wow :mc` 相同的路由函数，保证三处语义一致。
+            if (this._mode === 'mc') {
+                let route = { action: 'mc', command: line };
+                try { route = require('./mc_console').routeMcViewInput(line) || route; } catch (e) { /* 忽略 */ }
+                if (route.action === 'noop') return;
+                if (route.action === 'exit') {
+                    // 开服控制台里 exit = 安全退回 :wow（服务不停）
+                    console.log('\n↩ 已退出实时日志流（服务端仍在运行，输入 :mc 可随时回来）。');
+                    await this._detachConsole('wow');
+                    return;
+                }
+                if (route.action === 'switch') {
+                    // :web 不改视图；:mc 保持；其余交给安全退场入口
+                    if (route.view === 'mc') return;
+                    await this._detachConsole(route.view);
+                    return;
+                }
+                if (route.action === 'meta') {
+                    if (route.command === ':wowlog' || route.command === ':wowlogs') {
+                        await this._printConsoleTail('wow');
+                    } else if (route.command === ':log' || route.command === ':logs') {
+                        await this._printConsoleTail('mc');
+                    } else {
+                        this._printConsoleHelp();
+                    }
+                    return;
+                }
+                // action === 'mc'：原样写入 MC stdin，不做任何 wow 解析
+                if (this.process && this.process.stdin && this.process.stdin.writable) {
+                    this.process.stdin.write(route.command + '\n');
+                }
+                return;
+            }
 
             const target = MODE_ALIASES[lower];
             if (target) {

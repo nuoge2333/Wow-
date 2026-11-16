@@ -2143,8 +2143,9 @@ function buildMenuOptions() {
         // V3.6.3：签名改成「由调用方决定去哪儿」——从独立入口进来是 startRepl，
         // 从开服控制台进来则必须是回 :wow 控制台（见 server.js 的 onEnterLongCommand，
         // 那边会覆盖本默认值）。参数 `target` 由 interactive 传入，本默认实现忽略它。
-        startRepl: () => startRepl(),
-        onEnterLongCommand: () => startRepl()
+        // P0（L 模式日志隔离）：从 M 菜单进 L 走 fromMenu，禁用 MC 日志自动回显
+        startRepl: () => startRepl({ fromMenu: true }),
+        onEnterLongCommand: () => startRepl({ fromMenu: true })
     };
 }
 
@@ -2403,6 +2404,10 @@ program.hook('postAction', () => {
 // 注意：函数声明提升，上方 L 命令的 action 可直接调用。
 async function startRepl(options = {}) {
     const readline = require('readline');
+    // P0（L 模式日志隔离）：从 M 菜单进入 L 模式时，MC 实时日志只写文件/缓冲，
+    // 绝不自动 tail 到当前指令终端——否则用户刚进长命令就被日志刷屏、指令被打断。
+    // 顶层 `wow L` / `wow web start` 直入不受影响（保留既有自动跟随行为）。
+    const autoFollowAllowed = options.fromMenu !== true;
     // 执行令流转矩阵：`wow L` / `wow web start` 都进入 :wow 长命令视图
     setView('WOW', options.webMode ? 'web start' : 'wow L');
     // V3.6.1：输入 m 时置 true，close 回调据此走「回菜单」而不是「退出」
@@ -2413,11 +2418,28 @@ async function startRepl(options = {}) {
     // stdins：全项目唯一的 stdin 入口。REPL 长期持有它的租约，
     // 期间任何想提问的代码都会排队，而不是再造一个 readline 抢字节。
     const stdinSession = require('./stdin_session');
+    // P0（提示符路由）：首次提示符合当前视图决定——从 :mc 切进来时必须是
+    // [MC 控制台]>，绝不能残留 wow> 。之后由 view_state 订阅实时同步。
+    const mcmod = load('./mc_console');
+    const MC_PROMPT = (mcmod && mcmod.MC_PROMPT) || '[MC 控制台]> ';
+    const WOW_PROMPT = (mcmod && mcmod.WOW_PROMPT) || 'wow> ';
+    const initPrompt = currentView() === 'mc' ? MC_PROMPT : WOW_PROMPT;
     const lease = await stdinSession.claim('repl', {
         terminal: Boolean(process.stdin.isTTY),
-        prompt: 'wow> '
+        prompt: initPrompt
     });
     const rl = lease.rl;
+    // 视图切换时同步提示符：wow / menu → wow> ；mc → [MC 控制台]>。
+    // 订阅随 REPL 生命周期存在，close 时退订（见 close 回调）。
+    const vsMod = load('./view_state');
+    const unsubscribePrompt = (vsMod && typeof vsMod.onChange === 'function')
+        ? vsMod.onChange((next) => {
+            try {
+                if (rl.closed) return;
+                rl.setPrompt(next === vsMod.VIEW.MC ? MC_PROMPT : WOW_PROMPT);
+            } catch (e) { /* 忽略 */ }
+        })
+        : () => {};
     // V3.6.2：交互式命令执行期间置 true —— REPL 丢弃这期间收到的 line，
     // 避免把用户在命令提问处输入的内容当成 wow 指令执行。
     let suspended = false;
@@ -2490,6 +2512,8 @@ async function startRepl(options = {}) {
 
     const startFollow = (notice) => {
         if (following) return;
+        // 从 M→L：服务端日志只落文件/缓冲，不回显到指令终端（P0 日志隔离）
+        if (!autoFollowAllowed) return;
         const ServerManager = load('./server');
         if (!ServerManager) return;
         let logFile;
@@ -2580,6 +2604,69 @@ async function startRepl(options = {}) {
         if (suspended) return;
         const input = line.trim();
         if (!input) { rl.prompt(); return; }
+
+        // ===== P0（输入路由）：currentView === 'mc' 时彻底绕开 commander =====
+        // 此分支下任何输入（seed / op Steve / say hi / list …）一律原样转发给
+        // MC 控制台，绝不做 wow 命名空间识别、known 校验或 parseAsync——那正是
+        // 「:mc 指令发不出去、被报未知指令」的根因。只有视图切换/退出/辅助指令
+        // 才在这里拦截，其余全部直通。
+        if (currentView() === 'mc') {
+            const route = (mcmod && mcmod.routeMcViewInput)
+                ? mcmod.routeMcViewInput(input)
+                : { action: 'mc', command: input };
+            if (route.action === 'noop') { rl.prompt(); return; }
+            if (route.action === 'exit') {
+                // :mc 视图里 exit = 回 :wow 长命令（服务继续运行），不是退出 REPL
+                setView('WOW', 'mc:line:exit');
+                rl.setPrompt(WOW_PROMPT);
+                console.log('↩ 已离开 :mc 视图（服务端仍在运行，输入 :mc 可随时回来）。');
+                rl.prompt();
+                return;
+            }
+            if (route.action === 'switch') {
+                if (route.view === 'wow') {
+                    setView('WOW', 'mc:line:wow');
+                    rl.setPrompt(WOW_PROMPT);
+                    rl.prompt();
+                    return;
+                }
+                if (route.view === 'menu') {
+                    toMenu = true;
+                    setView('MENU', 'mc:line:m');
+                    closed = true;
+                    rl.close();
+                    return;
+                }
+                if (route.view === 'web') {
+                    console.log('🌐 Web 面板视图（终端仍停在 :mc，服务端继续运行）。');
+                    rl.prompt();
+                    return;
+                }
+                // ':mc' 等「保持当前视图」：什么都不做，保持 MC 提示符
+                rl.prompt();
+                return;
+            }
+            if (route.action === 'meta') {
+                if (route.command === ':help' || route.command === ':h' || route.command === ':?') {
+                    console.log('🎮 :mc 控制台：直接输入 Mojang 指令下发；exit/:wow 离开；:mc 保持；:m 菜单。');
+                }
+                rl.prompt();
+                return;
+            }
+            // action === 'mc'：原样下发，绝不解析
+            let ok = false;
+            try {
+                const SM = load('./server');
+                if (SM && typeof SM.enqueueConsoleCommand === 'function') {
+                    ok = SM.enqueueConsoleCommand(route.command);
+                }
+            } catch (e) { ok = false; }
+            if (!ok) console.log('⚠️ 指令下发失败：控制台中继未就绪（请用 wow server start 启动服务器）');
+            rl.prompt();
+            return;
+        }
+        // ===== /P0 输入路由 =====
+
         if (input === 'exit' || input === 'quit') { closed = true; rl.close(); return; }
         // V3.6.1：L → M 回跳。先关掉 REPL 释放 stdin，避免菜单与 REPL
         // 同时挂在同一个 process.stdin 上（那会把按键读两遍）。
@@ -2646,6 +2733,8 @@ async function startRepl(options = {}) {
     });
     rl.on('SIGINT', () => { closed = true; rl.close(); });
     rl.on('close', async () => {
+        // 退订视图→提示符同步（P0），避免残留订阅在 REPL 关闭后改别处提示符
+        try { unsubscribePrompt(); } catch (e) { /* 忽略 */ }
         // 被开服控制台的 acquireSync('server.console') 强制接管时，本租约
         // 已被标记 retired：stdin 交给了控制台，而 MC 还在跑。此时绝不能
         // process.exit(0)，否则服务端立刻变孤儿。只静默让出。

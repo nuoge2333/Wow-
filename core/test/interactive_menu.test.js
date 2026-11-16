@@ -226,8 +226,9 @@ console.log('\n— V3.5.8 启动方式（cli.js）—');
         assert.ok(!codeLines.some(l => /require\(['"]\.\/cli['"]\)/.test(l)),
             'interactive 不应 require cli（循环依赖）');
     });
-    check('buildMenuOptions 注入 startRepl 回调', () => {
-        assert.ok(/startRepl: \(\) => startRepl\(\)/.test(cli), '未注入 startRepl 回调');
+    check('buildMenuOptions 注入 startRepl 回调（M→L 带 fromMenu 隔离日志）', () => {
+        assert.ok(/startRepl: \(\) => startRepl\(\{[^}]*fromMenu:\s*true[^}]*\}\)/
+            .test(cli), '未注入带 fromMenu 的 startRepl 回调');
     });
 
     // ── V3.6.2：面板启动服务器 → REPL 同步进入日志跟踪 ──
@@ -253,9 +254,10 @@ console.log('\n— V3.5.8 启动方式（cli.js）—');
     });
     check('服务器停止后自动退出跟踪，REPL 退出时清理定时器', () => {
         assert.ok(/服务器已停止，已退出日志跟踪/.test(cli), '缺少退出跟踪提示');
-        // V3.7.4：close 回调里多了「归还 stdin 租约」那几行，
-        // 窗口从 400 放宽到 900，断言本身（两个定时器都要清）不变。
-        const m = cli.match(/rl\.on\('close', async \(\) => \{[\s\S]{0,900}?following = false;/);
+        // V3.7.4：close 回调里多了「归还 stdin 租约」那几行；
+        // P0：又多了「退订提示符订阅」一行。窗口放宽到 1300，断言本身
+        // （两个定时器都要清）不变。
+        const m = cli.match(/rl\.on\('close', async \(\) => \{[\s\S]{0,1300}?following = false;/);
         assert.ok(m && /clearInterval\(followTimer\)/.test(m[0]) && /clearInterval\(detectTimer\)/.test(m[0]),
             'close 回调未清理跟踪定时器');
     });

@@ -189,8 +189,19 @@ function sanitizeCommandText(input) {
     return s;
 }
 
-/** 默认回显出口：没接 REPL 时直接打到 stdout */
+/**
+ * P0（M 模式日志隔离）：Web 事件是否已把 TUI 菜单画面占住。
+ * 占住时任何 [WebCLI]/[System]/心跳都绝不 console.log 到终端——那会从菜单
+ * 底下顶出来把七页界面冲乱。调用方（webCliEcho / systemEcho）已经用 logger
+ * 把事件写进全局日志文件，这里静默不等于丢数据。
+ */
+function tuiOwnsTerminal() {
+    try { return require('./tui').isScreenActive() === true; } catch (e) { return false; }
+}
+
+/** 默认回显出口：TUI 占屏时静默（事件仍已落日志），否则打到 stdout */
 let echoSink = (line) => {
+    if (tuiOwnsTerminal()) return;
     try { console.log(line); } catch (e) { /* 忽略 */ }
 };
 
@@ -201,6 +212,7 @@ let echoSink = (line) => {
  */
 function setEchoSink(fn) {
     echoSink = typeof fn === 'function' ? fn : (line) => {
+        if (tuiOwnsTerminal()) return;
         try { console.log(line); } catch (e) { /* 忽略 */ }
     };
 }
@@ -2590,7 +2602,12 @@ function startWeb(options = {}) {
     });
 
     io.on('connection', (socket) => {
-        console.log(`WebSocket 客户端已连接: ${socket.id}`);
+        // P0（M 模式日志隔离）：心跳只写全局日志文件；TUI 占屏时绝不打终端
+        const connLine = `WebSocket 客户端已连接: ${socket.id}`;
+        try { logger.info(connLine); } catch (e) { /* 忽略 */ }
+        if (!tuiOwnsTerminal()) {
+            try { console.log(connLine); } catch (e) { /* 忽略 */ }
+        }
         wsClients.push(socket);
 
         // 发送欢迎消息
@@ -2607,7 +2624,12 @@ function startWeb(options = {}) {
         } catch (e) { /* 队列不可用不影响连接 */ }
 
         socket.on('disconnect', () => {
-            console.log(`WebSocket 客户端已断开: ${socket.id}`);
+            // P0（M 模式日志隔离）：心跳只写全局日志文件；TUI 占屏时绝不打终端
+            const discLine = `WebSocket 客户端已断开: ${socket.id}`;
+            try { logger.info(discLine); } catch (e) { /* 忽略 */ }
+            if (!tuiOwnsTerminal()) {
+                try { console.log(discLine); } catch (e) { /* 忽略 */ }
+            }
             wsClients = wsClients.filter(c => c.id !== socket.id);
             // V3.6.2 修复：函数名笔误——这里原本写成 stopBroadcastTail()（不存在），
             // 导致最后一个客户端断开时抛 ReferenceError，整个面板进程直接崩溃。

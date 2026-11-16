@@ -404,7 +404,7 @@ check('菜单管理器集合就地构建（不 require cli，避免循环依赖�
 
 check('cli.js 给 buildMenuOptions 注入 onEnterLongCommand 默认值', () => {
     const cliSrc = fs.readFileSync(path.join(SRC, 'cli.js'), 'utf8');
-    assert.ok(/onEnterLongCommand: \(\) => startRepl\(\)/.test(cliSrc),
+    assert.ok(/onEnterLongCommand: \(\) => startRepl\([^)]*\)/.test(cliSrc),
         'cli 未注入默认 onEnterLongCommand');
 });
 
