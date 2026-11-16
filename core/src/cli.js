@@ -22,6 +22,7 @@
 const { Command } = require('commander');
 const path = require('path');
 const fs = require('fs-extra');
+const crypto = require('crypto');
 const program = new Command();
 
 // 导入模块（仅保留启动必需的核心模块）
@@ -165,6 +166,18 @@ program
         config.setConfig(key, value);
         console.log(`✅ 设置已更新: ${key} = ${value}`);
     })._hidden = true;
+
+// ==================== :mc（接入运行中服务器的 MC 控制台）====================
+
+program
+    .command(':mc')
+    .description('接入运行中服务器的 MC 控制台（实时日志 + 指令下发）')
+    .action(async () => {
+        const mod = load('./mc_console');
+        if (!mod) return;
+        const mc = new mod.McConsole();
+        await mc.attach();
+    });
 
 // ==================== server ====================
 
@@ -2689,10 +2702,31 @@ async function registerPlugins() {
     }
 }
 
+/**
+ * 每次 wow 启动（任意入口）都给 web.auth_token 轮换成一串新的随机字符串。
+ * - 规格：crypto.randomBytes(32).toString('hex') → 64 位十六进制，与 getJwtSecret
+ *   的自动生成保持一致。
+ * - 策略：无条件覆盖——即便 yaml 里已手动配过 token，每次启动也换新，
+ *   使旧 token 立即失效（用户明确要求）。
+ * - WOW_WEB_AUTH_TOKEN 环境变量仍是运行时最高优先级（在 getJwtSecret 内判定），
+ *   那是给 CI / 集成测试显式固定密钥用的；本函数只负责 wow.yaml 里的值轮换。
+ */
+function rotateWebAuthTokenOnStart() {
+    try {
+        config.setConfig('web.auth_token', crypto.randomBytes(32).toString('hex'));
+    } catch (e) {
+        // 配置写失败不能阻断启动：getJwtSecret 侧仍有「为空时自动生成」兜底
+        console.error(`⚠️ 轮换 web.auth_token 失败（已忽略）: ${e.message}`);
+    }
+}
+
 // 顶层 await 需要 ESM 或 --input-type=module，这里改成「先加载再解析」的
 // 异步 IIFE，把原来的 parse / 菜单调用整体搬进 then 里。
 (async () => {
     await registerPlugins();
+
+    // 每次启动 CLI（无参数菜单 / 任意子命令 / L REPL）都先轮换 Web 登录密钥
+    rotateWebAuthTokenOnStart();
 
     // V3.5.8：无参数运行（如 ./wow.sh / wow.bat）直接进入数字选择菜单。
     // 长命令 REPL 已移至 `wow L`（见上方命令定义）。
