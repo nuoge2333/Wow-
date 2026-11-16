@@ -68,6 +68,28 @@ const tui = require('./tui');
 /** 备注列宽上限（最长的一条按 8 个字算，保证一行塞进 70 列） */
 const HINT_MAX = 8;
 
+// ==================== Web 面板启动横幅（傻瓜式引导） ====================
+// 常驻在 TUI 最上方的一块醒目提示。由 cli.js 在自动拉起 Web 后注入，
+// 或由 Q10「开启/查看 Web 面板」在启动后设置；drawPage 每帧重绘它。
+let webBanner = null;
+
+/** 注入/清除常驻横幅（传 null 或空数组即清除） */
+function setWebBanner(lines) {
+    webBanner = (Array.isArray(lines) && lines.length) ? lines.slice() : null;
+}
+
+/** 生成「Web 图形化面板已启动」的醒目框线（端口/地址动态） */
+function webBannerLines(host, port) {
+    const shown = (!host || host === '0.0.0.0' || host === '::') ? '127.0.0.1' : host;
+    return [
+        '═══════════════════════════════════════════════',
+        '  🖥️  Web 图形化面板已启动！',
+        `  👉  请用浏览器打开：http://${shown}:${port}`,
+        '  （如果在 VPS 上，请用公网 IP 访问）',
+        '═══════════════════════════════════════════════'
+    ];
+}
+
 const PAGES = [
     {
         key: 'Q',
@@ -94,7 +116,8 @@ const PAGES = [
             {
                 id: '9', label: '开房联机（陶瓦，同 R 页 1）',
                 hint: () => '无需公网 IP'
-            }
+            },
+            { id: '10', label: '开启/查看 Web 面板', hint: () => '浏览器管理' }
         ]
     },
     {
@@ -407,7 +430,9 @@ async function runTuiMode(options, state) {
             status,
             notice,
             // 正在输入的编号回显在提示行，否则敲了 `2` 屏幕上看不见
-            input: numBuf || null
+            input: numBuf || null,
+            // Web 面板访问横幅：常驻最上方（若已注入）
+            banner: webBanner
         });
         // notice 是「上一个动作的尾巴」，画过一次就作废。
         // 不清的话它会一直挂在页面底部，用户切回来看见一条早就不成立的提示。
@@ -1073,6 +1098,39 @@ action('Q', 8, ({ options }) => tailLogs(options));
 
 // Q9「联机 / 我要当房主 (陶瓦)」= R1 开房，两个入口指向同一动作
 action('Q', 9, (env) => terracottaHost(env));
+
+/**
+ * Q10 开启/查看 Web 面板。
+ * - 未运行：直接启动它，并把访问横幅设为常驻；
+ * - 已运行：只在终端显示访问链接（不打断现有面板）。
+ */
+action('Q', 10, async (env) => {
+    printHeader('开启 / 查看 Web 面板');
+    const Web = require('./web_service');
+    let status = { running: false };
+    try { status = Web.webStatus() || { running: false }; } catch (e) { status = { running: false }; }
+
+    if (!status.running) {
+        let server = null;
+        try { server = Web.startWeb(); } catch (e) { console.log(`❌ 启动失败: ${e.message}`); return false; }
+        if (!server) { console.log('面板未启动，请查看上方提示。'); return false; }
+        await new Promise((resolve) => {
+            if (server.listening) return resolve();
+            let done = false;
+            const fin = () => { if (!done) { done = true; resolve(); } };
+            server.once('listening', fin);
+            setTimeout(fin, 1200);
+        });
+        try { status = Web.webStatus() || status; } catch (e) { /* 用 fallback 地址 */ }
+    }
+
+    const host = status.host || '127.0.0.1';
+    const port = status.port || require('./config').getConfig('web.port', 8080);
+    const lines = webBannerLines(host, port);
+    for (const l of lines) console.log(l);
+    setWebBanner(lines); // 回到 TUI 后横幅常驻最上方
+    return false;
+});
 
 // ==================== W 页：方案 ====================
 
@@ -2202,5 +2260,7 @@ module.exports = {
     ask,
     clearScreen,
     printHeader,
+    setWebBanner,
+    webBannerLines,
     javaSettingsFlow
 };

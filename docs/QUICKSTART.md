@@ -54,15 +54,9 @@ chmod +x wow.sh
 
 ## 3. 初始化环境
 
-```bash
-wow init
-```
+直接运行 wow.sh（或 wow.bat），系统将自动完成初始化。
 
-该命令会：
-- 创建必要的目录结构 (`core/pool/`, `scheme/`, `themes/`, `wow-extensions/`)
-- 检测 Java 安装（未检测到时，会在启动服务器时自动下载）
-- 生成默认配置文件 `core/wow.yaml`
-- 生成默认主题 `themes/default/`
+> 💡 启动器会自动检测依赖、创建必要目录、检测 Java 并生成默认配置。若误删了目录或配置文件，可运行 `wow init` 重新生成默认环境（自愈修复）。
 
 ---
 
@@ -242,8 +236,7 @@ wow mod remove JEI
 ### 快速搭建一个生存服务器
 
 ```bash
-# 1. 初始化
-wow init
+# 1. 直接运行 wow.sh（或 wow.bat），系统将自动完成初始化
 
 # 2. 创建并激活方案（自动下载 Paper 核心）
 wow scheme create survival -t paper -v 1.20.1
@@ -258,8 +251,7 @@ wow web start
 ### 快速搭建一个模组服务器
 
 ```bash
-# 1. 初始化
-wow init
+# 1. 直接运行 wow.sh（或 wow.bat），系统将自动完成初始化
 
 # 2. 创建并激活方案（自动下载 Forge 核心）
 wow scheme create modded -t forge -v 1.20.1

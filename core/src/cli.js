@@ -92,10 +92,42 @@ program
 
 // ==================== init ====================
 
+/**
+ * 首次运行 wow init 时的「灵魂拷问」：是否每次启动 wow 都自动拉起 Web 面板。
+ * - 用标记文件保证只问一次；用户的选择写入 web.run_startup。
+ * - 非交互环境（CI / 管道 / 无 TTY）不阻塞，按默认的 Y（开启）处理——
+ *   这正是「傻瓜式引导」的默认值，也不会让自动化测试卡在 stdin。
+ */
+const INIT_WEB_ASKED_FLAG = path.join(__dirname, '../.init-web-asked.flag');
+async function askWebStartupOnFirstInit() {
+    try {
+        if (fs.existsSync(INIT_WEB_ASKED_FLAG)) return;
+        const prompt = '是否在每次启动 wow 时自动开启 Web 图形化面板？ (Y/n): ';
+        let yes = true;
+        if (process.stdin.isTTY) {
+            const stdinSession = require('./stdin_session');
+            const raw = await stdinSession.ask(prompt);
+            const v = String(raw || '').trim().toLowerCase();
+            yes = !(v === 'n' || v === 'no');
+        } else {
+            console.log(prompt + 'Y（非交互环境，采用默认）');
+        }
+        config.setConfig('web.run_startup', yes);
+        try { fs.writeFileSync(INIT_WEB_ASKED_FLAG, String(Date.now()), 'utf8'); } catch (e) { /* 标记失败不阻断 */ }
+        if (yes) {
+            console.log('✅ 已开启：以后每次直接运行 wow 都会自动打开 Web 图形化面板。');
+        } else {
+            console.log('已记录：以后启动 wow 不再自动打开面板（可随时用 wow web start 手动开启）。');
+        }
+    } catch (e) {
+        console.error(`⚠️ Web 面板偏好设置失败（已忽略）: ${e.message}`);
+    }
+}
+
 program
     .command('init')
-    .description('初始化环境（创建目录、检测Java）')
-    .action(() => {
+    .description('初始化或修复环境（如果你误删了目录或配置文件，运行此命令可重新生成默认环境并检测 Java）。')
+    .action(async () => {
         console.log('正在初始化 wow 环境...');
 
         // 创建必要目录
@@ -149,6 +181,9 @@ program
             config.saveConfig(config.DEFAULT_CONFIG);
             console.log('✅ 配置文件已创建: core/wow.yaml');
         }
+
+        // 首次 init：询问是否每次启动都自动拉起 Web 面板（只问一次）
+        await askWebStartupOnFirstInit();
 
         console.log('\n✅ 初始化完成！');
         console.log('运行命令:');
@@ -2720,6 +2755,47 @@ function rotateWebAuthTokenOnStart() {
     }
 }
 
+/**
+ * 无参数启动（./wow.sh / wow.bat，即小白最常走的路）时：
+ * 若 web.run_startup 为 true，则后台静默拉起 Web 面板，并把醒目的访问横幅
+ * 注入 TUI —— 横幅会在每次 drawPage 清屏后、状态栏之前重绘，常驻终端最上方。
+ * 任何失败都只降级、绝不阻断菜单进入。
+ */
+async function autoStartWebIfEnabled() {
+    try {
+        if (config.getConfig('web.run_startup', false) !== true) return;
+        const Web = load('./web_service');
+        if (!Web) return;
+
+        let status = { running: false };
+        try { status = Web.webStatus() || { running: false }; } catch (e) { status = { running: false }; }
+
+        if (!status.running) {
+            const server = Web.startWeb();
+            if (!server) return; // startWeb 已给出人话提示（如未配 token / 端口占用）
+            await new Promise((resolve) => {
+                if (server.listening) return resolve();
+                let done = false;
+                const fin = () => { if (!done) { done = true; resolve(); } };
+                server.once('listening', fin);
+                setTimeout(fin, 1200); // 兜底：极端情况错过事件
+            });
+            try { status = Web.webStatus() || status; } catch (e) { /* 用 fallback 地址 */ }
+        }
+
+        const interactive = load('./interactive');
+        if (!interactive || typeof interactive.setWebBanner !== 'function') return;
+        const host = status.host || '127.0.0.1';
+        const port = status.port || config.getConfig('web.port', 8080);
+        const lines = interactive.webBannerLines(host, port);
+        interactive.setWebBanner(lines);
+        // 非 TTY（兼容模式）不会走 drawPage，这里直接打印一次保证可见
+        if (!process.stdin.isTTY) for (const l of lines) console.log(l);
+    } catch (e) {
+        // 自动拉起失败绝不能阻断菜单
+    }
+}
+
 // 顶层 await 需要 ESM 或 --input-type=module，这里改成「先加载再解析」的
 // 异步 IIFE，把原来的 parse / 菜单调用整体搬进 then 里。
 (async () => {
@@ -2731,6 +2807,7 @@ function rotateWebAuthTokenOnStart() {
     // V3.5.8：无参数运行（如 ./wow.sh / wow.bat）直接进入数字选择菜单。
     // 长命令 REPL 已移至 `wow L`（见上方命令定义）。
     if (process.argv.length <= 2) {
+        await autoStartWebIfEnabled();
         await enterMainMenu('无参数启动');
     } else {
         // V3.6.4（P2-13）：`wow -v` 作为 `wow -V` 的 alias，输出版本号。

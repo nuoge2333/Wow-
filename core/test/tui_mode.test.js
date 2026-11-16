@@ -47,10 +47,11 @@ check('每页都有 label / title / items', () => {
 });
 
 // V3.7.4 扁平化：原 10 个聚合入口拆成页内独立项，项数随之上浮。
-//   Q 9 / W 9 / E 11 / R 10 / T 7 / Y 9
-check('Q 页 9 项 / W 页 9 项 / E 页 11 项 / R 页 10 项 / T 页 7 项 / Y 页 9 项', () => {
+//   傻瓜式引导：Q 页新增第 10 项「开启/查看 Web 面板」。
+//   Q 10 / W 9 / E 11 / R 10 / T 7 / Y 9
+check('Q 页 10 项 / W 页 9 项 / E 页 11 项 / R 页 10 项 / T 页 7 项 / Y 页 9 项', () => {
     const counts = Object.fromEntries(itv.PAGES.map(p => [p.key, p.items.length]));
-    assert.deepStrictEqual(counts, { Q: 9, W: 9, E: 11, R: 10, T: 7, Y: 9 });
+    assert.deepStrictEqual(counts, { Q: 10, W: 9, E: 11, R: 10, T: 7, Y: 9 });
 });
 
 check('每页每一项都能在 ACTION_BY_KEY 里找到实现（无空壳项）', () => {

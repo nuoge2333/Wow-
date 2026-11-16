@@ -344,8 +344,15 @@ class StatusBar {
  * @param {boolean} [ctx.plain]   true = 不用清屏，直接追加（兼容模式用）
  */
 function drawPage(ctx) {
-    const { page, def, status, notice, input, plain } = ctx;
+    const { page, def, status, notice, input, plain, banner } = ctx;
     if (!plain) clear();
+    // 常驻横幅：清屏后、状态栏之前绘制，保证「Web 面板访问地址」始终在终端最上方。
+    // 每帧 drawPage 都会重绘它，因此不会被后续 clear() 冲掉。
+    if (Array.isArray(banner) && banner.length) {
+        line('');
+        for (const b of banner) line(b);
+        line('');
+    }
     status.render(page, def.label);
 
     line('');
