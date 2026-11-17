@@ -40,8 +40,8 @@ const ALLOWED_PREFIXES = [
     'install paper', 'install spigot', 'install mohist', 'install purpur',
     'install folia', 'install quilt',
     'down', 'mod download', 'mod sync',
-    // V3.8.0 P0 下载中心：模组 / 服务端插件安装到方案（--kind plugins 走插件页）
-    'mod install'
+    // V3.9.0：install 统一为「下载资源到公共池」——核心 / 模组 / 插件入池
+    'install core', 'install mod', 'install plugin'
 ];
 
 /**

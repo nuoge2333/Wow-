@@ -105,17 +105,24 @@ try {
     fs.removeSync(tmp);
 }
 
-// ==================== V3.8.0 P0/P1：下载中心与玩家管理命令 ====================
+// ==================== V3.9.0：install 统一入池 / 废弃 mod install ====================
 
-console.log('\nV3.8.0 下载中心 / 玩家管理命令注册\n');
+console.log('\nV3.9.0 install 入池 / 玩家管理命令注册\n');
+
+const installHelp = helpOf(['install']);
+check('install --help 列出 core / mod / plugin 子命令', () => {
+    for (const c of ['core', 'mod', 'plugin']) {
+        assert.ok(installHelp.includes(c), `缺少子命令 ${c}`);
+    }
+});
+check('install 描述为「下载资源到公共池」', () => {
+    assert.match(installHelp, /公共池|资源池/);
+});
 
 const modHelp = helpOf(['mod']);
-check('mod --help 列出 install <project>', () => assert.match(modHelp, /install \[options\] <project>/));
-check('mod install 必须带 --scheme / --kind / --no-auto', () => {
-    const h = helpOf(['mod', 'install']);
-    for (const flag of ['--scheme <name>', '--kind <kind>', '--no-auto', '--source <src>']) {
-        assert.ok(h.includes(flag), `缺少 ${flag}`);
-    }
+check('mod install 保留但标记为已废弃', () => {
+    assert.match(modHelp, /install/);
+    assert.match(helpOf(['mod', 'install']), /已废弃|废弃/);
 });
 
 const playersHelp = helpOf(['config', 'players']);
@@ -125,24 +132,26 @@ check('config players --help 列出 list/whitelist/ban/scan', () => {
     }
 });
 
-check('铁律：mod install 缺 --scheme 报错且退出码非 0', () => {
+check('mod install 输入旧指令 → 明确废弃提示', () => {
     const r = spawnSync(process.execPath, [path.join('src', 'cli.js'), 'mod', 'install', 'sodium'], {
         cwd: CORE, encoding: 'utf8', timeout: 20000
     });
-    assert.notStrictEqual(r.status, 0, '缺方案必须失败退出');
-    assert.match((r.stdout || '') + (r.stderr || ''), /必须指定目标方案/);
+    assert.match((r.stdout || '') + (r.stderr || ''), /该命令已废弃.*install mod/);
 });
 
 const WebTask = require('../src/web_task');
-check('web_task 白名单放行 mod install（含 --kind plugins）', () => {
-    assert.strictEqual(WebTask.isAllowed('mod install', ['sodium', '--scheme', 'alpha']), true);
-    assert.strictEqual(WebTask.isAllowed('mod install', ['luckperms', '--scheme', 'alpha', '--kind', 'plugins']), true);
+check('web_task 白名单放行 install core / mod / plugin', () => {
+    assert.strictEqual(WebTask.isAllowed('install core', ['paper', '1.20.1']), true);
+    assert.strictEqual(WebTask.isAllowed('install mod', ['sodium']), true);
+    assert.strictEqual(WebTask.isAllowed('install plugin', ['luckperms']), true);
+    assert.strictEqual(WebTask.isAllowed('mod install', ['sodium']), false);
 });
 
 const policy = require('../src/command_policy');
-check('Web 命令策略放行 mod install（模组与插件两种形态）', () => {
-    assert.strictEqual(policy.isWebCommandAllowed('mod install sodium --scheme alpha').allowed, true);
-    assert.strictEqual(policy.isWebCommandAllowed('mod install luckperms --scheme alpha --kind plugins').allowed, true);
+check('Web 命令策略放行 install core / mod / plugin', () => {
+    assert.strictEqual(policy.isWebCommandAllowed('install core paper 1.20.1').allowed, true);
+    assert.strictEqual(policy.isWebCommandAllowed('install mod sodium').allowed, true);
+    assert.strictEqual(policy.isWebCommandAllowed('install plugin luckperms').allowed, true);
 });
 
 console.log(`\n${failed === 0 ? '✅ 全部通过' : '❌ 存在失败'}：${passed} passed, ${failed} failed\n`);

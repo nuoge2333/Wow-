@@ -246,27 +246,31 @@ check('搜索请求携带 category / version / projectType', () => {
     assert.ok(downHtml.includes("projectType: isPlugin ? 'plugin' : 'mod'"), '插件 Tab 必须传 projectType=plugin');
 });
 
-check('选方案安装弹窗：节点齐全且默认不选任何方案', () => {
+check('下载到资源池弹窗：节点齐全且不写入方案', () => {
     for (const id of [
         'install-modal', 'install-modal-title', 'install-modal-sub',
-        'install-scheme-select', 'install-auto-resolve', 'install-cf-warn',
+        'install-pool-note', 'install-cf-warn',
         'install-confirm-btn', 'install-cancel-btn'
     ]) {
         assert.ok(downHtml.includes(`id="${id}"`), `缺少弹窗节点 ${id}`);
     }
-    assert.ok(/<option value="">— 请选择方案 —<\/option>/.test(downHtml),
-        '目标方案必须有空的默认项（禁止默认塞入当前方案）');
-    assert.ok(downHtml.includes("showToast('必须先选择一个目标方案"), '未选方案时必须有拦截提示');
+    assert.ok(downHtml.includes('downloadPool') || downHtml.includes('下载到资源池'),
+        '弹窗标题应体现「下载到资源池」');
+    assert.ok(!downHtml.includes('install-scheme-select'), '不应再有选方案字段');
+    assert.ok(!downHtml.includes("'--scheme', scheme"), '不应再提交 --scheme 参数');
 });
 
-check('下载不再直落共享池，改为 mod install 提交到方案', () => {
+check('下载统一走 install mod / install plugin 入池', () => {
     assert.ok(!downHtml.includes("'pool/mods/'"), '仍残留 down -o pool/mods/ 的旧写法');
-    assert.ok(downHtml.includes("await apiTask('mod install', args"), '应提交 mod install 异步任务');
-    for (const frag of ["'--scheme', scheme", "'--kind', item.kind", "args.push('--no-auto')"]) {
-        assert.ok(downHtml.includes(frag), `安装参数缺少 ${frag}`);
-    }
+    assert.ok(downHtml.includes("apiTask(command, args") && downHtml.includes("'install plugin' : 'install mod'"),
+        '应按 kind 提交 install mod / install plugin 异步任务');
+    assert.ok(!downHtml.includes("'mod install'"), '不应再提交已废弃的 mod install');
     assert.ok(downHtml.includes("activateTab('queue')"), '提交后应切到下载队列 Tab');
 });
+
+check('核心下载统一走 install core',
+    () => assert.ok(downHtml.includes('apiTask(`install core ${type}`') || downHtml.includes('install core ${type}'),
+        '核心下载应提交 install core 任务'));
 
 console.log('\n🧩 内容页统一留白（不贴边）\n');
 

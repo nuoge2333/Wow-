@@ -2348,6 +2348,39 @@ function startWeb(options = {}) {
     });
 
     /**
+     * V3.9.0：可用版本列表（关闭「自动解析」时前端拉取并渲染下拉）。
+     * GET /api/mod/versions?source=<src>&project=<id>&loader=<l>&mcVersion=<v>&limit=<n>
+     */
+    app.get('/api/mod/versions', async (req, res) => {
+        try {
+            const ModSearch = require('./mod_search');
+            const data = await ModSearch.listVersions(req.query.source, req.query.project, {
+                loader: req.query.loader || req.query.loaders,
+                mcVersion: req.query.mcVersion || req.query.version,
+                limit: req.query.limit
+            });
+            res.json({ success: true, ...data });
+        } catch (e) {
+            res.status(e.status || 502).json({ success: false, error: e.message });
+        }
+    });
+
+    /**
+     * V3.9.0：指定版本的依赖列表（选中版本后展示「该模组需要：jade, cloth-config」）。
+     * GET /api/mod/version-deps?source=<src>&project=<id>&version=<versionId>
+     */
+    app.get('/api/mod/version-deps', async (req, res) => {
+        try {
+            const ModSearch = require('./mod_search');
+            const data = await ModSearch.getVersionDependencies(
+                req.query.source, req.query.project, req.query.version || req.query.versionId);
+            res.json({ success: true, ...data });
+        } catch (e) {
+            res.status(e.status || 502).json({ success: false, error: e.message });
+        }
+    });
+
+    /**
      * 下载队列状态
      * GET /api/download/status        → 队列
      * DELETE /api/download/status     → 清理已完成任务

@@ -112,8 +112,8 @@ const MESSAGES = {
             '若无法确定是哪个，尝试 `wow mod toggle {mod}` 逐个二分排查。'
         ],
         'fix.missing_dependency': [
-            '缺失的前置无法通过命令行一键安装（wow 暂未提供 `mod install`）；',
-            '请手动下载 {missing} 放入 mods 目录，或使用 `wow` 菜单中的「模组搜索下载」。'
+            '可用 `wow install mod {missing}` 下载前置到公共池，再同步进方案；',
+            '或手动下载 {missing} 放入 mods 目录。'
         ],
         'fix.client_mod': [
             '移除该客户端模组：`wow mod remove {mod}`；',
@@ -186,8 +186,8 @@ const MESSAGES = {
             'Or bisect with `wow mod toggle {mod}`.'
         ],
         'fix.missing_dependency': [
-            'wow does not provide `mod install` yet;',
-            'Download {missing} manually into mods/, or use the interactive mod search.'
+            'Download the missing mod into the pool with `wow install mod {missing}`, then sync it into the scheme;',
+            'Or download {missing} manually into mods/.'
         ],
         'fix.client_mod': [
             'Remove it: `wow mod remove {mod}`;',

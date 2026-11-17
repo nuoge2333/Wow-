@@ -272,16 +272,26 @@ serverCmd
         server.status();
     });
 
-// ==================== install ====================
+// ==================== install（资源获取与入池 Fetch to Pool） ====================
 
-// V3.3.10：install 仍保留但不在 --help 列出（commander v11 无 .hideHelp()，用 _hidden 属性实现）。
-// V3.5.2：除 `install party` 彩蛋与 URL 下载外，核心安装（vanilla/paper/forge…）已迁移到 scheme create --type。
-program
-    .command('install <target> [version]')
-    .description('彩蛋 / 下载任意 URL 文件（核心安装请改用 scheme create --type）')
-    .option('-b, --build <id>', '构建标识（Mohist 为 git sha；留空自动选择最新）')
+/**
+ * install 的核心定位：下载资源到公共池 pool/，不再创建方案（Scheme）。
+ *   - install core <type> <version>  → pool/cores/<type>/<version>/
+ *   - install mod <url_or_search>    → pool/mods/
+ *   - install plugin <url_or_search> → pool/plugins/
+ *   - install <url> -o <path>        → 旧版 URL 下载（保留）
+ * 下载后计算 SHA-256、登记 pool/index.yaml（初始引用数 0），绝不写 scheme/。
+ * 创建方案请用 `scheme create`（进货 vs 开店，职责分离）。
+ */
+const installCmd = program
+    .command('install [target] [version]')
+    .description('下载资源到公共池（核心 / 模组 / 插件），不创建方案')
+    .option('-b, --build <id>', '核心构建标识（Mohist 为 git sha；留空自动选择最新）')
     .option('-o, --output <path>', '输出路径（仅 URL 下载时有效）')
     .action(async (target, version, options) => {
+        const PoolInstaller = load('./pool_installer');
+        if (!PoolInstaller) return;
+
         // ============ 彩蛋入口 ============
         if (target === 'party') {
             const party = load('./party/party');
@@ -289,24 +299,97 @@ program
             await party.runParty();
             return;
         }
-        // ============ URL 下载 ============
-        if (target.startsWith('http://') || target.startsWith('https://')) {
+        // ============ URL 下载（旧版行为保留；-o 指定落盘路径） ============
+        if (/^https?:\/\//i.test(target || '')) {
             const Installer = load('./installer');
             if (!Installer) return;
-            const installer = new Installer();
-            const output = options.output || path.join(utils.getServerDir(), path.basename(target));
-            try {
-                await installer.downloadFile(target, output);
-            } catch (e) {
-                console.error(`❌ 下载失败: ${e.message}`);
+            if (options.output) {
+                // 显式 -o：按旧版行为下载到任意路径
+                try {
+                    await new Installer().downloadFile(target, options.output);
+                } catch (e) {
+                    console.error(`❌ 下载失败: ${e.message}`);
+                    process.exitCode = 1;
+                }
+                return;
             }
+            // 未给 -o：当作模组 URL 入池
+            console.log('📦 未指定 -o，按模组 URL 下载到公共池 pool/mods/。');
+            const r = await PoolInstaller.installContent({ input: target, category: 'mods' });
+            if (!r.ok) { console.error(`❌ 下载失败: ${r.error}`); process.exitCode = 1; return; }
+            for (const line of PoolInstaller.nextStepHint('mod', { name: path.basename(r.rel) })) console.log(line);
             return;
         }
-        // ============ 核心安装已迁移到 scheme ============
-        console.log(`💡 核心安装已迁移到 scheme 命令，请改用：`);
-        console.log(`   scheme create <名称> --type ${target} --version ${version || '<MC版本>'}`);
-        console.log(`   例如：scheme create myserver --type ${target} --version ${version || '1.20.1'}`);
-    })._hidden = true;
+        // ============ 无 target：打印用法 ============
+        if (!target) {
+            console.log('用法：');
+            console.log('  wow install core <type> <version>     下载核心到 pool/cores/');
+            console.log('  wow install mod <url_or_search>       下载模组到 pool/mods/');
+            console.log('  wow install plugin <url_or_search>    下载插件到 pool/plugins/');
+            console.log('  wow install <url> -o <path>           下载任意 URL 到指定路径');
+            return;
+        }
+        // 形如 `install paper 1.20.1` 的旧写法：引导改用 install core
+        console.log('💡 下载核心请改用 install core 子命令：');
+        console.log(`   wow install core ${target} ${version || '<MC版本>'}`);
+    });
+
+installCmd
+    .command('core <type> <version>')
+    .description('下载服务端核心到 pool/cores/<type>/<version>/')
+    .option('-b, --build <id>', '构建标识（Mohist 为 git sha；留空自动选择最新）')
+    .action(async (type, version, options) => {
+        const PoolInstaller = load('./pool_installer');
+        if (!PoolInstaller) return;
+        console.log(`📦 正在下载核心 ${type} ${version} 到资源池...`);
+        const r = await PoolInstaller.installCore({ type, version, build: options.build });
+        if (!r.ok) { console.error(`❌ 核心下载失败: ${r.error}`); process.exitCode = 1; return; }
+        for (const line of PoolInstaller.nextStepHint('core', { type, version })) console.log(line);
+    });
+
+installCmd
+    .command('mod <url_or_search>')
+    .description('下载模组到 pool/mods/（URL 或 Modrinth/CurseForge 项目名；默认递归拉取必需依赖）')
+    .option('--source <src>', '数据源：modrinth（默认）| curseforge')
+    .option('--loader <l>', '加载器（搜索词模式用于匹配版本）')
+    .option('--version <v>', 'MC 版本（搜索词模式用于匹配版本）')
+    .option('--no-auto', '关闭自动解析：只下载本体，不拉取前置依赖')
+    .action(async (input, options) => {
+        const PoolInstaller = load('./pool_installer');
+        if (!PoolInstaller) return;
+        console.log(`📦 正在下载模组 ${input} 到资源池${options.auto === false ? '（仅本体）' : '（含必需依赖）'}...`);
+        const r = await PoolInstaller.installContent({
+            input, category: 'mods', source: options.source,
+            loader: options.loader, mcVersion: options.version,
+            autoResolve: options.auto !== false
+        });
+        if (!r.ok) { console.error(`❌ 模组下载失败: ${r.error}`); process.exitCode = 1; return; }
+        for (const w of (r.warnings || [])) console.warn(`⚠️ ${w}`);
+        if (r.deps && r.deps.length) console.log(`   ↳ 已自动拉取 ${r.deps.length} 个前置依赖：${r.deps.join(', ')}`);
+        for (const line of PoolInstaller.nextStepHint('mod', { name: path.basename(r.rel) })) console.log(line);
+    });
+
+installCmd
+    .command('plugin <url_or_search>')
+    .description('下载服务端插件到 pool/plugins/（URL 或项目名；默认递归拉取必需依赖）')
+    .option('--source <src>', '数据源：modrinth（默认）| curseforge')
+    .option('--loader <l>', '加载器（搜索词模式用于匹配版本）')
+    .option('--version <v>', 'MC 版本（搜索词模式用于匹配版本）')
+    .option('--no-auto', '关闭自动解析：只下载本体，不拉取前置依赖')
+    .action(async (input, options) => {
+        const PoolInstaller = load('./pool_installer');
+        if (!PoolInstaller) return;
+        console.log(`📦 正在下载插件 ${input} 到资源池${options.auto === false ? '（仅本体）' : '（含必需依赖）'}...`);
+        const r = await PoolInstaller.installContent({
+            input, category: 'plugins', source: options.source,
+            loader: options.loader, mcVersion: options.version,
+            autoResolve: options.auto !== false
+        });
+        if (!r.ok) { console.error(`❌ 插件下载失败: ${r.error}`); process.exitCode = 1; return; }
+        for (const w of (r.warnings || [])) console.warn(`⚠️ ${w}`);
+        if (r.deps && r.deps.length) console.log(`   ↳ 已自动拉取 ${r.deps.length} 个前置依赖：${r.deps.join(', ')}`);
+        for (const line of PoolInstaller.nextStepHint('plugin', { name: path.basename(r.rel) })) console.log(line);
+    });
 
 // ==================== mod ====================
 
@@ -505,83 +588,15 @@ modCmd
     });
 
 /**
- * V3.8.0 P0 下载中心：从 Modrinth / CurseForge 安装模组或「Minecraft 服务端插件」
- * 到**指定方案**。
- *
- * 铁律：必须显式给 --scheme，绝不默认塞入当前方案（下载中心弹窗同理）。
- * loader / MC 版本缺省时从方案 scheme.yaml 读取，实现「自动选最适配的版本」。
- * --kind plugins 用于「插件下载」页（仍走同一安装器，落到 scheme/<name>/plugins/）。
+ * V3.9.0：`mod install` 已废弃，统一改用 `wow install mod <url>` 入池。
+ * 这里保留一个占位命令，专门给仍输入旧指令的用户明确提示，不再有任何
+ * 写入 scheme/ 的副作用。
  */
 modCmd
-    .command('install <project>')
-    .description('从 Modrinth（默认）/ CurseForge 安装模组或服务端插件到指定方案')
-    .option('--scheme <name>', '目标方案名（必填；禁止默认塞入当前方案）')
-    .option('--source <src>', '数据源：modrinth（默认）| curseforge')
-    .option('--version <v>', 'MC 版本（缺省取方案元数据）')
-    .option('--loader <l>', '加载器（缺省取方案元数据）')
-    .option('--kind <kind>', 'mods（模组，默认）| plugins（Minecraft 服务端插件）')
-    .option('--no-auto', '关闭自动解析：不按方案选最适配版本、不递归拉前置依赖')
-    .action(async (project, options) => {
-        const scheme = options.scheme;
-        if (!scheme) {
-            console.error('❌ 必须指定目标方案：--scheme <方案名>（下载中心禁止默认塞入当前方案）');
-            console.error('   可用方案请用 wow scheme list 查看。');
-            process.exitCode = 1;
-            return;
-        }
-        const Installer = load('./content_installer');
-        const SchemeManager = load('./scheme_manager');
-        if (!Installer || !SchemeManager) { process.exitCode = 1; return; }
-
-        const sm = new SchemeManager();
-        if (!sm._schemeExists(scheme)) {
-            console.error(`❌ 方案「${scheme}」不存在`);
-            process.exitCode = 1;
-            return;
-        }
-        // 「按方案核心版本 + 加载器抓最适配文件」：缺省从 scheme.yaml 读
-        let meta = {};
-        try { meta = sm.getMeta(scheme) || {}; } catch (e) { /* 元数据坏了也能装，只是无版本提示 */ }
-        const mcVersion = options.version || meta.version || null;
-        const loader = options.loader || meta.loader || null;
-        const kind = options.kind === 'plugins' ? 'plugins' : 'mods';
-        const autoResolve = options.auto !== false;
-        const source = options.source || 'modrinth';
-
-        const label = kind === 'plugins' ? '插件' : '模组';
-        console.log(`📦 安装${label} ${project} → 方案「${scheme}」`);
-        console.log(`   数据源: ${source} | MC ${mcVersion || '自动'} | 加载器 ${loader || '自动'} | 自动解析: ${autoResolve ? '开' : '关'}`);
-
-        let lastPct = -1;
-        const onProgress = ({ received, total }) => {
-            if (!total) return;
-            const pct = Math.floor(received / total * 100);
-            if (pct !== lastPct && (pct % 10 === 0 || pct === 100)) {
-                lastPct = pct;
-                console.log(`   已下载 ${pct}%`);
-            }
-        };
-
-        try {
-            const r = await Installer.installToScheme({
-                source, project, targetScheme: scheme, kind, autoResolve,
-                loader, mcVersion, onProgress, schemeManager: sm
-            });
-            for (const w of r.warnings) console.warn(`⚠️ ${w}`);
-            for (const it of r.installed) {
-                console.log(`   ✅ ${it.filename}${it.depth ? `（前置依赖 depth=${it.depth}）` : ''}`);
-            }
-            for (const s of r.skipped) console.error(`   ❌ ${s.projectId}: ${s.error}`);
-            if (r.ok) {
-                console.log(`✅ 已安装 ${r.installed.length} 个文件到 scheme/${scheme}/${kind}/`);
-            } else {
-                console.error(`❌ 部分文件安装失败（成功 ${r.installed.length} / 失败 ${r.skipped.length}）`);
-                process.exitCode = 1;
-            }
-        } catch (e) {
-            console.error(`❌ 安装失败: ${e.message}`);
-            process.exitCode = 1;
-        }
+    .command('install [project]')
+    .description('[已废弃] 请用 wow install mod <url> 下载模组到公共资源池')
+    .action(() => {
+        console.log('❌ 该命令已废弃。请使用 `wow install mod <url>` 下载模组到公共资源池。');
     });
 
 // ==================== scheme ====================
