@@ -267,13 +267,14 @@ check('26 前置缺失时输出里带上具体缺失模组名', () => {
     assert.ok(text.includes('trinkets'), '输出未提及声明方 trinkets');
 });
 
-check('27 建议中不得出现并不存在的 `wow mod install` 命令', () => {
+check('27 前置缺失建议用现存的 `wow install mod`，不出现已废弃的 `wow mod install`', () => {
     const r = scan([
         '[main/ERROR]: Missing or unsupported mandatory dependencies:',
         "\tMod ID: 'cloth-config', Requested by: 'trinkets'"
     ], MODS);
     const text = renderText(r);
-    assert.ok(!/wow mod install/.test(text), '输出了不存在的命令 wow mod install');
+    assert.ok(!/wow mod install/.test(text), '输出了已废弃的命令 wow mod install');
+    assert.ok(/wow install mod/.test(text), '应引导使用 wow install mod 下载前置');
 });
 
 check('27b 前置缺失时嫌疑人取 Requested by，而非上下文里的 missing 等词', () => {

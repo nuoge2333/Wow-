@@ -199,7 +199,15 @@ Web 面板提供以下功能：
 
 ## 8. 安装模组/插件
 
-模组没有 `mod install` 命令，安装途径有二：
+模组 / 插件 / 核心统一用 `wow install` 下载到**公共资源池**，再挂载到方案：
+
+```bash
+wow install core paper 1.20.1              # 下载核心到 pool/cores/
+wow install mod sodium --loader fabric     # 下载模组到 pool/mods/
+wow install plugin luckperms               # 下载插件到 pool/plugins/
+```
+
+资源入池后，到方案管理里挂载 / 同步即可。日常安装途径有二：
 
 **方式一：M 模式界面（推荐）**
 

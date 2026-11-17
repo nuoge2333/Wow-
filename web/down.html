@@ -547,29 +547,21 @@
     <!-- Toast 消息 -->
     <div class="toast" id="toast"></div>
 
-    <!-- ===== V3.8.0：选方案安装弹窗（模组 / 插件共用） ===== -->
+    <!-- ===== V3.9.0：下载到公共池弹窗（模组 / 插件共用，不再写入方案） ===== -->
     <div class="modal-mask" id="install-modal">
         <div class="modal-box">
-            <h3 id="install-modal-title">安装到方案</h3>
+            <h3 id="install-modal-title">下载到资源池</h3>
             <div class="modal-sub" id="install-modal-sub"></div>
-            <div class="modal-field">
-                <label for="install-scheme-select">目标方案（必选 · 禁止默认塞入当前方案）</label>
-                <select id="install-scheme-select">
-                    <option value="">— 请选择方案 —</option>
-                </select>
+            <div class="modal-note" id="install-pool-note" style="color:#8fa3c0;font-size:13px;line-height:1.7;margin:10px 0;">
+                💡 资源将下载到公共池（<code>pool/mods/</code> 或 <code>pool/plugins/</code>），计算哈希后登记，<strong>不会写入任何方案</strong>。<br>
+                下载后请到「方案」页把资源挂载 / 同步到具体服务器（进货与开店分离）。
             </div>
-            <label class="modal-check">
-                <input type="checkbox" id="install-auto-resolve" checked />
-                <span>自动选择合适的版本并拉取前置依赖
-                    <br><span style="color:#8fa3c0;font-size:12px;">按所选方案的 MC 版本与加载器匹配最适配文件；模组自动递归抓取必需依赖（最多 3 层）。</span>
-                </span>
-            </label>
             <div class="modal-warn" id="install-cf-warn" style="display:none;">
-                ⚠️ CurseForge 为次选源：依赖解析为尽力而为，且可能需要 BYOK / 代理；API 超时会自动降级并给出提示。
+                ⚠️ CurseForge 为次选源：可能需要 BYOK / 代理；API 超时会自动降级并给出提示。
             </div>
             <div class="modal-actions">
                 <button class="cancel" id="install-cancel-btn">取消</button>
-                <button class="confirm" id="install-confirm-btn">⬇️ 确认安装</button>
+                <button class="confirm" id="install-confirm-btn">⬇️ 下载到池</button>
             </div>
         </div>
     </div>
@@ -599,10 +591,8 @@
             const pluginLoaderFilter = document.getElementById('plugin-loader-filter');
             const pluginSearchBtn = document.getElementById('plugin-search-btn');
             const pluginResults = document.getElementById('plugin-results');
-            // V3.8.0 选方案安装弹窗
+            // V3.9.0 下载到资源池弹窗（不再选方案）
             const installModal = document.getElementById('install-modal');
-            const installSchemeSelect = document.getElementById('install-scheme-select');
-            const installAutoResolve = document.getElementById('install-auto-resolve');
             const installTitle = document.getElementById('install-modal-title');
             const installSub = document.getElementById('install-modal-sub');
             const installCfWarn = document.getElementById('install-cf-warn');
@@ -954,42 +944,21 @@
                 return data;
             }
 
-            // ==================== 选方案安装弹窗（V3.8.0 P0） ====================
+            // ==================== 下载到资源池弹窗（V3.9.0） ====================
             /**
-             * 铁律：目标方案必须**由用户显式选择**，弹窗默认项是「— 请选择方案 —」，
-             * 绝不预填当前方案，也不允许在未选时提交。
+             * install 统一为「下载资源到公共池」：不再选方案，下载后到方案页挂载。
+             * 模组 → install mod；插件 → install plugin。
              */
-            async function loadInstallSchemes() {
-                try {
-                    const data = await apiGet('/api/schemes');
-                    const names = (data.schemes || [])
-                        .map(s => (typeof s === 'string' ? s : (s && s.name) || ''))
-                        .filter(Boolean);
-                    installSchemeSelect.innerHTML = '<option value="">— 请选择方案 —</option>';
-                    for (const n of names) {
-                        const opt = document.createElement('option');
-                        opt.value = n;
-                        opt.textContent = n;
-                        installSchemeSelect.appendChild(opt);
-                    }
-                    if (!names.length) showToast('当前还没有任何方案，请先在「方案」页创建一个', 'warning');
-                } catch (e) {
-                    showToast('方案列表加载失败: ' + e.message, 'error');
-                }
-            }
-
-            async function openInstallModal(item) {
+            function openInstallModal(item) {
                 if (!item || !item.project) return;
                 pendingInstall = item;
-                installTitle.textContent = `安装${item.kind === 'plugins' ? '插件' : '模组'}「${item.name || item.project}」`;
+                const isPlugin = item.kind === 'plugins';
+                installTitle.textContent = `下载${isPlugin ? '插件' : '模组'}到资源池`;
                 installSub.innerHTML =
                     `项目 ID：<code>${escapeHtml(item.project)}</code> · 来源：${escapeHtml(item.source)}<br>` +
-                    `将按<strong>所选方案</strong>的 MC 版本与加载器自动匹配最合适的文件，` +
-                    `安装到 scheme/&lt;方案&gt;/${item.kind === 'plugins' ? 'plugins' : 'mods'}/。`;
+                    `资源将存入 <code>pool/${isPlugin ? 'plugins' : 'mods'}/</code> 并登记哈希，初始引用数为 0。`;
                 installCfWarn.style.display = (item.source === 'curseforge') ? 'block' : 'none';
-                installAutoResolve.checked = true;
                 installModal.classList.add('active');
-                await loadInstallSchemes();
             }
 
             function closeInstallModal() {
@@ -1000,25 +969,16 @@
 
             async function confirmInstall() {
                 if (!pendingInstall) return;
-                const scheme = installSchemeSelect.value;
-                if (!scheme) {
-                    showToast('必须先选择一个目标方案（禁止默认塞入当前方案）', 'warning');
-                    return;
-                }
                 const item = pendingInstall;
-                const args = [
-                    item.project,
-                    '--scheme', scheme,
-                    '--kind', item.kind,
-                    '--source', item.source
-                ];
-                if (!installAutoResolve.checked) args.push('--no-auto');
+                const isPlugin = item.kind === 'plugins';
+                const command = isPlugin ? 'install plugin' : 'install mod';
+                const args = [item.project, '--source', item.source];
                 installConfirmBtn.disabled = true;
                 try {
-                    await apiTask('mod install', args,
-                        `${item.name || item.project} → ${scheme}`,
-                        item.kind === 'plugins' ? '插件' : '模组');
-                    showToast(`⏳ 已提交安装「${item.name || item.project}」到方案 ${scheme}，进度见下载队列`, 'success');
+                    await apiTask(command, args,
+                        `${item.name || item.project} → 资源池`,
+                        isPlugin ? '插件' : '模组');
+                    showToast(`⏳ 已提交下载「${item.name || item.project}」到公共池，进度见下载队列；完成后到「方案」页挂载`, 'success');
                     closeInstallModal();
                     activateTab('queue');
                     await loadTasks();
@@ -1077,7 +1037,8 @@
                 try {
                     // 镜像必须先落配置，再提交下载任务（否则镜像对本次安装不生效）
                     await apiExec(`set download.mirror ${mirror}`);
-                    await apiTask(`install ${type}`, argv, `${type}-${version}`, '核心');
+                    // V3.9.0：核心下载统一走 install core（下载到 pool/cores/ 入池）
+                    await apiTask(`install core ${type}`, argv, `${type}-${version}`, '核心');
                     coreStatus.textContent = '🚀 已加入队列';
                     showToast(`核心 ${type} ${version} 已加入队列，正在后台下载`, 'success', 4000);
                     activateTab('queue');

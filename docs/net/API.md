@@ -541,8 +541,10 @@ V3.5.19 新增的文本编辑器接口，参数与 `/api/files/content` 完全�
 { "success": true, "source": "modrinth", "projectType": "mod", "results": [ { "name": "Sodium", "download_url": "https://..." } ] }
 ```
 
-> 「下载」不再由前端直接拉 `download_url` 落共享池，而是把 `project_id` 交给
-> `POST /api/tasks/run`（`command: "mod install"`），由后端按**目标方案**解析版本并下载。
+> 「下载」不再由前端直接拉 `download_url`，而是把 `project_id` 交给
+> `POST /api/tasks/run`（`command: "install mod"` 或 `"install plugin"`），由后端解析版本后
+> 下载到**公共资源池** `pool/mods/` 或 `pool/plugins/`（初始引用数 0，不写入任何方案）。
+> 下载后到方案管理页把资源挂载 / 同步到具体服务器。
 
 ### `GET /api/mod/info?source=<来源>&project=<项目id或slug>`
 获取项目详情，含 `dependencies` 依赖列表（Modrinth）。

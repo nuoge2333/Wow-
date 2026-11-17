@@ -7,12 +7,12 @@
  *  - 面板是「已认证的 admin 工具」，需要广泛的写权限（mod/theme/extension 安装、
  *    开服、改下载镜像等），因此不能简单复用开服控制台的 ALLOWED_CONSOLE
  *    （那套会禁掉 `server start`，而面板恰恰要靠它开服），也不能用窄白名单
- *    （会把面板自己的 mod install / theme install 等功能挡掉）。
+ *    （会把面板自己的 install mod / theme install 等功能挡掉）。
  *  - 因此采用「拒绝清单」：只拦截【面板用不到】且【灾难性 / 不可逆 / 与运行
  *    进程冲突】的操作。其余 wow 命名空间命令一律放行。
  *  - 经前端审计（web/*.html 的 apiExec(...) 调用），面板合法使用：
  *    server start/stop/restart/kill、scheme list/info/status、
- *    mod list/install、theme list/info/install/switch/delete、
+ *    mod list、install mod/core/plugin、theme list/info/install/switch/delete、
  *    extension list/info/install/remove、pack list/info/generate、
  *    set download.mirror、install <本地文件> -o ./、config 只读、
  *    logs analyze/report、mail *、lan *、down、pool *、web stop/status。
@@ -40,7 +40,7 @@ const SCHEME_OPS = new Set([
 /** 无论何种配置都永久拒绝（不可逆 / 与 Web 进程冲突 / 长驻抢占终端） */
 const DENIED_WEB_ALWAYS = new Set([
     'init',                                  // 重新初始化整个运行环境
-    // 模组移除/同步/切换（面板只用 mod install）
+    // 模组移除/同步/切换（面板下载走 install mod 入池，再经方案管理挂载）
     'mod remove', 'mod sync', 'mod toggle',
     // 整合包远程安装（面板只用 pack generate）
     'pack install',

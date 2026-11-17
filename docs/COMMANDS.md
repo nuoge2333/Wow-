@@ -289,34 +289,10 @@ wow pool stats
 
 ---
 
-## 三、模组管理 (6 个)
+## 三、模组管理 (5 个)
 
-### `mod install <project>` 🔺 V3.8.0
-
-从 Modrinth（默认）/ CurseForge 下载模组或 **Minecraft 服务端插件**，安装到**指定方案**。
-
-```bash
-wow mod install sodium --scheme alpha
-wow mod install luckperms --scheme alpha --kind plugins
-wow mod install sodium --scheme alpha --no-auto --source curseforge
-```
-
-| 选项 | 说明 |
-|------|------|
-| `--scheme <name>` | **必填**。目标方案；下载中心禁止默认塞入当前方案 |
-| `--kind <mods\|plugins>` | 装进 `scheme/<方案>/mods/`（默认）或 `plugins/` |
-| `--source <src>` | `modrinth`（默认）\| `curseforge` |
-| `--version <v>` / `--loader <l>` | 覆盖自动推断；缺省时读目标方案 `scheme.yaml` 的 `version` / `loader` |
-| `--no-auto` | 关闭自动解析：不递归拉前置依赖 |
-
-默认开启**自动解析**：按方案核心版本 + 加载器选最适配文件，并递归抓取必需依赖
-（最多 3 层，API 超时自动降级并给出提示）。文件以 stream 方式下载到方案目录，
-进度会进入 Web 面板「下载队列」Tab。
-
-> ⚠️ 这里的 `--kind plugins` 指 **Minecraft 服务端的 Bukkit/Paper 插件**；
-> wow 自身的扩展请用 `wow extension install`（见第五节）。
-
----
+> 📦 模组 / 插件 / 核心的**下载**统一到 [`install`](#十二工具与下载-3-个)（下载资源到公共池）。
+> 下载入池后，再到方案管理里挂载 / 同步。
 
 ### `mod list`
 
@@ -1041,23 +1017,49 @@ wow down <url> [options]
 
 ---
 
-### `install <target> [version]`
+### `install (下载资源到公共池)` 🔺 V3.9.0
 
-> 服务端核心安装已统一改为 `scheme create`，`install` 仅保留通用文件下载与隐藏彩蛋 `install party`。
+`install` 的核心定位是**资源获取与入池（Fetch to Pool）**：把核心 / 模组 / 插件
+下载到公共池 `core/pool/<分类>/`，计算 SHA-256 并登记 `pool/index.yaml`（初始引用数为 0），
+**不创建方案、不写入 `scheme/`**。
+
+> 🏪 **职责区别（进货 vs 开店）**：
+> `install` 只负责「进货」——把资源买进公共仓库；
+> [`scheme create`](#scheme-createname) 才是「开店」——创建服务器实例并从池中取用资源。
+> 两者彻底解耦，同一个资源可供多个方案共享引用。
 
 ```bash
-# 下载任意 URL 文件到指定目录
-wow install https://example.com/plugin.jar -o pool/plugins/
+# 下载核心到 pool/cores/<type>/<version>/
+wow install core paper 1.20.1
+wow install core vanilla 1.20.1
+wow install core mohist 1.20.1 -b <git-sha>
 
-# 隐藏彩蛋
-wow install party
+# 下载模组到 pool/mods/（URL 或 Modrinth/CurseForge 项目名）
+wow install mod https://cdn.example.com/sodium.jar
+wow install mod sodium --source modrinth --loader fabric --version 1.20.1
+
+# 下载服务端插件到 pool/plugins/
+wow install plugin luckperms --source modrinth
+
+# 下载任意 URL 到指定路径（旧版行为保留）
+wow install https://example.com/plugin.jar -o pool/plugins/
 ```
 
-安装服务端核心请使用：
+| 子命令 / 选项 | 说明 |
+|------|------|
+| `install core <type> <version>` | 下载服务端核心入池；`-b` 指定构建标识 |
+| `install mod <url\|项目名>` | 下载模组入池；`--source` / `--loader` / `--version` 用于搜索匹配 |
+| `install plugin <url\|项目名>` | 下载服务端插件入池（Bukkit/Paper 插件，非 wow 扩展） |
+| `install <url> -o <path>` | 下载任意 URL 到指定路径；省略 `-o` 时按模组入池 |
+
+下载成功后会打印下一步提示，引导用 `scheme create` 开服并从池中自动读取核心。
+创建方案请用：
 
 ```bash
 wow scheme create <方案名> -t <核心类型> -v <MC版本>
 ```
+
+> ℹ️ wow 自身的扩展请用 `wow extension install`（见第五节）。
 
 ---
 

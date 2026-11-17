@@ -47,7 +47,8 @@ withSwitches(false, false, () => {
     check('放行 server stop',   allow('server stop'));
     check('放行 scheme list',   allow('scheme list'));
     check('放行 scheme info',   allow('scheme info demo'));
-    check('放行 mod install',   allow('mod install a.jar'));
+    check('放行 install mod',   allow('install mod sodium'));
+    check('放行 install core',  allow('install core paper 1.20.1'));
     check('放行 theme install', allow('theme install x.zip'));
     check('放行 config 只读',   allow('config server'));
     check('放行 install 本地',  allow('install ./local.jar -o ./'));
