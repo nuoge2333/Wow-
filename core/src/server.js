@@ -46,6 +46,20 @@ function mcConsolePrompt() {
 // 也可直接输入 wow 指令（如 lan host、server status）。此处定义「允许 / 禁用」清单，
 // 以及将输入分类后交由子进程执行或转发给 MC 的逻辑。
 
+/**
+ * 判断一行写入 MC stdin 的指令是否为用户主动关服指令（MC 原生 `stop`）。
+ * 控制台 stop 是三条合法「主动停止」路径之一，必须置 intendedShutdown，
+ * 否则 MC 优雅退出 code=0 会被 exit 状态机误判为异常退出。
+ * 兼容 `stop` / `/stop` / `stop  <空白>`；`say stop` 之类不误判。
+ * @param {string} line
+ * @returns {boolean}
+ */
+function isMcStopCommand(line) {
+    if (typeof line !== 'string') return false;
+    const t = line.trim().replace(/^\//, '').trim();
+    return /^stop(?:\s+.*)?$/i.test(t);
+}
+
 // wow 顶层指令命名空间（用于区分「wow 指令」与「MC 指令」）
 const WOW_NAMESPACES = new Set([
     'server', 'scheme', 'mod', 'pack', 'theme', 'extension', 'web', 'logs',
@@ -327,6 +341,10 @@ class ServerManager {
         this._consoleLease = null;
         this._detachResolve = null;
         this._detaching = false;
+        // P0 退出状态机：唯一的「主动停止」意图标记。
+        // 只有 server stop / server kill / 控制台 stop 三条路径会置为 true；
+        // 进程退出时严格按此判定：true=正常停止，false（哪怕 code=0）=异常退出。
+        this.intendedShutdown = false;
         this._ensureAuthlibJar();
     }
 
@@ -448,6 +466,8 @@ class ServerManager {
                 this._printUnsupported(line, 'mc');
                 return;
             }
+            // P0 退出状态机：控制台 stop 属于主动停止，先标记再转发。
+            if (isMcStopCommand(line)) this._markIntendedShutdown();
             if (this.process && this.process.stdin && this.process.stdin.writable) {
                 this.process.stdin.write(line + '\n');
             }
@@ -832,6 +852,8 @@ class ServerManager {
                     return;
                 }
                 // action === 'mc'：原样写入 MC stdin，不做任何 wow 解析
+                // P0 退出状态机：控制台 stop 属于主动停止，先标记再转发。
+                if (isMcStopCommand(route.command)) this._markIntendedShutdown();
                 if (this.process && this.process.stdin && this.process.stdin.writable) {
                     this.process.stdin.write(route.command + '\n');
                 }
@@ -1093,6 +1115,17 @@ class ServerManager {
         if (fs.existsSync(this.pidFile)) {
             fs.removeSync(this.pidFile);
         }
+    }
+
+    /**
+     * P0 退出状态机：标记「本次退出是用户主动发起的」。
+     * 唯一可信来源——只有 server stop / server kill / 控制台 stop 三条路径调用。
+     * 同时写本进程内存标记与跨进程可见的文件标记（后者供 Web 面板 / 其它进程
+     * 发起 stop、由持有 MC stdin 的进程在 exit 回调里读到）。
+     */
+    _markIntendedShutdown() {
+        this.intendedShutdown = true;
+        this._writeManualStopFlag();
     }
 
     /**
@@ -1684,28 +1717,27 @@ class ServerManager {
             // V3.5.19：进程没了，中继与心跳一并收掉，避免面板误判「还能发指令」
             this._stopConsoleRelay();
             if (logStream) logStream.end();
-            // V3.8.2 红线：主动停止（用户 stop / kill / 超时强杀 / 关闭终端兜底）或
-            // 143(SIGTERM) / 137(SIGKILL) 一律视为正常停止，**绝对禁止**触发 error_scanner；
-            // 只有非主动停止（崩溃 / 异常退码 1、255 等）才允许崩溃诊断。
-            // P0：跨进程 kill 时本进程 _stopRequested 读不到、被信号杀死时 code 为 null，
-            // 因此综合「标记文件 + 终止信号 + 本进程标志」算出 isManualStop 并透传给底层。
+            // P0 退出状态机（防假死与漏报）：唯一可信依据是「主动停止意图标记」。
+            // 只有 server stop / server kill / 控制台 stop 三条路径会置该标记；
+            // 跨进程场景由标记文件传递意图。除此之外，哪怕退出码是 0（如 MC 进程
+            // 自己 System.exit(0)、被 OOM 杀、崩溃后 log4j 优雅收尾），一律判异常退出
+            // 并强制 error_scanner 诊断——这是修复「漏报」的关键：不再用 code===0 兜底。
             const manualFlag = this._consumeManualStopFlag();
-            const signalStop = (signal === 'SIGKILL' || signal === 'SIGTERM'
-                || signal === 'SIGHUP' || signal === 'SIGINT');
-            const isManualStop = this._stopRequested === true || manualFlag || signalStop;
+            const isManualStop = this.intendedShutdown === true
+                || this._stopRequested === true || manualFlag;
             this._isManualStop = isManualStop;
-            const intentional = this._stopRequested === true || isManualStop;
-            const cleanSignal = (code === 0 || code === 143 || code === 137);
-            if (intentional || cleanSignal) {
+            if (isManualStop) {
                 console.log('✅ 服务器已停止');
                 logger.info(`Minecraft 进程已正常停止（退出码 ${code}）`);
             } else {
-                logger.erro(`Minecraft 进程异常退出（退出码 ${code}），疑似崩溃`);
+                console.log('❌ 服务器异常退出');
+                logger.erro(`Minecraft 进程异常退出（退出码 ${code}，信号 ${signal || '无'}），疑似崩溃`);
                 logger.markCrash();
-                // V3.5.18：异常退出时做本地初级诊断（纯本地正则 + 模组扫描，不联网）。
+                // 强制本地初级诊断（纯本地正则 + 模组扫描，不联网）。
                 this._diagnoseCrash(code);
             }
             this._stopRequested = false;
+            this.intendedShutdown = false;
             this._removePid();
             this.process = null;
         });
@@ -1797,6 +1829,8 @@ class ServerManager {
                     const t = line.trim();
                     if (!t) continue;
                     try {
+                        // P0 退出状态机：Web 控制台 stop 同样属于主动停止。
+                        if (isMcStopCommand(t)) this._markIntendedShutdown();
                         this.process.stdin.write(t + '\n');
                         logger.info(`Web 控制台指令已转发给 MC: ${t}`);
                     } catch (e) {
@@ -1833,6 +1867,10 @@ class ServerManager {
             console.log('服务器未运行');
             return false;
         }
+
+        // P0 退出状态机：任何经 sendCommand 下发的 stop 都是主动停止意图。
+        // （stop() 自己已标记，这里重复标记无害；Web /api/console 兜底路径也能覆盖。）
+        if (isMcStopCommand(command)) this._markIntendedShutdown();
 
         // 同进程：直接通过 stdin 写入
         if (this.process && this.process.stdin && this.process.stdin.writable) {
@@ -1879,15 +1917,16 @@ class ServerManager {
             // V3.3.0 关闭联机房间（陶瓦），与服务器停止同步
             _stopLanIfRunning();
 
-            // V3.8.2 红线：标记「主动停止」。无论后续走 stdin stop 指令还是 SIGTERM/SIGKILL，
-            // 退码 143(SIGTERM) / 137(SIGKILL) 一律视为用户主动停止，exit 处理里绝不触发 error_scanner。
+            // P0 退出状态机：stop 是明确的主动停止意图——置唯一可信标记。
+            // 无论后续走 stdin stop 指令还是 SIGTERM/SIGKILL，exit 都判为正常停止。
+            this._markIntendedShutdown();
             this._stopRequested = true;
-            this._writeManualStopFlag(); // P0：跨进程可见的主动停止标记
 
             if (!this.isRunning()) {
                 console.log('服务器未运行');
                 logger.info('停止服务器：服务器未运行');
                 this._stopRequested = false;
+                this.intendedShutdown = false;
                 return;
             }
 
@@ -1949,9 +1988,9 @@ class ServerManager {
         // V3.3.0 关闭联机房间（陶瓦）
         _stopLanIfRunning();
 
-        // V3.8.2：强制终止同样属于「主动停止」—— 退码 137(SIGKILL) 绝不触发 error_scanner。
+        // P0 退出状态机：kill 同样是明确的主动停止意图，置唯一可信标记。
+        this._markIntendedShutdown();
         this._stopRequested = true;
-        this._writeManualStopFlag(); // P0：跨进程可见的主动停止标记
 
         const pid = this._readPid();
         if (!pid) {

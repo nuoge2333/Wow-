@@ -349,37 +349,45 @@ installCmd
 
 installCmd
     .command('mod <url_or_search>')
-    .description('下载模组到 pool/mods/（URL 或 Modrinth/CurseForge 项目名）')
+    .description('下载模组到 pool/mods/（URL 或 Modrinth/CurseForge 项目名；默认递归拉取必需依赖）')
     .option('--source <src>', '数据源：modrinth（默认）| curseforge')
     .option('--loader <l>', '加载器（搜索词模式用于匹配版本）')
     .option('--version <v>', 'MC 版本（搜索词模式用于匹配版本）')
+    .option('--no-auto', '关闭自动解析：只下载本体，不拉取前置依赖')
     .action(async (input, options) => {
         const PoolInstaller = load('./pool_installer');
         if (!PoolInstaller) return;
-        console.log(`📦 正在下载模组 ${input} 到资源池...`);
+        console.log(`📦 正在下载模组 ${input} 到资源池${options.auto === false ? '（仅本体）' : '（含必需依赖）'}...`);
         const r = await PoolInstaller.installContent({
             input, category: 'mods', source: options.source,
-            loader: options.loader, mcVersion: options.version
+            loader: options.loader, mcVersion: options.version,
+            autoResolve: options.auto !== false
         });
         if (!r.ok) { console.error(`❌ 模组下载失败: ${r.error}`); process.exitCode = 1; return; }
+        for (const w of (r.warnings || [])) console.warn(`⚠️ ${w}`);
+        if (r.deps && r.deps.length) console.log(`   ↳ 已自动拉取 ${r.deps.length} 个前置依赖：${r.deps.join(', ')}`);
         for (const line of PoolInstaller.nextStepHint('mod', { name: path.basename(r.rel) })) console.log(line);
     });
 
 installCmd
     .command('plugin <url_or_search>')
-    .description('下载服务端插件到 pool/plugins/（URL 或项目名）')
+    .description('下载服务端插件到 pool/plugins/（URL 或项目名；默认递归拉取必需依赖）')
     .option('--source <src>', '数据源：modrinth（默认）| curseforge')
     .option('--loader <l>', '加载器（搜索词模式用于匹配版本）')
     .option('--version <v>', 'MC 版本（搜索词模式用于匹配版本）')
+    .option('--no-auto', '关闭自动解析：只下载本体，不拉取前置依赖')
     .action(async (input, options) => {
         const PoolInstaller = load('./pool_installer');
         if (!PoolInstaller) return;
-        console.log(`📦 正在下载插件 ${input} 到资源池...`);
+        console.log(`📦 正在下载插件 ${input} 到资源池${options.auto === false ? '（仅本体）' : '（含必需依赖）'}...`);
         const r = await PoolInstaller.installContent({
             input, category: 'plugins', source: options.source,
-            loader: options.loader, mcVersion: options.version
+            loader: options.loader, mcVersion: options.version,
+            autoResolve: options.auto !== false
         });
         if (!r.ok) { console.error(`❌ 插件下载失败: ${r.error}`); process.exitCode = 1; return; }
+        for (const w of (r.warnings || [])) console.warn(`⚠️ ${w}`);
+        if (r.deps && r.deps.length) console.log(`   ↳ 已自动拉取 ${r.deps.length} 个前置依赖：${r.deps.join(', ')}`);
         for (const line of PoolInstaller.nextStepHint('plugin', { name: path.basename(r.rel) })) console.log(line);
     });
 

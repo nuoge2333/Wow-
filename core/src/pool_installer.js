@@ -161,34 +161,78 @@ async function installCore(opts = {}) {
 
 /**
  * 从 URL 或搜索词下载模组 / 插件到池。
- * - 输入是 http(s):// → 直接 installUrl；
- * - 否则当作项目 id/slug，走 resolveSingleFile 解析直链后下载。
- * @returns {Promise<{ok, category, file?, hash?, rel?, error?}>}
+ * - 输入是 http(s):// → 直接 installUrl（URL 模式无依赖元数据，只下本体）；
+ * - 否则当作项目 id/slug：
+ *     · autoResolve !== false（默认开启）→ 走 dep_resolver 递归解析「本体 + 必需依赖」，
+ *       逐个人池——与 CLI 完全同一套递归逻辑，修复 Web 装 jadeaddons 漏拉 jade 的问题；
+ *     · autoResolve === false（--no-auto）→ 仅下本体（用户已在前端看过依赖并自行决定）。
+ * 无论哪条路径都算 SHA-256 并登记 index.yaml，绝不写 scheme/。
+ * @returns {Promise<{ok, category, file?, hash?, rel?, installed?:Array, deps?:Array, warnings?:Array, error?}>}
  */
 async function installContent(opts = {}) {
     const input = String(opts.input || '').trim();
     const category = opts.category === 'plugins' ? 'plugins' : 'mods';
     if (!input) return { ok: false, category, error: '缺少 URL 或项目名称' };
     try {
-        let url = input;
-        let filename = null;
-        if (!/^https?:\/\//i.test(input)) {
-            const contentInstaller = require('./content_installer');
-            const found = await contentInstaller.resolveSingleFile({
-                source: opts.source || 'modrinth',
-                project: input,
-                loader: opts.loader,
-                mcVersion: opts.mcVersion
-            });
-            if (!found || !found.fileUrl) {
-                return { ok: false, category, error: `未找到 ${input} 的可下载文件（可尝试 --loader / --version 指定版本）` };
-            }
-            url = found.fileUrl;
-            filename = found.filename;
+        // URL：无依赖元数据，按原逻辑单文件入池
+        if (/^https?:\/\//i.test(input)) {
+            const r = await installUrl(input, { category, onProgress: opts.onProgress });
+            if (!r.ok) return { ok: false, category, error: r.error };
+            return { ok: true, category, file: r.file, hash: r.hash, rel: r.rel, installed: [r.rel] };
         }
-        const r = await installUrl(url, { category, filename, onProgress: opts.onProgress });
+
+        const source = (opts.source || 'modrinth').toLowerCase();
+        const autoResolve = opts.autoResolve !== false;
+        const installed = [];
+        const warnings = [];
+
+        if (autoResolve) {
+            // P0 修复：复用与 CLI/依赖解析器完全相同的递归逻辑（含 required 依赖、防环、深度上限）。
+            const depResolver = require('./dep_resolver');
+            const r = await depResolver.resolve({
+                source, projectId: input, loader: opts.loader, mcVersion: opts.mcVersion
+            });
+            const items = r.items || [];
+            warnings.push(...(r.warnings || []));
+            if (!items.length) {
+                return { ok: false, category, error: `未找到 ${input} 的可下载文件（可尝试 --loader / --version 指定版本）`, warnings };
+            }
+            let first = null;
+            for (const it of items) {
+                const res = await installUrl(it.fileUrl, {
+                    category, filename: it.filename, onProgress: opts.onProgress
+                });
+                if (res.ok) {
+                    installed.push({ projectId: it.projectId, rel: res.rel, depth: it.depth || 0 });
+                    if (!first) first = res;
+                } else {
+                    warnings.push(`下载失败 ${it.projectId}（depth=${it.depth || 0}）：${res.error}`);
+                }
+            }
+            if (!first) {
+                return { ok: false, category, error: installed.length ? '全部依赖下载失败' : '下载失败', warnings };
+            }
+            return {
+                ok: true, category,
+                file: first.file, hash: first.hash, rel: first.rel,
+                installed, warnings,
+                deps: installed.filter(i => i.depth > 0).map(i => i.projectId)
+            };
+        }
+
+        // --no-auto：单文件模式，仅本体
+        const contentInstaller = require('./content_installer');
+        const found = await contentInstaller.resolveSingleFile({
+            source, project: input, loader: opts.loader, mcVersion: opts.mcVersion
+        });
+        if (!found || !found.fileUrl) {
+            return { ok: false, category, error: `未找到 ${input} 的可下载文件（可尝试 --loader / --version 指定版本）` };
+        }
+        const r = await installUrl(found.fileUrl, {
+            category, filename: found.filename, onProgress: opts.onProgress
+        });
         if (!r.ok) return { ok: false, category, error: r.error };
-        return { ok: true, category, file: r.file, hash: r.hash, rel: r.rel };
+        return { ok: true, category, file: r.file, hash: r.hash, rel: r.rel, installed: [r.rel], deps: [] };
     } catch (e) {
         return { ok: false, category, error: e.message };
     }

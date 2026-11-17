@@ -54,22 +54,26 @@ check('A3 server.js exit 回调接收 signal 参数', () => {
     assert.ok(/\.on\('exit',\s*\(code,\s*signal\)/.test(src), 'exit 回调未接收 signal');
 });
 
-check('A4 server.js 把 SIGKILL/SIGTERM 判为主动停止', () => {
+check('A4 退出状态机不再用退出码/信号兜底判正常（防漏报）', () => {
     const src = fs.readFileSync(path.join(SRC, 'server.js'), 'utf8');
-    assert.ok(/signal === 'SIGKILL'/.test(src), '未识别 SIGKILL');
-    assert.ok(/signal === 'SIGTERM'/.test(src), '未识别 SIGTERM');
+    // 旧实现里 code===0 / 143 / 137 一律判正常，是漏报根因，必须移除。
+    assert.ok(!/code === 0 \|\| code === 143/.test(src), '仍残留 code===0 兜底');
+    assert.ok(!/signalStop/.test(src), '仍残留 signalStop 信号兜底');
 });
 
-check('A5 server.js 综合 signal + 跨进程标记 + _stopRequested 算 isManualStop', () => {
+check('A5 isManualStop 严格按意图标记判定（intendedShutdown / 跨进程标记 / _stopRequested）', () => {
     const src = fs.readFileSync(path.join(SRC, 'server.js'), 'utf8');
-    assert.ok(/const isManualStop = this\._stopRequested === true \|\| manualFlag \|\| signalStop/.test(src),
-        'isManualStop 未综合三路信号');
+    assert.ok(/const isManualStop = this\.intendedShutdown === true\s*\n?\s*\|\| this\._stopRequested === true \|\| manualFlag/.test(src),
+        'isManualStop 未以 intendedShutdown 为准');
 });
 
-check('A6 stop() 与 kill() 都写入跨进程主动停止标记', () => {
+check('A6 stop() 与 kill() 都经 _markIntendedShutdown 置意图标记', () => {
     const src = fs.readFileSync(path.join(SRC, 'server.js'), 'utf8');
-    const writes = (src.match(/this\._writeManualStopFlag\(\);/g) || []).length;
-    assert.strictEqual(writes, 2, `stop/kill 应各有 1 处标记写入，实际：${writes}`);
+    const calls = (src.match(/this\._markIntendedShutdown\(\);/g) || []).length;
+    assert.ok(calls >= 2, `stop/kill 应各置一次意图标记，实际调用数：${calls}`);
+    // 统一入口内部必须同时写跨进程标记文件。
+    assert.ok(/intendedShutdown = true;[\s\S]{0,120}_writeManualStopFlag\(\)/.test(src),
+        '_markIntendedShutdown 未写跨进程标记');
 });
 
 check('A7 _diagnoseCrash 内部再次拦截 isManualStop', () => {

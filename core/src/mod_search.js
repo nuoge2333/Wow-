@@ -431,6 +431,153 @@ async function getCurseForgeInfo(id) {    // V3.5.25：走三层降级并缓存�
     };
 }
 
+// ==================== 版本列表 / 指定版本依赖（V3.9.0 关闭自动解析时的前端引导） ====================
+
+/**
+ * 列出某项目的可用版本（供前端「关闭自动解析 → 手动选版本」时渲染下拉）。
+ * 每项：{ id, versionNumber, gameVersions, loaders, dependencies:[{project_id,dependency_type}], datePublished, primaryFile:{url,filename} }
+ * @param {string} source  modrinth | curseforge
+ * @param {string} project 项目 id / slug
+ * @param {object} [opts]  { loader, mcVersion, limit }
+ */
+async function listVersions(source, project, opts = {}) {
+    const src = (source || 'modrinth').toLowerCase();
+    const id = String(project || '').trim();
+    if (!id) throw httpError('缺少 project 参数', 400);
+    const limit = Math.max(1, Math.min(100, Number(opts.limit) || 30));
+
+    if (src === 'curseforge' || src === 'cf') {
+        return listVersionsCurseForge(id, opts, limit);
+    }
+    return listVersionsModrinth(id, opts, limit);
+}
+
+async function listVersionsModrinth(id, opts, limit) {
+    const params = {};
+    if (opts.loader) params.loaders = JSON.stringify([opts.loader]);
+    if (opts.mcVersion) params.game_versions = JSON.stringify([opts.mcVersion]);
+    let resp;
+    try {
+        resp = await axios.get(`${MODRINTH_API}/project/${encodeURIComponent(id)}/version`, {
+            params,
+            headers: { 'User-Agent': UA },
+            timeout: 15000
+        });
+    } catch (e) {
+        throw httpError(`Modrinth 版本列表查询失败: ${describeAxiosError(e)}`,
+            e.response && e.response.status === 404 ? 404 : 502);
+    }
+    const versions = (resp.data || [])
+        .filter(v => v.version_type !== 'alpha')
+        .slice(0, limit);
+    return {
+        source: 'modrinth',
+        project: id,
+        versions: versions.map(v => {
+            const primary = (v.files || []).find(f => f.primary) || (v.files || {})[0] || {};
+            return {
+                id: v.id,
+                versionNumber: v.version_number || v.name || '',
+                gameVersions: v.game_versions || [],
+                loaders: v.loaders || [],
+                versionType: v.version_type || 'release',
+                datePublished: v.date_published || '',
+                dependencies: normalizeDeps(v.dependencies),
+                primaryFile: primary.url ? { url: primary.url, filename: primary.filename || '' } : null
+            };
+        })
+    };
+}
+
+async function listVersionsCurseForge(id, opts, limit) {
+    let m;
+    try {
+        const r = await cf.getProject(id);
+        m = r.data || {};
+    } catch (e) {
+        if (e && e.cfError) throw httpError(e.message, 502);
+        throw httpError(`CurseForge 版本列表查询失败: ${describeAxiosError(e)}`, 502);
+    }
+    // CF 的 latestFiles 通常已按 MC 版本筛过；再按 mcVersion 精确过滤一次。
+    let files = Array.isArray(m.latestFiles) ? m.latestFiles.slice() : [];
+    if (opts.mcVersion) {
+        const hit = files.filter(f => (f.gameVersions || []).includes(opts.mcVersion));
+        if (hit.length) files = hit;
+    }
+    files = files.slice(0, limit);
+    return {
+        source: 'curseforge',
+        project: id,
+        versions: files.map(f => ({
+            id: String(f.id || f.fileId || ''),
+            versionNumber: f.displayName || f.fileName || '',
+            gameVersions: f.gameVersions || [],
+            loaders: [],
+            versionType: 'release',
+            datePublished: f.fileDate || '',
+            dependencies: (f.dependencies || [])
+                .filter(d => d.relationType === 1 || d.relationType === 2)
+                .map(d => ({ project_id: String(d.modId || d.id || ''), dependency_type: d.relationType === 1 ? 'required' : 'optional' })),
+            primaryFile: f.downloadUrl ? { url: f.downloadUrl, filename: f.fileName || '' } : null
+        }))
+    };
+}
+
+function normalizeDeps(deps) {
+    return (Array.isArray(deps) ? deps : [])
+        .filter(d => d && d.project_id)
+        .map(d => ({ project_id: d.project_id, dependency_type: d.dependency_type == null ? 'required' : String(d.dependency_type) }));
+}
+
+/**
+ * 查询某个具体版本的依赖列表（供前端选中版本后展示「该模组需要：jade, cloth-config」）。
+ * 优先从版本元数据直接取；Modrinth 无显式版本 id 时用 primaryFile.url 反查。
+ * @param {string} source
+ * @param {string} project
+ * @param {string} versionId  版本 id（Modrinth version id / CF file id）
+ * @returns {Promise<{source, project, versionId, versionNumber, dependencies:Array<{project_id,dependency_type,name?}>}>}
+ */
+async function getVersionDependencies(source, project, versionId) {
+    const src = (source || 'modrinth').toLowerCase();
+    const id = String(project || '').trim();
+    const vid = String(versionId || '').trim();
+    if (!id || !vid) throw httpError('缺少 project 或 version 参数', 400);
+
+    if (src === 'curseforge' || src === 'cf') {
+        let m;
+        try {
+            const r = await cf.getProject(id);
+            m = r.data || {};
+        } catch (e) {
+            throw httpError(`CurseForge 版本查询失败: ${describeAxiosError(e)}`, 502);
+        }
+        const file = (m.latestFiles || []).find(f => String(f.id || f.fileId || '') === vid);
+        const deps = file ? normalizeDeps((file.dependencies || []).map(d => ({
+            project_id: String(d.modId || d.id || ''),
+            dependency_type: d.relationType === 2 ? 'optional' : 'required'
+        }))) : [];
+        return { source: 'curseforge', project: id, versionId: vid,
+            versionNumber: file ? (file.displayName || file.fileName || '') : '', dependencies: deps };
+    }
+
+    // Modrinth：直接取指定版本对象
+    let resp;
+    try {
+        resp = await axios.get(`${MODRINTH_API}/project/${encodeURIComponent(id)}/version/${encodeURIComponent(vid)}`, {
+            headers: { 'User-Agent': UA }, timeout: 15000
+        });
+    } catch (e) {
+        throw httpError(`Modrinth 版本查询失败: ${describeAxiosError(e)}`,
+            e.response && e.response.status === 404 ? 404 : 502);
+    }
+    const v = resp.data || {};
+    return {
+        source: 'modrinth', project: id, versionId: vid,
+        versionNumber: v.version_number || v.name || '',
+        dependencies: normalizeDeps(v.dependencies)
+    };
+}
+
 // ==================== 工具 ====================
 
 function formatNumber(n) {
@@ -457,5 +604,6 @@ function describeAxiosError(e) {
 // 按 projectId + loader + MC 版本解析出可下载的文件直链。
 module.exports = {
     search, getInfo, normalizeLoader, normalizeCategory, formatNumber, pickModrinthFile,
-    pickModrinthVersion, LOADER_ALIAS, PLUGIN_LOADERS, CATEGORY_ALIAS, filterLoaders
+    pickModrinthVersion, listVersions, getVersionDependencies,
+    LOADER_ALIAS, PLUGIN_LOADERS, CATEGORY_ALIAS, filterLoaders
 };

@@ -441,16 +441,15 @@ check('44 诊断器不发起任何网络请求（不依赖 fetch / axios / http 
     assert.ok(!/https?:\/\/[^\s'"`]/.test(code), '不应包含任何 http(s) 地址字面量');
 });
 
-check('45 正常退出（code === 0 / 143 / 137）与主动停止都不触发诊断', () => {
+check('45 只有主动停止（intendedShutdown）才判正常；code=0 不再兜底', () => {
     const src = read('server.js');
-    // V3.8.2（P0-1）：exit 处理改为「主动停止 或 干净退码」→ 正常停止，
-    // 只有 else（非主动 + 异常退码 1/255 等）才允许 _diagnoseCrash。
-    assert.ok(/const intentional = this\._stopRequested === true/.test(src), '缺少主动停止判定');
-    assert.ok(/const cleanSignal = \(code === 0 \|\| code === 143 \|\| code === 137\)/.test(src),
-        '缺少 0/143/137 干净退码判定');
-    assert.ok(/if \(intentional \|\| cleanSignal\)/.test(src), '缺少正常停止分支');
+    // V3.9.0（P0 退出状态机）：唯一可信依据是主动停止意图标记；
+    // 退出码 0 / 143 / 137 一律不再兜底为正常停止（防漏报）。
+    assert.ok(/const isManualStop = this\.intendedShutdown === true/.test(src), '未以意图标记判定');
+    assert.ok(!/cleanSignal/.test(src), '仍残留 code 兜底');
+    assert.ok(/if \(isManualStop\)/.test(src), '缺少正常停止分支');
     // 正常停止分支内绝不能调用诊断
-    const branch = src.slice(src.indexOf('if (intentional || cleanSignal)'));
+    const branch = src.slice(src.indexOf('if (isManualStop)'));
     const normalBody = branch.slice(0, branch.indexOf('} else {'));
     assert.ok(!/_diagnoseCrash/.test(normalBody), '正常停止分支不该调用诊断');
     assert.ok(/✅ 服务器已停止/.test(normalBody), '正常停止应输出「服务器已停止」');

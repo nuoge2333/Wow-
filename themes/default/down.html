@@ -556,12 +556,38 @@
                 💡 资源将下载到公共池（<code>pool/mods/</code> 或 <code>pool/plugins/</code>），计算哈希后登记，<strong>不会写入任何方案</strong>。<br>
                 下载后请到「方案」页把资源挂载 / 同步到具体服务器（进货与开店分离）。
             </div>
+            <label class="modal-check" id="install-auto-row">
+                <input type="checkbox" id="install-auto-resolve" checked />
+                <span>自动选择合适的版本并拉取前置依赖
+                    <br><span style="color:#8fa3c0;font-size:12px;">按加载器 / MC 版本选最适配版本，并递归抓取必需依赖（最多 3 层）。</span>
+                </span>
+            </label>
+            <div id="install-manual-area" style="display:none;margin:10px 0;">
+                <label for="install-version-select" style="display:block;font-size:13px;margin-bottom:5px;">选择版本：</label>
+                <select id="install-version-select" style="width:100%;max-width:100%;">
+                    <option value="">— 正在加载版本列表… —</option>
+                </select>
+                <div id="install-deps-info" style="font-size:13px;line-height:1.7;margin-top:8px;color:#c8d6e8;"></div>
+            </div>
             <div class="modal-warn" id="install-cf-warn" style="display:none;">
                 ⚠️ CurseForge 为次选源：可能需要 BYOK / 代理；API 超时会自动降级并给出提示。
             </div>
             <div class="modal-actions">
                 <button class="cancel" id="install-cancel-btn">取消</button>
                 <button class="confirm" id="install-confirm-btn">⬇️ 下载到池</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- V3.9.0：三选一确认弹窗（是否同时安装前置依赖） -->
+    <div class="modal-mask" id="install-deps-modal">
+        <div class="modal-box">
+            <h3>前置依赖确认</h3>
+            <div class="modal-sub" id="install-deps-modal-sub"></div>
+            <div class="modal-actions" style="flex-wrap:wrap;gap:8px;">
+                <button class="cancel" id="install-deps-cancel">取消</button>
+                <button id="install-deps-only" style="padding:9px 16px;border-radius:6px;border:1px solid #4a5f7d;background:#23324a;color:#dbe7f6;cursor:pointer;">仅装本体</button>
+                <button class="confirm" id="install-deps-all">全装（含前置）</button>
             </div>
         </div>
     </div>
@@ -598,7 +624,19 @@
             const installCfWarn = document.getElementById('install-cf-warn');
             const installConfirmBtn = document.getElementById('install-confirm-btn');
             const installCancelBtn = document.getElementById('install-cancel-btn');
+            const installAutoResolve = document.getElementById('install-auto-resolve');
+            const installManualArea = document.getElementById('install-manual-area');
+            const installVersionSelect = document.getElementById('install-version-select');
+            const installDepsInfo = document.getElementById('install-deps-info');
+            // 三选一确认弹窗
+            const depsModal = document.getElementById('install-deps-modal');
+            const depsModalSub = document.getElementById('install-deps-modal-sub');
+            const depsBtnAll = document.getElementById('install-deps-all');
+            const depsBtnOnly = document.getElementById('install-deps-only');
+            const depsBtnCancel = document.getElementById('install-deps-cancel');
             let pendingInstall = null;   // 当前弹窗对应的项目
+            let versionCache = [];      // 当前项目的版本列表
+            let depsDecision = null;    // 三选一结果：'all' | 'only' | null
             const coreType = document.getElementById('core-type');
             const coreVersion = document.getElementById('core-version');
             const coreBuild = document.getElementById('core-build');
@@ -948,37 +986,132 @@
             /**
              * install 统一为「下载资源到公共池」：不再选方案，下载后到方案页挂载。
              * 模组 → install mod；插件 → install plugin。
+             * 自动解析开启：CLI 递归拉依赖；关闭：拉版本列表 + 依赖提示 + 三选一。
              */
+            function currentLoaderAndVersion(item) {
+                // 尽量带上传入的筛选条件，帮助后端筛版本
+                if (item.kind === 'plugins') {
+                    return { loader: pluginLoaderFilter ? pluginLoaderFilter.value : '', mcVersion: pluginVersionFilter ? pluginVersionFilter.value.trim() : '' };
+                }
+                return { loader: modLoaderFilter ? modLoaderFilter.value : '', mcVersion: modVersionFilter ? modVersionFilter.value.trim() : '' };
+            }
+
             function openInstallModal(item) {
                 if (!item || !item.project) return;
                 pendingInstall = item;
+                versionCache = [];
+                depsDecision = null;
                 const isPlugin = item.kind === 'plugins';
                 installTitle.textContent = `下载${isPlugin ? '插件' : '模组'}到资源池`;
                 installSub.innerHTML =
                     `项目 ID：<code>${escapeHtml(item.project)}</code> · 来源：${escapeHtml(item.source)}<br>` +
                     `资源将存入 <code>pool/${isPlugin ? 'plugins' : 'mods'}/</code> 并登记哈希，初始引用数为 0。`;
                 installCfWarn.style.display = (item.source === 'curseforge') ? 'block' : 'none';
+                installAutoResolve.checked = true;
+                installManualArea.style.display = 'none';
+                installConfirmBtn.disabled = false;
+                installConfirmBtn.textContent = '⬇️ 下载到池';
                 installModal.classList.add('active');
+            }
+
+            // 开关切换：关闭时拉取版本列表
+            installAutoResolve.addEventListener('change', async () => {
+                const on = installAutoResolve.checked;
+                installManualArea.style.display = on ? 'none' : 'block';
+                installConfirmBtn.textContent = on ? '⬇️ 下载到池' : '⬇️ 下一步';
+                if (on || !pendingInstall) return;
+                const item = pendingInstall;
+                const { loader, mcVersion } = currentLoaderAndVersion(item);
+                installVersionSelect.innerHTML = '<option value="">— 正在加载版本列表… —</option>';
+                installDepsInfo.innerHTML = '<span style="color:#8fa3c0;">正在加载版本…</span>';
+                try {
+                    const q = new URLSearchParams({ source: item.source, project: item.project });
+                    if (loader) q.set('loader', loader);
+                    if (mcVersion) q.set('mcVersion', mcVersion);
+                    const data = await apiGet('/api/mod/versions?' + q.toString());
+                    versionCache = data.versions || [];
+                    if (!versionCache.length) {
+                        installVersionSelect.innerHTML = '<option value="">— 无可用版本 —</option>';
+                        installDepsInfo.innerHTML = '<span style="color:#f0a;">该来源未返回版本列表，可开启自动解析或换 MC 版本筛选。</span>';
+                        return;
+                    }
+                    installVersionSelect.innerHTML = versionCache.map((v, i) =>
+                        `<option value="${i}">${escapeHtml(v.versionNumber || ('版本 ' + (i + 1)))}${v.gameVersions && v.gameVersions.length ? ' · MC ' + escapeHtml(v.gameVersions.join('/')) : ''}</option>`
+                    ).join('');
+                    installDepsInfo.innerHTML = '<span style="color:#8fa3c0;">请选择版本以查看前置依赖。</span>';
+                } catch (e) {
+                    installVersionSelect.innerHTML = '<option value="">— 加载失败 —</option>';
+                    installDepsInfo.innerHTML = `<span style="color:#f44336;">版本列表加载失败: ${escapeHtml(e.message)}</span>`;
+                }
+            });
+
+            // 选中版本 → 拉取该版本依赖列表
+            installVersionSelect.addEventListener('change', async () => {
+                installDepsInfo.innerHTML = '<span style="color:#8fa3c0;">正在查询前置依赖…</span>';
+                const idx = parseInt(installVersionSelect.value, 10);
+                if (!pendingInstall || Number.isNaN(idx) || !versionCache[idx]) {
+                    installDepsInfo.textContent = '';
+                    return;
+                }
+                const v = versionCache[idx];
+                // 优先用版本元数据里已带的依赖，省一次请求
+                const inline = (v.dependencies || []).filter(d => d.project_id);
+                if (inline.length) {
+                    renderDeps(inline.map(d => d.project_id));
+                    return;
+                }
+                const item = pendingInstall;
+                try {
+                    const q = new URLSearchParams({ source: item.source, project: item.project, version: v.id });
+                    const data = await apiGet('/api/mod/version-deps?' + q.toString());
+                    renderDeps((data.dependencies || []).map(d => d.project_id || d.name).filter(Boolean));
+                } catch (e) {
+                    installDepsInfo.innerHTML = `<span style="color:#f44336;">依赖查询失败: ${escapeHtml(e.message)}</span>`;
+                }
+            });
+
+            function renderDeps(ids) {
+                const uniq = Array.from(new Set(ids));
+                if (!uniq.length) {
+                    installDepsInfo.innerHTML = '<span style="color:#7dcea0;">该版本无必需前置依赖。</span>';
+                    return;
+                }
+                installDepsInfo.innerHTML =
+                    `🔗 该模组需要：<strong>${uniq.map(x => escapeHtml(x)).join(', ')}</strong><br>` +
+                    `<span style="color:#8fa3c0;font-size:12px;">点「下一步」后可选择全装 / 仅装本体。</span>`;
             }
 
             function closeInstallModal() {
                 installModal.classList.remove('active');
                 pendingInstall = null;
+                versionCache = [];
+                depsDecision = null;
                 installConfirmBtn.disabled = false;
             }
 
-            async function confirmInstall() {
+            function closeDepsModal() {
+                depsModal.classList.remove('active');
+                depsDecision = null;
+            }
+
+            async function submitInstall(withDeps) {
                 if (!pendingInstall) return;
                 const item = pendingInstall;
                 const isPlugin = item.kind === 'plugins';
                 const command = isPlugin ? 'install plugin' : 'install mod';
                 const args = [item.project, '--source', item.source];
+                // 手动选版本：优先用版本直链或通过 --version 传版本 id（CLI 侧按版本匹配）
+                const { loader, mcVersion } = currentLoaderAndVersion(item);
+                if (loader) args.push('--loader', loader);
+                if (mcVersion) args.push('--version', mcVersion);
+                if (!withDeps) args.push('--no-auto');
                 installConfirmBtn.disabled = true;
                 try {
                     await apiTask(command, args,
                         `${item.name || item.project} → 资源池`,
                         isPlugin ? '插件' : '模组');
-                    showToast(`⏳ 已提交下载「${item.name || item.project}」到公共池，进度见下载队列；完成后到「方案」页挂载`, 'success');
+                    showToast(`⏳ 已提交下载「${item.name || item.project}」${withDeps ? '（含前置）' : '（仅本体）'}到公共池，进度见下载队列`, 'success');
+                    closeDepsModal();
                     closeInstallModal();
                     activateTab('queue');
                     await loadTasks();
@@ -987,6 +1120,31 @@
                     installConfirmBtn.disabled = false;
                 }
             }
+
+            function confirmInstall() {
+                if (!pendingInstall) return;
+                if (installAutoResolve.checked) {
+                    // 自动解析：直接递归拉依赖入池
+                    submitInstall(true);
+                    return;
+                }
+                // 关闭自动解析：三选一确认弹窗
+                const idx = parseInt(installVersionSelect.value, 10);
+                const chosen = (!Number.isNaN(idx) && versionCache[idx]) ? versionCache[idx] : null;
+                const depList = chosen ? (chosen.dependencies || []).map(d => d.project_id).filter(Boolean) : [];
+                depsModalSub.innerHTML =
+                    `已选择版本：<strong>${escapeHtml(chosen ? (chosen.versionNumber || chosen.id) : '自动')}</strong><br>` +
+                    (depList.length
+                        ? `该版本前置依赖：<strong>${escapeHtml(Array.from(new Set(depList)).join(', '))}</strong><br><span style="color:#8fa3c0;font-size:12px;">请选择是否同时安装这些前置依赖。</span>`
+                        : '<span style="color:#7dcea0;">该版本无必需前置依赖，可直接下载本体。</span>');
+                depsDecision = null;
+                depsModal.classList.add('active');
+            }
+
+            depsBtnAll.addEventListener('click', () => submitInstall(true));
+            depsBtnOnly.addEventListener('click', () => submitInstall(false));
+            depsBtnCancel.addEventListener('click', closeDepsModal);
+            depsModal.addEventListener('click', (e) => { if (e.target === depsModal) closeDepsModal(); });
 
             installCancelBtn.addEventListener('click', closeInstallModal);
             installConfirmBtn.addEventListener('click', confirmInstall);
