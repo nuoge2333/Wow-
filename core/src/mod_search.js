@@ -578,6 +578,59 @@ async function getVersionDependencies(source, project, versionId) {
     };
 }
 
+/**
+ * BUG-03：按精确版本 ID 解析出该版本的文件直链（用户在前端版本下拉里选中的那一个）。
+ * 与 pickModrinthVersion（按 loader/mcVersion 挑「最新兼容版」）不同，这里绝不再挑版本，
+ * 只认调用方给定的 versionId，从根上杜绝「后端无视用户选择、自动瞎挑版本」。
+ * @param {string} source modrinth | curseforge
+ * @param {string} project 项目 id / slug
+ * @param {string} versionId Modrinth version id / CF file id
+ * @returns {Promise<{url:string, filename:string, versionNumber:string, versionId:string}|null>}
+ */
+async function resolveVersionFile(source, project, versionId) {
+    const src = (source || 'modrinth').toLowerCase();
+    const id = String(project || '').trim();
+    const vid = String(versionId || '').trim();
+    if (!id || !vid) return null;
+
+    if (src === 'curseforge' || src === 'cf') {
+        let m;
+        try {
+            const r = await cf.getProject(id);
+            m = r.data || {};
+        } catch (e) {
+            return null;
+        }
+        const file = (m.latestFiles || []).find(f => String(f.id || f.fileId || '') === vid);
+        if (!file || !file.downloadUrl) return null;
+        return {
+            url: file.downloadUrl,
+            filename: file.fileName || '',
+            versionNumber: file.displayName || file.fileName || '',
+            versionId: vid
+        };
+    }
+
+    // Modrinth：直接取指定版本对象
+    let resp;
+    try {
+        resp = await axios.get(`${MODRINTH_API}/project/${encodeURIComponent(id)}/version/${encodeURIComponent(vid)}`, {
+            headers: { 'User-Agent': UA }, timeout: 15000
+        });
+    } catch (e) {
+        return null;
+    }
+    const v = resp.data || {};
+    const file = (v.files || []).find(f => f.primary) || (v.files || [])[0];
+    if (!file || !file.url) return null;
+    return {
+        url: file.url,
+        filename: file.filename || '',
+        versionNumber: v.version_number || v.name || '',
+        versionId: vid
+    };
+}
+
 // ==================== 工具 ====================
 
 function formatNumber(n) {
@@ -604,6 +657,6 @@ function describeAxiosError(e) {
 // 按 projectId + loader + MC 版本解析出可下载的文件直链。
 module.exports = {
     search, getInfo, normalizeLoader, normalizeCategory, formatNumber, pickModrinthFile,
-    pickModrinthVersion, listVersions, getVersionDependencies,
+    pickModrinthVersion, listVersions, getVersionDependencies, resolveVersionFile,
     LOADER_ALIAS, PLUGIN_LOADERS, CATEGORY_ALIAS, filterLoaders
 };

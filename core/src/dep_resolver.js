@@ -32,6 +32,9 @@ const REQUIRED_TYPES = new Set(['0', 'required']);
  * @param {string} arg.projectId    项目 id（Modrinth）/ slug 亦可
  * @param {string} [arg.loader]     加载器（mod 端）或插件加载器
  * @param {string} [arg.mcVersion]  MC 版本
+ * @param {string} [arg.versionId]  精确版本 ID（BUG-03）：仅作用于 depth=0 的本体，
+ *                                  用户在前端版本下拉选中后传入，杜绝后端自动瞎挑版本；
+ *                                  依赖仍按 loader/mcVersion 解析。
  * @param {number} [arg.depth=0]    当前递归深度（内部使用）
  * @param {Set<string>} [arg.visited] 已解析项目集合（防环，内部使用）
  * @returns {Promise<{items:Array, warnings:Array}>}
@@ -56,6 +59,45 @@ async function resolve(arg) {
         return { items: [], warnings };
     }
     visited.add(projectId);
+
+    // BUG-03：depth=0 且指定了 versionId → 先精确解析本体文件（不再自动挑版本），
+    // 依赖仍走原有的 loader/mcVersion 递归逻辑。取不到精确版本时降级为原逻辑并给出提示。
+    if (depth === 0 && arg.versionId) {
+        try {
+            const exact = await ModSearch.resolveVersionFile(source, projectId, arg.versionId);
+            if (exact && exact.url) {
+                const rootItem = {
+                    projectId, source,
+                    fileUrl: exact.url, filename: exact.filename,
+                    loader, mcVersion, versionId: arg.versionId, depth: 0
+                };
+                // 取该精确版本的必需依赖，复用递归逻辑（依赖项目本身不强制精确版本）
+                let deps = [];
+                try {
+                    const d = await ModSearch.getVersionDependencies(source, projectId, arg.versionId);
+                    deps = (d.dependencies || []).filter(x => REQUIRED_TYPES.has(String(x.dependency_type)));
+                } catch (e) {
+                    warnings.push(`精确版本 ${arg.versionId} 依赖查询失败，仅装本体：${e.message}`);
+                }
+                const items = [rootItem];
+                if (deps.length && depth + 1 <= MAX_DEPTH) {
+                    for (const dep of deps) {
+                        const depId = String(dep.project_id || '');
+                        if (!depId || visited.has(depId)) continue;
+                        const sub = await resolve({
+                            source, projectId: depId,
+                            loader, mcVersion, depth: depth + 1, visited, warnings
+                        });
+                        items.push(...sub.items);
+                    }
+                }
+                return { items, warnings };
+            }
+            warnings.push(`精确版本 ${arg.versionId} 未找到可下载文件，已降级为自动选版`);
+        } catch (e) {
+            warnings.push(`精确版本 ${arg.versionId} 解析失败，已降级为自动选版：${e.message}`);
+        }
+    }
 
     if (source === 'curseforge' || source === 'cf') {
         return resolveCurseForge({ projectId, loader, mcVersion, depth, visited, warnings });

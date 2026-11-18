@@ -250,8 +250,9 @@ function setConfig(key, value) {
  */
 function loadConfig() {
     if (!fs.existsSync(CONFIG_FILE)) {
-        // 创建默认配置
-        saveConfig(DEFAULT_CONFIG);
+        // 创建默认配置（失败不阻断读取，但明确提示；真正落盘错误由 CLI 写入路径上抛）
+        try { saveConfig(DEFAULT_CONFIG); }
+        catch (e) { console.error(`⚠️ ${e.message}（本次使用内存默认配置）`); }
         return DEFAULT_CONFIG;
     }
     try {
@@ -266,14 +267,22 @@ function loadConfig() {
 }
 
 /**
- * 保存配置
+ * 保存配置（BUG-07）
+ * 写入失败必须向上抛出——CLI 只有确认真正落盘成功后才允许打印「✅ 已设置」。
+ * 权限问题给出明确可执行的提示，而不是吞异常后假报成功。
+ * @throws {Error} 带 code 字段（EACCES / EISDIR / ...），调用方据此决定回显
  */
 function saveConfig(config) {
+    fs.ensureDirSync(path.dirname(CONFIG_FILE));
     try {
-        fs.ensureDirSync(path.dirname(CONFIG_FILE));
         fs.writeFileSync(CONFIG_FILE, yaml.dump(config, { indent: 2, lineWidth: -1 }), 'utf8');
     } catch (e) {
-        console.error(`保存配置文件失败: ${e.message}`);
+        if (e.code === 'EACCES' || e.code === 'EPERM') {
+            const err = new Error('保存失败：没有写入权限（EACCES），请检查配置文件权限或以管理员身份运行');
+            err.code = 'EACCES';
+            throw err;
+        }
+        throw e;
     }
 }
 

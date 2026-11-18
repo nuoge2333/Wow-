@@ -125,8 +125,15 @@ async function installToScheme(arg) {
 
 /**
  * 单文件模式：仅取项目在 (loader, mcVersion) 下的最新兼容文件。
+ * BUG-03：给定 versionId 时优先精确解析该版本文件，绝不自动挑版本。
  */
-async function resolveSingleFile({ source, project, loader, mcVersion }) {
+async function resolveSingleFile({ source, project, loader, mcVersion, versionId }) {
+    if (versionId) {
+        try {
+            const exact = await ModSearch.resolveVersionFile(source, project, versionId);
+            if (exact && exact.url) return { fileUrl: exact.url, filename: exact.filename };
+        } catch (e) { /* 精确解析失败则降级为自动选版 */ }
+    }
     if (source === 'curseforge' || source === 'cf') {
         try {
             const r = await cf.getProject(project);

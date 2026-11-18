@@ -216,12 +216,25 @@ class McConsole {
         const chunk = readRange(this.logFile, this.lastSize, size);
         this.lastSize = size;
         if (!chunk) return;
-        // 尽量不让实时日志打断正在输入的这一行
+        // BUG-02：刷实时日志前先保存用户正在输入的半行，刷完原样回填，绝不吞字。
+        // 先 clearLine 抹掉旧行 → 写日志 → prompt(true) 重绘提示符 → write(savedLine) 回填输入。
         const rl = this.lease && this.lease.rl;
+        const savedLine = (rl && typeof rl.line === 'string') ? rl.line : '';
+        const savedCursor = (rl && typeof rl.cursor === 'number') ? rl.cursor : savedLine.length;
         if (rl && rl.clearLine) { try { rl.clearLine(0); } catch (e) { /* 忽略 */ } }
         process.stdout.write(chunk);
         if (!chunk.endsWith('\n')) process.stdout.write('\n');
         if (rl && rl.prompt) { try { rl.prompt(true); } catch (e) { /* 忽略 */ } }
+        // 回填被 clearLine/prompt 抹掉的输入，并把光标放回用户原来的位置
+        if (savedLine && rl && rl.write) {
+            try {
+                rl.write(savedLine);
+                const back = Math.max(0, savedLine.length - savedCursor);
+                for (let i = 0; i < back && rl.write; i++) {
+                    try { rl.write(null, { name: 'left' }); } catch (e) { break; }
+                }
+            } catch (e) { /* 忽略 */ }
+        }
     }
 }
 

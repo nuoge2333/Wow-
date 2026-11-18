@@ -58,6 +58,15 @@ function stripAnsi(text) {
     return String(text).replace(/\x1b\[[0-9;]*m/g, '');
 }
 
+/**
+ * BUG-04：剔除 Minecraft 颜色/格式码 §[0-9a-fk-or]（§ = U+00A7）。
+ * MC 日志里这些控制码会插在级别词与包名之间（如 §c[ERROR]§r），
+ * 不先去掉会让下游正则匹配失败。必须在进行任何模式解析之前调用。
+ */
+function stripMcColors(text) {
+    return String(text == null ? '' : text).replace(/\u00A7[0-9a-fk-or]/gi, '');
+}
+
 // ==================== i18n ====================
 //
 // 结构固定为 { zh: {...}, en: {...} }，通过 setLocale() 切换。
@@ -345,7 +354,9 @@ const ORIGINAL_ORGS = new Set(['minecraft', 'mojang', 'fabricmc', 'fabric',
 /** 官方/自家库的二级段：出现在组织域之后时说明整条包不是第三方模组 */
 const VENDOR_LIBS = new Set([
     'mojang', 'google', 'apache', 'authlib', 'jopt',
-    'spongepowered', 'netty', 'slf4j', 'log4j', 'objectweb', 'ow2', 'asm'
+    'spongepowered', 'netty', 'slf4j', 'log4j', 'objectweb', 'ow2', 'asm',
+    // BUG-06：Java 运行时 / 底层依赖库，不是模组（com.sun.jna.*、oshi.native.* 等）
+    'jna', 'oshi', 'sun'
 ]);
 
 /** 这些包名属于原版 / 加载器 / 常用 API，不代表具体模组 */
@@ -354,7 +365,9 @@ const IGNORED_PACKAGES = new Set([
     'neoforge', 'quiltmc', 'quilt', 'spongepowered', 'mixins', 'mixinextras',
     'java', 'javax', 'jdk', 'sun', 'com', 'org', 'net', 'io', 'kotlin',
     'scala', 'groovy', 'slf4j', 'log4j', 'apache', 'google', 'gson',
-    'objectweb', 'asm', 'ow2', 'jetbrains', 'intellij'
+    'objectweb', 'asm', 'ow2', 'jetbrains', 'intellij',
+    // BUG-06：运行时底层库，绝不当模组输出
+    'jna', 'oshi'
 ]);
 
 /** 方括号里这些不是模组名 */
@@ -757,9 +770,11 @@ function scanLog(logContent, options = {}) {
     const radius = Number.isInteger(options.contextRadius) ? options.contextRadius : 10;
     const maxFindings = Number.isInteger(options.maxFindings) ? options.maxFindings : 5;
 
-    const lines = Array.isArray(logContent)
+    // BUG-04：入口处先剔除 MC 颜色码，再交给后续正则解析（大小写都覆盖）
+    const rawLines = Array.isArray(logContent)
         ? logContent
         : String(logContent == null ? '' : logContent).split(/\r?\n/);
+    const lines = rawLines.map(l => stripMcColors(l));
 
     // P1：解析真实 mods 目录，供 mod remove 建议做 fs.existsSync 存在性校验
     const resolvedModsDir = options.modsDir || (() => {
@@ -1154,6 +1169,8 @@ module.exports = {
     t,
     paint,
     stripAnsi,
+    stripMcColors,
+    VENDOR_LIBS,
     COLOR_ENABLED,
 
     // 常量

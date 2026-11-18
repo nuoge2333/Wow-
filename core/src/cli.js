@@ -198,7 +198,13 @@ program
     .command('set <key> <value>')
     .description('设置配置项')
     .action((key, value) => {
-        config.setConfig(key, value);
+        try {
+            config.setConfig(key, value);
+        } catch (e) {
+            console.error(`❌ ${e.message}`);
+            process.exitCode = 1;
+            return;
+        }
         console.log(`✅ 设置已更新: ${key} = ${value}`);
     })._hidden = true;
 
@@ -353,6 +359,7 @@ installCmd
     .option('--source <src>', '数据源：modrinth（默认）| curseforge')
     .option('--loader <l>', '加载器（搜索词模式用于匹配版本）')
     .option('--version <v>', 'MC 版本（搜索词模式用于匹配版本）')
+    .option('--version-id <id>', '精确版本 ID（前端版本下拉选中的版本，禁止后端自动挑版本）')
     .option('--no-auto', '关闭自动解析：只下载本体，不拉取前置依赖')
     .action(async (input, options) => {
         const PoolInstaller = load('./pool_installer');
@@ -361,6 +368,7 @@ installCmd
         const r = await PoolInstaller.installContent({
             input, category: 'mods', source: options.source,
             loader: options.loader, mcVersion: options.version,
+            versionId: options.versionId,
             autoResolve: options.auto !== false
         });
         if (!r.ok) { console.error(`❌ 模组下载失败: ${r.error}`); process.exitCode = 1; return; }
@@ -375,6 +383,7 @@ installCmd
     .option('--source <src>', '数据源：modrinth（默认）| curseforge')
     .option('--loader <l>', '加载器（搜索词模式用于匹配版本）')
     .option('--version <v>', 'MC 版本（搜索词模式用于匹配版本）')
+    .option('--version-id <id>', '精确版本 ID（前端版本下拉选中的版本，禁止后端自动挑版本）')
     .option('--no-auto', '关闭自动解析：只下载本体，不拉取前置依赖')
     .action(async (input, options) => {
         const PoolInstaller = load('./pool_installer');
@@ -383,6 +392,7 @@ installCmd
         const r = await PoolInstaller.installContent({
             input, category: 'plugins', source: options.source,
             loader: options.loader, mcVersion: options.version,
+            versionId: options.versionId,
             autoResolve: options.auto !== false
         });
         if (!r.ok) { console.error(`❌ 插件下载失败: ${r.error}`); process.exitCode = 1; return; }
@@ -1695,7 +1705,14 @@ const configCmd = program.command('config').description('配置管理');
 function runConfigWow(key, value, opts = {}) {
     const secret = /(^|\.)(auth_token|auth_password|api_key|token|password|secret)$/i.test(key);
     if (value !== undefined) {
-        config.setConfig(key, value);
+        // BUG-07：必须确认真正写入成功后才打印 ✅；保存失败向上抛出，这里拦截并明确报错。
+        try {
+            config.setConfig(key, value);
+        } catch (e) {
+            console.error(`❌ ${e.message}`);
+            process.exitCode = 1;
+            return;
+        }
         if (secret && !opts.plain && value !== null) {
             // 凭据类不回显明文：终端录屏、共享屏幕、聊天截图都会泄
             console.log(`✅ ${key} 已设置（凭据类，长度 ${String(value).length}，不显示明文）`);
@@ -1711,7 +1728,13 @@ function runConfigWow(key, value, opts = {}) {
             const cur = config.getConfig(key, false);
             const truthy = cur === true || cur === 'true' || cur === 1 || cur === '1';
             const next = !truthy;
-            config.setConfig(key, next);
+            try {
+                config.setConfig(key, next);
+            } catch (e) {
+                console.error(`❌ ${e.message}`);
+                process.exitCode = 1;
+                return;
+            }
             console.log(`🔁 ${key}: ${truthy} → ${next}（布尔值已切换，如需显式指定可用 config set ${key} true|false）`);
         } else {
             const val = config.getConfig(key);
@@ -1892,7 +1915,13 @@ configCmd
     .command('unset <key>')
     .description('清除启动器配置（写回 null），如 config unset web.auth_token')
     .action((key) => {
-        config.setConfig(key, null);
+        try {
+            config.setConfig(key, null);
+        } catch (e) {
+            console.error(`❌ ${e.message}`);
+            process.exitCode = 1;
+            return;
+        }
         console.log(`✅ 已清除 ${key}`);
     });
 

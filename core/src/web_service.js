@@ -31,6 +31,30 @@ const ServerProps = require('./server_props');
 const security = require('./web_security');
 const rateLimit = security.createRateLimiter();
 
+// BUG-05：全局上传并发闸门——同时最多 3 个上传请求在落盘，超出排队。
+// 防止多个大文件同时进内存 / 同时写盘把内存和磁盘 IO 打爆。
+const MAX_CONCURRENT_UPLOADS = 3;
+let activeUploads = 0;
+const uploadWaiters = [];
+function acquireUploadSlot() {
+    if (activeUploads < MAX_CONCURRENT_UPLOADS) {
+        activeUploads++;
+        return Promise.resolve();
+    }
+    return new Promise((resolve) => {
+        uploadWaiters.push(() => { activeUploads++; resolve(); });
+    });
+}
+function releaseUploadSlot() {
+    if (uploadWaiters.length) {
+        const next = uploadWaiters.shift();
+        // 直接把槽位交接给下一个等待者，避免 activeUploads 抖动
+        try { next(); } catch (e) { activeUploads = Math.max(0, activeUploads - 1); }
+    } else {
+        activeUploads = Math.max(0, activeUploads - 1);
+    }
+}
+
 // 用于存储 WebSocket 客户端连接
 let wsClients = [];
 let httpServer = null;
@@ -1818,7 +1842,13 @@ function startWeb(options = {}) {
             }
         }
 
-        config.setConfig(key, value);
+        try {
+            config.setConfig(key, value);
+        } catch (e) {
+            // BUG-07：写入失败不再吞异常后假报成功；权限问题明确回显。
+            const code = e.code === 'EACCES' ? 403 : 500;
+            return res.status(code).json({ success: false, error: e.message });
+        }
         res.json({ success: true, key, value });
     });
 
@@ -2053,55 +2083,41 @@ function startWeb(options = {}) {
      * 表单字段：files[]（可多个，支持 webkitRelativePath 相对路径）、path（目标子目录）
      * 说明：不使用额外的 multipart 依赖，此处以二进制方式收集并按 multipart 规范解析。
      */
-    app.post('/api/upload', (req, res) => {
+    app.post('/api/upload', async (req, res) => {
         const contentType = req.headers['content-type'] || '';
         const m = contentType.match(/boundary=(?:"([^"]+)"|([^;]+))/i);
         if (!m) {
             return res.status(400).json({ success: false, error: '请求必须为 multipart/form-data' });
         }
         const boundary = m[1] || m[2];
+        const MAX_TOTAL = 512 * 1024 * 1024; // 单次上传总上限 512MB
 
-        const MAX_TOTAL = 512 * 1024 * 1024; // 单次上传总上限 512MB，防内存耗尽
-        const chunks = [];
-        let total = 0;
-        let aborted = false;
-
-        req.on('data', (chunk) => {
-            total += chunk.length;
-            if (total > MAX_TOTAL) {
-                aborted = true;
-                res.status(413).json({ success: false, error: '上传内容过大（上限 512MB）' });
-                req.destroy();
-                return;
+        // BUG-05：全局并发闸门（最多 3 个），超出排队，避免多份大文件同时吃内存 / 磁盘 IO
+        await acquireUploadSlot();
+        let parsed = null;
+        try {
+            // 流式解析：文件 part 直接落盘到 os.tmpdir() 的临时文件，全程不整包进内存
+            parsed = await streamMultipartToDisk(req, boundary, MAX_TOTAL);
+            const FileManager = require('./file_manager');
+            const scheme = pickParam(parsed.fields.scheme) || pickParam(req.query.scheme);
+            const result = await FileManager.saveUploadsFromFiles(
+                parsed.fields.path || '',
+                parsed.files,
+                FileManager.getRoot(String(scheme).trim() || undefined)
+            );
+            if (result.uploaded) {
+                systemEcho(`cp -r <上传> ${parsed.fields.path || '.'}  (${result.uploaded} 个文件${schemeSuffix(scheme)})`);
             }
-            chunks.push(chunk);
-        });
-
-        req.on('end', async () => {
-            if (aborted) return;
-            try {
-                const buf = Buffer.concat(chunks);
-                const parsed = parseMultipart(buf, boundary);
-                const FileManager = require('./file_manager');
-                const scheme = pickParam(parsed.fields.scheme) || pickParam(req.query.scheme);
-                const result = await FileManager.saveUploads(
-                    parsed.fields.path || '',
-                    parsed.files,
-                    FileManager.getRoot(String(scheme).trim() || undefined)
-                );
-                if (result.uploaded) {
-                    systemEcho(`cp -r <上传> ${parsed.fields.path || '.'}  (${result.uploaded} 个文件${schemeSuffix(scheme)})`);
-                }
-                res.json({ success: true, uploaded: result.uploaded, files: result.files, skipped: result.skipped });
-            } catch (e) {
-                const code = e.code === 'EPATH' ? 403 : 500;
-                res.status(code).json({ success: false, error: e.message });
+            res.json({ success: true, uploaded: result.uploaded, files: result.files, skipped: result.skipped });
+        } catch (e) {
+            const code = e.code === 'ETOOBIG' ? 413 : (e.code === 'EPATH' ? 403 : 500);
+            if (!res.headersSent) res.status(code).json({ success: false, error: e.message });
+        } finally {
+            releaseUploadSlot();
+            if (parsed && parsed.tmpDir) {
+                try { fs.removeSync(parsed.tmpDir); } catch (_) { /* 忽略清理失败 */ }
             }
-        });
-
-        req.on('error', (e) => {
-            if (!aborted) res.status(500).json({ success: false, error: `上传中断: ${e.message}` });
-        });
+        }
     });
 
     // ===== 文件操作（V3.5.7，纯 Node 跨平台；旧版走 shell 在 Windows 上不可用）=====
@@ -3351,6 +3367,163 @@ async function countOnlinePlayers() {
     } catch (e) {
         return 0;
     }
+}
+
+/**
+ * BUG-05：流式解析 multipart/form-data —— 边收边把文件 part 落盘到临时目录。
+ *
+ * 与 parseMultipart（整包 Buffer，供 sync_server 小包复用）不同，这里绝不把整个
+ * 请求体读进内存：每次 data 只追加一个小窗口到 buf，逐个 part 推进状态机，
+ * 文件体的字节直接 write 到 os.tmpdir() 下的临时文件，字段用小缓冲收集。
+ * 边界串（--boundary / \r\n--boundary）可能跨 chunk，通过「保留尾部 N-1 字节」
+ * 的方式正确处理。返回临时目录，调用方在落盘后负责清理。
+ *
+ * @param {import('http').IncomingMessage} req
+ * @param {string} boundary
+ * @param {number} maxTotal 总字节上限，超过以 ETOOBIG 拒绝
+ * @returns {Promise<{fields:Object, files:Array<{fieldName,name,rel,tmpPath}>, tmpDir:string}>}
+ */
+function streamMultipartToDisk(req, boundary, maxTotal) {
+    return new Promise((resolve, reject) => {
+        const delimiter = Buffer.from('--' + boundary);
+        const subDelimiter = Buffer.from('\r\n--' + boundary);
+        let tmpDir;
+        try { tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wow_upload_')); }
+        catch (e) { return reject(e); }
+
+        const fields = {};
+        const files = [];
+        const writePromises = [];
+        let buf = Buffer.alloc(0);
+        let total = 0;
+        let phase = 'PREAMBLE'; // PREAMBLE → HEADERS → BODY → DONE
+        let curIsFile = false;
+        let curName = '';
+        let curRel = '';
+        let curFieldChunks = [];
+        let curWriter = null;
+        let aborted = false;
+        let settled = false;
+
+        const fail = (e) => {
+            if (settled) return;
+            settled = true;
+            aborted = true;
+            try { if (curWriter) curWriter.destroy(); } catch (_) {}
+            try { fs.removeSync(tmpDir); } catch (_) {}
+            reject(e);
+        };
+
+        function appendBody(data) {
+            if (!data || !data.length) return;
+            if (curIsFile) {
+                if (!curWriter) {
+                    const raw = String(curRel || '').replace(/\\/g, '/');
+                    const cleanName = raw.split('/').pop() || raw || 'upload.bin';
+                    const p = path.join(tmpDir, `part_${files.length}_${crypto.randomBytes(4).toString('hex')}`);
+                    curWriter = fs.createWriteStream(p);
+                    files.push({ fieldName: curName, name: cleanName, rel: raw || curName, tmpPath: p });
+                    writePromises.push(new Promise((res, rej) => {
+                        curWriter.on('finish', res);
+                        curWriter.on('error', rej);
+                    }));
+                }
+                if (!curWriter.write(data)) {
+                    // 背压：等 drain 再继续读，防止内存堆积
+                    req.pause();
+                    curWriter.once('drain', () => { if (!aborted) req.resume(); });
+                }
+            } else {
+                curFieldChunks.push(data);
+            }
+        }
+
+        function finishPart() {
+            if (curIsFile) {
+                if (curWriter) { curWriter.end(); curWriter = null; }
+            } else {
+                fields[curName] = Buffer.concat(curFieldChunks).toString('utf8').trim();
+                curFieldChunks = [];
+            }
+        }
+
+        function consume() {
+            while (!aborted) {
+                if (phase === 'PREAMBLE') {
+                    const idx = buf.indexOf(delimiter);
+                    if (idx === -1) { buf = Buffer.alloc(0); return; }
+                    buf = buf.slice(idx + delimiter.length);
+                    phase = 'HEADERS';
+                    continue;
+                }
+                if (phase === 'HEADERS') {
+                    const heIdx = buf.indexOf('\r\n\r\n');
+                    if (heIdx === -1) {
+                        if (buf.length > 64 * 1024) return fail(new Error('multipart 头过大'));
+                        return; // 等待更多数据
+                    }
+                    let headerText = buf.slice(0, heIdx).toString('utf8').replace(/^\r\n/, '');
+                    buf = buf.slice(heIdx + 4);
+                    if (headerText.startsWith('--')) { phase = 'DONE'; return; } // 结束边界
+                    const disp = headerText.match(/content-disposition:[^\r\n]*/i);
+                    const nameMatch = disp && disp[0].match(/name="([^"]*)"/i);
+                    const fileMatch = disp && disp[0].match(/filename="([^"]*)"/i);
+                    curName = nameMatch ? nameMatch[1] : '';
+                    curIsFile = !!fileMatch;
+                    curFieldChunks = [];
+                    if (curIsFile) {
+                        curRel = String(fileMatch[1] || '').replace(/\\/g, '/');
+                    }
+                    phase = 'BODY';
+                    continue;
+                }
+                if (phase === 'BODY') {
+                    const idx = buf.indexOf(subDelimiter);
+                    if (idx === -1) {
+                        // 保留尾部 L-1 字节，防止边界串被 chunk 切断
+                        const keep = subDelimiter.length - 1;
+                        if (buf.length > keep) {
+                            appendBody(buf.slice(0, buf.length - keep));
+                            buf = buf.slice(buf.length - keep);
+                        }
+                        return;
+                    }
+                    appendBody(buf.slice(0, idx));
+                    buf = buf.slice(idx + subDelimiter.length);
+                    finishPart();
+                    if (buf.slice(0, 2).toString() === '--') { phase = 'DONE'; return; }
+                    phase = 'HEADERS';
+                    continue;
+                }
+                return; // DONE
+            }
+        }
+
+        req.on('data', (chunk) => {
+            if (aborted) return;
+            total += chunk.length;
+            if (total > maxTotal) {
+                return fail(Object.assign(new Error('上传内容过大（上限 512MB）'), { code: 'ETOOBIG' }));
+            }
+            buf = Buffer.concat([buf, chunk]);
+            try { consume(); } catch (e) { fail(e); }
+        });
+
+        req.on('end', () => {
+            if (aborted || settled) return;
+            try {
+                if (phase === 'BODY' && buf.length) { appendBody(buf); buf = Buffer.alloc(0); finishPart(); }
+                Promise.all(writePromises).then(() => {
+                    if (settled) return;
+                    settled = true;
+                    resolve({ fields, files, tmpDir });
+                }, fail);
+            } catch (e) { fail(e); }
+        });
+
+        req.on('error', (e) => fail(Object.assign(new Error(`上传中断: ${e.message}`), { code: 'EUPLOAD' })));
+        req.on('aborted', () => fail(Object.assign(new Error('上传被客户端中断'), { code: 'EUPLOAD' })));
+    });
 }
 
 /**

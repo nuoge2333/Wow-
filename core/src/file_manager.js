@@ -316,6 +316,63 @@ async function saveUploads(baseRel, items, rootAbs) {
     return { uploaded, files: saved, skipped };
 }
 
+/**
+ * BUG-05：流式上传落盘变体。
+ * 与 saveUploads 使用完全相同的路径校验（safeResolve / sanitizeUploadRel / 越界复核），
+ * 唯一区别是文件内容来自已落盘的临时文件（item.tmpPath），用 createReadStream 流式复制，
+ * 而非来自内存 Buffer——这样 /api/upload 全程不把整包读进内存。
+ * @param {string} baseRel 目标子目录
+ * @param {Array<{rel:string, tmpPath:string, name?:string}>} items 含临时文件路径的条目
+ * @param {string} rootAbs 根目录
+ * @returns {Promise<{uploaded:number, files:string[], skipped:string[]}>}
+ */
+async function saveUploadsFromFiles(baseRel, items, rootAbs) {
+    const base = safeResolve(baseRel || '', rootAbs);
+    if (!base.ok) {
+        const err = new Error(base.reason);
+        err.code = 'EPATH';
+        throw err;
+    }
+    fs.ensureDirSync(base.abs);
+
+    let uploaded = 0;
+    const saved = [];
+    const skipped = [];
+    for (const item of items) {
+        const rel = sanitizeUploadRel(item.rel);
+        if (!rel) { skipped.push(item.rel); continue; }
+        const destAbs = path.resolve(base.abs, rel);
+        const baseWithSep = base.abs.endsWith(path.sep) ? base.abs : base.abs + path.sep;
+        if (destAbs !== base.abs && !destAbs.startsWith(baseWithSep)) {
+            skipped.push(item.rel);
+            continue;
+        }
+        fs.ensureDirSync(path.dirname(destAbs));
+        // 流式复制临时文件 → 目标；同盘 rename 优先，跨盘回退到流拷贝
+        try {
+            await new Promise((resolve, reject) => {
+                fs.copyFile(item.tmpPath, destAbs, (err) => {
+                    if (err) {
+                        // copyFile 在某些跨设备/权限场景失败，回退到流
+                        const rs = fs.createReadStream(item.tmpPath);
+                        const ws = fs.createWriteStream(destAbs);
+                        rs.on('error', reject);
+                        ws.on('error', reject);
+                        ws.on('finish', resolve);
+                        rs.pipe(ws);
+                    } else resolve();
+                });
+            });
+            uploaded++;
+            saved.push(path.relative(base.abs, destAbs).replace(/\\/g, '/'));
+        } catch (e) {
+            skipped.push(item.rel);
+        }
+    }
+
+    return { uploaded, files: saved, skipped };
+}
+
 // ==================== 写操作（V3.5.7，纯 Node，跨平台） ====================
 
 /**
@@ -571,6 +628,7 @@ module.exports = {
     resolveDownload,
     sanitizeUploadRel,
     saveUploads,
+    saveUploadsFromFiles,
     // V3.5.7 新增
     validateNameSegment,
     makeDir,

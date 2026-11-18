@@ -438,7 +438,7 @@
                 </div>
             </div>
         </div>
-
+    	<br>
         <!-- ===== 插件搜索 Tab（Minecraft 服务端插件，非 wow扩展） ===== -->
         <div class="tab-content" id="tab-plugins">
             <div class="search-bar">
@@ -474,7 +474,7 @@
                 </div>
             </div>
         </div>
-
+	<br>
         <!-- ===== 核心下载 Tab ===== -->
         <div class="tab-content" id="tab-core">
             <div class="core-form">
@@ -528,7 +528,7 @@
                 </div>
             </div>
         </div>
-
+	<br>
         <!-- ===== 下载队列 Tab ===== -->
         <div class="tab-content" id="tab-queue">
             <div id="queue-list" class="result-list">
@@ -543,7 +543,7 @@
             </div>
         </div>
     </div>
-
+	<br>
     <!-- Toast 消息 -->
     <div class="toast" id="toast"></div>
 
@@ -1100,10 +1100,16 @@
                 const isPlugin = item.kind === 'plugins';
                 const command = isPlugin ? 'install plugin' : 'install mod';
                 const args = [item.project, '--source', item.source];
-                // 手动选版本：优先用版本直链或通过 --version 传版本 id（CLI 侧按版本匹配）
+                // BUG-03：读取用户在 versionCache 里选中的具体版本对象，把版本 ID 传给后端，
+                // 绝不允许后端无视用户选择、自动瞎挑版本。
+                const selIdx = parseInt(installVersionSelect.value, 10);
+                const chosen = (!Number.isNaN(selIdx) && versionCache[selIdx]) ? versionCache[selIdx] : null;
                 const { loader, mcVersion } = currentLoaderAndVersion(item);
                 if (loader) args.push('--loader', loader);
                 if (mcVersion) args.push('--version', mcVersion);
+                if (chosen && chosen.id) {
+                    args.push('--version-id', String(chosen.id));
+                }
                 if (!withDeps) args.push('--no-auto');
                 installConfirmBtn.disabled = true;
                 try {

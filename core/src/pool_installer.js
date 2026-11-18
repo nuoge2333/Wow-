@@ -188,9 +188,11 @@ async function installContent(opts = {}) {
 
         if (autoResolve) {
             // P0 修复：复用与 CLI/依赖解析器完全相同的递归逻辑（含 required 依赖、防环、深度上限）。
+            // BUG-03：把用户精确选中的 versionId 透传给本体解析，禁止后端自动瞎挑版本。
             const depResolver = require('./dep_resolver');
             const r = await depResolver.resolve({
-                source, projectId: input, loader: opts.loader, mcVersion: opts.mcVersion
+                source, projectId: input, loader: opts.loader, mcVersion: opts.mcVersion,
+                versionId: opts.versionId
             });
             const items = r.items || [];
             warnings.push(...(r.warnings || []));
@@ -220,10 +222,11 @@ async function installContent(opts = {}) {
             };
         }
 
-        // --no-auto：单文件模式，仅本体
+        // --no-auto：单文件模式，仅本体（BUG-03：versionId 精确锁定用户选中版本）
         const contentInstaller = require('./content_installer');
         const found = await contentInstaller.resolveSingleFile({
-            source, project: input, loader: opts.loader, mcVersion: opts.mcVersion
+            source, project: input, loader: opts.loader, mcVersion: opts.mcVersion,
+            versionId: opts.versionId
         });
         if (!found || !found.fileUrl) {
             return { ok: false, category, error: `未找到 ${input} 的可下载文件（可尝试 --loader / --version 指定版本）` };
