@@ -180,6 +180,27 @@ git push origin main
 - 上一周期全量回归：`npm test` **54 个文件全绿**（75.9s），`WOW_PTY_STRICT=1`
   严格模式 13 项全过。本周期回归见上（64 个文件）。
 
+### 本版发行进度（v3.8.3-26.4b，2026-11-18）
+
+| 步骤 | 状态 |
+|------|------|
+| 版本号确定 `v3.8.3-26.4b`（序号 4a→4b 严格十六进制递增，用户拍板 patch 位） | ✅ |
+| 升版本号（cli.js / package.json / tui.js / package-lock.json） | ✅ |
+| CHANGELOG 新增 `[3.8.3-26.4b]` 章节（合并本周期 11 条提交）+ 版本表更新 | ✅ 四节（P0 / P1 / 功能 / 测试） |
+| 全量回归 75 文件 | ✅ 82.7s 全绿 |
+| 流式上传真实 HTTP 端到端 | ✅ 12/12（单/多文件、boundary 跨分块、4MB 背压、路径穿越、并发排队） |
+| commit + tag | ✅ `8b51937` / `v3.8.3-26.4b`（annotated，双端 tag object 一致 `fdf31f1a`） |
+| 双端推送 main + tag | ✅ GitHub + Gitee 均成功 |
+| 打包 `wow-v3.8.3-26.4b.zip` | ✅ 1,052,367 B，包内 version `3.8.3-26.4b`，排除文件未泄漏 |
+| SHA256SUMS 生成 | ✅ 187 B；两端归档哈希（GitHub 走 gh-proxy 镜像、Gitee 直连）均两次一致采信 |
+| GitHub Release + 双附件 | ✅ id `450176003`，`SHA256SUMS` + `wow-v3.8.3-26.4b.zip`，`latest` 指向本版 |
+| Gitee Release + 双附件 | ✅ id `1325308`，`SHA256SUMS` + `wow-v3.8.3-26.4b.zip`，`latest` 指向本版（私人令牌 OpenAPI；平台另附 tag 源码包 2 项属正常） |
+| 端到端核对 | ✅ 两端清单字节与本地一致；两端源码归档实测哈希与清单精确匹配；包内 version `3.8.3-26.4b` |
+| 三端对齐 | ✅ 本地 / Gitee / GitHub 均为 `8b51937` |
+
+> 说明：Gitee 用用户提供的私人令牌（归属 `nuoge233`）经 OpenAPI 建 Release + 传附件；
+> 令牌仅在本次对话中明文出现、未写入仓库，建议用完后在 Gitee 设置撤销并重新生成。
+
 ### 本版发行进度（v3.8.0-26.48，2026-11-14）
 
 | 步骤 | 状态 |
