@@ -42,7 +42,8 @@
 
 | 版本 | 状态 | 发布时间 |
 |------|------|------|
-| **3.8.2-26.4a** | 当前版本（公测前 18 项 Bug 修复 + 主题包更新机制） | 2026-11-15 |
+| **3.8.3-26.4b** | 当前版本（公测前终端/退出/诊断/安全 P0 修复 + 资源池统一安装 + 精确版本 + 上传加固） | 2026-11-18 |
+| **3.8.2-26.4a** | 上一版本（公测前 18 项 Bug 修复 + 主题包更新机制） | 2026-11-15 |
 | **3.8.1-26.49** | 上一版本（内置帮助文档抽屉 + Web 内容页留白 + 移动端菜单抽屉） | 2026-11-14 |
 | **3.8.0-26.48** | 上一版本（下载中心重构 + 玩家管理 + 三条铁律 + wow扩展改名） | 2026-11-14 |
 | **3.7.4-26.47** | 上一版本（发版周期合并内容见 RELEASE_POLICY.md 第五节） | 2026-11-13 |
@@ -120,6 +121,48 @@
 | **3.0.0** | 上一版本 |2026-07-23|
 | **2.0.0** | 内部迭代 |2026-02-27|
 | **1.0.0** | 内部迭代 |2026-02-07|
+
+---
+
+## [3.8.3-26.4b] — 2026-11-18：公测冲刺——终端/退出/诊断/安全 P0 修复 + 资源池统一安装 + 精确版本 + 上传加固
+
+> 3.8.2 之后累积 11 条提交，合并为一次小版本发布。主线是**公测前的第三方破坏性测试整改**：
+> 打通「终端输入路由 → 退出状态机 → 崩溃诊断」三条 P0 链路，统一资源入池安装并锁定精确版本，
+> 加固 Web 上传与配置写入。全量回归 **75 个测试文件全绿**；流式上传真实 HTTP 端到端 **12/12 通过**。
+
+### 一、🚨 P0 级：输入、退出、诊断与安全
+
+| # | 修复 | 要点 |
+|---|------|------|
+| 1 | 第三方审查 7 项（D1/D2/A1/B1/A2/C1/P7） | D1 下载文件名 `path.basename` 剥离 + 过滤盘符/点目录阻断路径穿越；D2 sync staging 严格校验 64 位 sha256 阻断分块穿越；A1 Web 下载 `createReadStream` 挂 error 兜底防请求挂起；B1 Windows 进程检测/强杀 `exec` 异步误用改 `execSync`；A2 全仓网络流挂 error（断流销毁写入流+删残 file+reject）；C1 `countOnlinePlayers` fd 关闭移入 `finally` 防耗尽 |
+| 2 | `:mc` 终端输入路由与日志污染清理 | 抽出 `routeMcViewInput` 统一路由——`seed`/`op`/`say` 等 MC 指令原样转发，跳过 commander 解析；覆盖顶层 `wow :mc`、L REPL mc 视图、开服控制台三处；L 模式从 M 菜单进入时禁 MC 日志自动 tail 回显；M 模式 TUI 占屏时屏蔽 echoSink/WebSocket 心跳日志，不冲乱菜单 |
+| 3 | 退出状态机重构（防假死与漏报） | `server.js` 唯一意图标记 `intendedShutdown`，仅 `stop`/`kill`/控制台 `stop`（含 `/stop`、Web 控制台）经 `_markIntendedShutdown` 置位；非主动退出哪怕退码 0 也输出 ❌ 异常退出并强制诊断，移除 `code===0/143/137` 与 `signalStop` 兜底；跨进程意图由 `.manual-stop.flag` 传递 |
+| 4 | 诊断误报与乱码模组名提取 | exit 回调接收 signal，`SIGKILL/SIGTERM/SIGHUP/SIGINT` 判主动停止（原只看 code，`code=null` 时红线失效）；`isManualStop` + `_diagnoseCrash` + `diagnoseOnCrash` 三层拦截；`normalizeModId` 截断 `.jar/.zip` 及其后字符（`jna-5.12.1.jar:5` → `jna`）；新增颜色码剔除（入口正则 `\u00A7[0-9a-fk-or]`），`VENDOR_LIBS`/`IGNORED_PACKAGES` 加入 `jna`/`oshi`/`sun` 基础库防误认模组 |
+| 5 | BUG-02 `:mc` 刷屏吞输入 | `_follow()` 写日志前保存 `rl.line`/`cursor`，写完回填并复位光标，绝不吞掉用户正在输入的半行 |
+
+### 二、⚠️ P1 级：安装链路与版本正确性
+
+| # | 修复 | 要点 |
+|---|------|------|
+| 6 | 恢复 `install` 为统一资源入池入口 | `install core/mod/plugin` 落盘到 `pool/` 分类目录，不创建方案；新增 `pool_installer.js`——流式算 SHA-256、登记 `pool/index.yaml`（初始引用 0、已引用不重置）、**拒绝写入 `scheme/`**；废弃 `mod install`（只打印废弃提示、移除装到方案的副作用） |
+| 7 | Web 装模组漏拉依赖 → 递归解析 | `pool_installer.installContent` 默认走 `dep_resolver` 递归解析「本体 + 必需依赖」逐项入池（CLI 与 Web 同一套，修 `jadeaddons` 漏 `jade`）；`--no-auto` 仅装本体 |
+| 8 | BUG-03 精确版本锁定 | `mod_search` 新增 `listVersions`/`getVersionDependencies`，Web 新增 `/api/mod/versions`、`/api/mod/version-deps`；前端读 `versionCache` 选中项 → CLI `--version-id` → `dep_resolver`/`content_installer` 精确锁定直链，**禁止后端自动挑版** |
+| 9 | BUG-07 配置保存失败仍报成功 | `saveConfig()` 异常上抛，CLI 确认真正写入后才打印 `✅`，EACCES 明确提示「保存失败：没有写入权限（EACCES）」；`/api/config` 单键写入 EACCES→403 |
+| 10 | BUG-05 Web 上传内存炸弹 | `/api/upload` 全量缓存改流式落盘（临时文件 + `saveUploadsFromFiles` 复用路径校验），加全局并发闸门（≤3）；单/多文件、boundary 跨分块、4MB 背压、路径穿越、并发排队全部实测通过 |
+
+### 三、💡 功能与体验
+
+| # | 功能 | 要点 |
+|---|------|------|
+| 11 | `wow :mc` 顶层控制台命令 | 独立终端接入运行中服务器控制台，纯 Node 跨平台跟随 `latest.log`，每行输入经 `.console.queue` 中继下发；`exit`/`:q`/Ctrl+C 只断开视图不停服；走 `stdinSession` 唯一 readline 租约 |
+| 12 | token 启动轮换 | `web.auth_token` 每次 CLI 启动无条件轮换为 32 字节 hex，旧 Web 会话随之失效；`WOW_WEB_AUTH_TOKEN` 环境变量仍保持最高优先级（CI/测试固定密钥） |
+| 13 | `init` 转为自愈体检中心 | 描述改「初始化或修复环境」；首次灵魂拷问是否每次启动自动开 Web（Y→`web.run_startup=true`，非 TTY 默认 Y）；无参数敲 `wow` 时后台静默拉起 Web 并在 TUI 顶部常驻访问地址横幅；Q 页新增第 10 项「开启/查看 Web 面板」 |
+| 14 | 实例配置中文翻译补齐 | `props_docs.js` 新增 16 个「其他配置」键的中文名 + 悬停说明（`enable-status`/`spawn-radius`/`rate-limit` 等），前端零改动 |
+| 15 | Web 页面与文档微调 | `web/down.html` 若干排版微调并同步 `themes/default/down.html`；`docs/TERMS.md` 完善「方案 (Scheme)」说明（逻辑完整实例 / pool 共享底层资源 / 冷备份建议 `wow pack generate`） |
+
+### 四、测试同步
+
+新增 `auth_token_rotate`（3 项）、`mc_console`（21 项）、`diagnosis_false_positive`（161 行）、`web_onboarding`（12 项）、`props_docs_extra`（104 行）、`install_pool`（169 行）、`exit_state_web_deps`（181 行）、`input_routing_p0`（18 项）等测试；受影响静态断言（`interactive_menu`/`tui_mode`/`cli_commands`/`command_policy`/`error_scanner`/`web_pages`）按新逻辑同步（非放水）。全量回归 **75 文件全绿**。
 
 ---
 
