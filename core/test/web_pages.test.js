@@ -466,6 +466,14 @@ check('default 主题与 web 目录的页面全部一致', () => {
     }
 });
 
+check('dashboard 控制台日志用 rAF 攒批渲染（消除突发 O(N²) 卡顿）', () => {
+    const src = fs.readFileSync(path.join(ROOT, 'web', 'dashboard.html'), 'utf8');
+    assert.ok(/function scheduleRender\(\)/.test(src), '未定义攒批调度');
+    assert.ok(/requestAnimationFrame/.test(src), '未使用 requestAnimationFrame');
+    assert.ok(/function appendConsole[\s\S]{0,500}?scheduleRender\(\)/.test(src), 'appendConsole 未走攒批');
+    assert.ok(/renderConsole\(\)/.test(src), 'renderConsole 渲染主逻辑不应被删除');
+});
+
 console.log(`\n📊 结果: ${pass} 通过, ${fail} 失败\n`);
 if (fail) {
     failures.forEach(f => console.log(`  ❌ ${f.name}: ${f.err.message}`));

@@ -348,6 +348,7 @@
             // [WebCLI] / [System] 这类回显，逐条 append 比整块重绘更省事也不闪。
             const MAX_CONSOLE_LINES = 400;
             const consoleLines = [];
+            let renderScheduled = false;
 
             function classify(line) {
                 if (line.startsWith('[WebCLI]')) return 'log-webcli';
@@ -368,7 +369,18 @@
                 if (consoleLines.length > MAX_CONSOLE_LINES) {
                     consoleLines.splice(0, consoleLines.length - MAX_CONSOLE_LINES);
                 }
-                renderConsole();
+                scheduleRender();
+            }
+
+            // 一帧内多次 append 只重建一次 DOM：突发日志从 N 次全量重建降为每帧 1 次，
+            // 消除逐条 innerHTML 重建 400 行带来的卡顿。渲染结果与原逻辑逐字节一致。
+            function scheduleRender() {
+                if (renderScheduled) return;
+                renderScheduled = true;
+                requestAnimationFrame(() => {
+                    renderScheduled = false;
+                    renderConsole();
+                });
             }
 
             function renderConsole() {

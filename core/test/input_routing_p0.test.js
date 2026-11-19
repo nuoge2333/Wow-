@@ -99,6 +99,13 @@ check('M→L 传 fromMenu，L 模式日志隔离', () => {
     const m = cliSrc.match(/const startFollow = \(notice\) => \{[\s\S]{0,200}?if \(!autoFollowAllowed\) return;/);
     assert.ok(m, 'startFollow 未对 fromMenu 提前返回');
 });
+check('stopFollow 服务器退出后切回 :wow（带 view/ownServerOp 守卫）', () => {
+    const m = cliSrc.match(/const stopFollow = \(reason\) => \{[\s\S]{0,800}?following = false;/);
+    assert.ok(m, '未找到 stopFollow');
+    assert.ok(/setView\('WOW', 'follow:server-exit'\)/.test(m[0]), '退出跟踪未切回 :wow');
+    assert.ok(/!ownServerOp[\s\S]{0,140}?currentView\(\) === 'mc'/.test(m[0]), '缺少 ownServerOp/MC 视图守卫');
+    assert.ok(/服务器已停止，已退出 :mc 日志跟踪，回到 :wow 视图/.test(cliSrc), '退出文案未提示回到 :wow');
+});
 
 console.log('\n— P0-1 server.js 静态守卫 —');
 const srvSrc = fs.readFileSync(path.join(SRC, 'server.js'), 'utf8');
@@ -118,11 +125,16 @@ check('Web 事件有 TUI 占屏守卫', () => {
     const m = webSrc.match(/let echoSink = \(line\) => \{[\s\S]{0,160}?if \(tuiOwnsTerminal\(\)\) return;/);
     assert.ok(m, '默认 echoSink 未挡 TUI 占屏');
 });
-check('WebSocket 连接/断开心跳只写日志，占屏不打终端', () => {
-    const conn = webSrc.match(/WebSocket 客户端已连接[\s\S]{0,320}?tuiOwnsTerminal\(\)/);
-    assert.ok(conn && /logger\.info/.test(conn[0]), '连接心跳未写日志/未加守卫');
-    const disc = webSrc.match(/WebSocket 客户端已断开[\s\S]{0,320}?tuiOwnsTerminal\(\)/);
-    assert.ok(disc && /logger\.info/.test(disc[0]), '断开心跳未写日志/未加守卫');
+check('WebSocket 连接/断开心跳只写日志，且仅在 :wow 视图打终端', () => {
+    const conn = webSrc.match(/WebSocket 客户端已连接[\s\S]{0,320}?shouldPrintToTerminal\(\)/);
+    assert.ok(conn && /logger\.info/.test(conn[0]), '连接心跳未写日志/未加视图闸门');
+    const disc = webSrc.match(/WebSocket 客户端已断开[\s\S]{0,320}?shouldPrintToTerminal\(\)/);
+    assert.ok(disc && /logger\.info/.test(disc[0]), '断开心跳未写日志/未加视图闸门');
+    assert.ok(/function shouldPrintToTerminal\(\)[\s\S]{0,220}?viewState\.VIEW\.WOW/.test(webSrc),
+        '终端闸门未限定 :wow 视图');
+});
+check('Web 日志增量推送间隔降到 100ms', () => {
+    assert.ok(/const LOG_TAIL_INTERVAL = 100;/.test(webSrc), '日志推送间隔未降到 100ms');
 });
 
 console.log(`\n结果：通过 ${passed}，失败 ${failed}`);

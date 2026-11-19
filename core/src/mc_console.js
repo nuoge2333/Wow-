@@ -14,6 +14,9 @@ const stdinSession = require('./stdin_session');
 const utils = require('./utils');
 
 const FOLLOW_INTERVAL_MS = 300;
+// 存活检测降频：每 10 个 tick（约 3s）查一次服务器进程是否还在。
+// isRunning() 在 Windows 上要走 tasklist（execSync），不能每 300ms 查一次。
+const LIVENESS_CHECK_EVERY = 10;
 const TAIL_LINES = 12;
 const EXIT_WORDS = new Set([':q', 'q', 'quit', ':quit', 'exit', ':exit', ':bye']);
 
@@ -110,6 +113,8 @@ class McConsole {
         this.timer = null;
         this.lastSize = 0;
         this.closed = false;
+        this._livenessTick = 0;
+        this._finish = null; // attach() 内 finish 的引用，供 _follow() 检测退出后优雅离开
     }
 
     _fileSize() {
@@ -151,7 +156,7 @@ class McConsole {
         });
         const rl = this.lease.rl;
         await new Promise((resolve) => {
-            const finish = async () => {
+            const finish = async (reason = 'mc.console:detach') => {
                 if (this.closed) return;
                 this.closed = true;
                 if (this.timer) { clearInterval(this.timer); this.timer = null; }
@@ -159,10 +164,11 @@ class McConsole {
                 this.lease = null;
                 try {
                     const vs = require('./view_state');
-                    vs.set(vs.VIEW.SHELL, 'mc.console:detach');
+                    vs.set(vs.VIEW.SHELL, reason);
                 } catch (e) { /* 忽略 */ }
                 resolve();
             };
+            this._finish = finish; // 暴露给 _follow()，供检测退出路径复用同一套收尾
             rl.on('line', (raw) => {
                 if (this.closed) return;
                 const route = routeMcViewInput(raw);
@@ -206,6 +212,25 @@ class McConsole {
 
     _follow() {
         if (this.closed) return;
+
+        // 降频存活检测：每 10 个 tick（约 3s）查一次服务器 PID 是否还在。
+        // 顶层 `wow :mc` 是独立进程，拿不到子进程的 exit 事件，只能靠跨进程的
+        // isRunning()（PID 文件 + process.kill(pid,0)）判断。刻意不用心跳
+        // isConsoleRelayAlive()——「服务器在跑但无中继」是受支持场景，用心跳会误踢。
+        if (++this._livenessTick % LIVENESS_CHECK_EVERY === 0) {
+            let alive = true;
+            try { alive = this.server.isRunning() !== false; }
+            catch (e) { /* 检测异常时保守视为存活，避免误踢 */ }
+            if (!alive) {
+                const rl = this.lease && this.lease.rl;
+                // 先清掉用户半行，避免提示被拼到输入行尾
+                if (rl && rl.clearLine) { try { rl.clearLine(0); } catch (e) { /* 忽略 */ } }
+                console.log('\n⏹ 检测到服务器已退出，正在离开 :mc 控制台（服务器进程已结束）。');
+                if (this._finish) void this._finish('mc.console:server-exit');
+                return;
+            }
+        }
+
         let size;
         try { size = fs.statSync(this.logFile).size; } catch (e) { return; }
         if (size <= this.lastSize) {

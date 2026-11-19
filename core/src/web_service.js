@@ -30,6 +30,8 @@ const ServerProps = require('./server_props');
 // 指令一/二：危险开关拦截 + 登录限流的纯逻辑底座（零副作用，可反复 require）
 const security = require('./web_security');
 const rateLimit = security.createRateLimiter();
+// 视图状态：连接/断开等 Web 事件日志只在 :wow 视图打到终端（进程内单例）
+const viewState = require('./view_state');
 
 // BUG-05：全局上传并发闸门——同时最多 3 个上传请求在落盘，超出排队。
 // 防止多个大文件同时进内存 / 同时写盘把内存和磁盘 IO 打爆。
@@ -221,6 +223,17 @@ function sanitizeCommandText(input) {
  */
 function tuiOwnsTerminal() {
     try { return require('./tui').isScreenActive() === true; } catch (e) { return false; }
+}
+
+/**
+ * Web 事件（连接/断开心跳等）是否允许打到终端 stdout。
+ * 精确闸门：仅当处于 :wow 视图、且 TUI 未占屏时才输出；:mc / :m / shell 等
+ * 一律静默。事件始终由调用方 logger.info 落全局日志，静默不等于丢数据。
+ */
+function shouldPrintToTerminal() {
+    if (tuiOwnsTerminal()) return false;
+    try { return viewState.current() === viewState.VIEW.WOW; }
+    catch (e) { return false; }
 }
 
 /** 默认回显出口：TUI 占屏时静默（事件仍已落日志），否则打到 stdout */
@@ -2651,10 +2664,10 @@ function startWeb(options = {}) {
     });
 
     io.on('connection', (socket) => {
-        // P0（M 模式日志隔离）：心跳只写全局日志文件；TUI 占屏时绝不打终端
+        // 连接心跳只写全局日志文件；终端仅在 :wow 视图显示，绝不污染 :mc / 开服控制台
         const connLine = `WebSocket 客户端已连接: ${socket.id}`;
         try { logger.info(connLine); } catch (e) { /* 忽略 */ }
-        if (!tuiOwnsTerminal()) {
+        if (shouldPrintToTerminal()) {
             try { console.log(connLine); } catch (e) { /* 忽略 */ }
         }
         wsClients.push(socket);
@@ -2673,10 +2686,10 @@ function startWeb(options = {}) {
         } catch (e) { /* 队列不可用不影响连接 */ }
 
         socket.on('disconnect', () => {
-            // P0（M 模式日志隔离）：心跳只写全局日志文件；TUI 占屏时绝不打终端
+            // 断开心跳只写全局日志文件；终端仅在 :wow 视图显示，绝不污染 :mc / 开服控制台
             const discLine = `WebSocket 客户端已断开: ${socket.id}`;
             try { logger.info(discLine); } catch (e) { /* 忽略 */ }
-            if (!tuiOwnsTerminal()) {
+            if (shouldPrintToTerminal()) {
                 try { console.log(discLine); } catch (e) { /* 忽略 */ }
             }
             wsClients = wsClients.filter(c => c.id !== socket.id);
@@ -3181,14 +3194,14 @@ function execCommand(command, args = []) {
  * 就是三份重复 IO，日志还会因为 500ms 轮询有明显延迟。
  * 现在改为「一个定时器 + 广播」：
  *   - 全局只维护一个读取游标 logTailPos；
- *   - 每 250ms 读一次增量，按行广播给所有客户端；
+ *   - 每 100ms 读一次增量，按行广播给所有客户端（比早期 250ms 进一步降低首包延迟）；
  *   - 首个客户端连上时启动，最后一个断开时停掉，空闲时零开销。
  * 历史日志仍由前端首屏 GET /api/logs 拉取，二者互补。
  */
 let logTailTimer = null;
 let logTailPos = 0;
 let logTailPath = null;
-const LOG_TAIL_INTERVAL = 250;
+const LOG_TAIL_INTERVAL = 100;
 const LOG_TAIL_MAX_CHUNK = 256 * 1024;
 
 function startBroadcastTail() {

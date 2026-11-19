@@ -2550,6 +2550,14 @@ async function startRepl(options = {}) {
 
     const stopFollow = (reason) => {
         if (followTimer) { clearInterval(followTimer); followTimer = null; }
+        // 服务器退出：把 REPL 从 :mc 切回 :wow。提示符由 view_state 的 onChange
+        // 订阅（见下方 vsMod.onChange）自动恢复为 WOW_PROMPT，printLine 里的
+        // rl.prompt(true) 据此重绘——故必须先 setView 再 printLine，顺序不可颠倒。
+        // 三重守卫：following=本次跟踪建立的 MC 视图；!ownServerOp=本终端自己开服
+        // 的控制台不归本逻辑管；currentView()==='mc'=用户已手动切走时不强行拽回。
+        if (following && !ownServerOp && currentView() === 'mc') {
+            setView('WOW', 'follow:server-exit');
+        }
         if (following && reason) printLine(reason);
         following = false;
     };
@@ -2581,7 +2589,7 @@ async function startRepl(options = {}) {
         followTimer = setInterval(() => {
             // 心跳消失 = 服务器进程退出（中继 250ms 一刷，3s 没刷就是没了）
             if (!ServerManager.isConsoleRelayAlive()) {
-                stopFollow('⏹ 服务器已停止，已退出日志跟踪。');
+                stopFollow('⏹ 服务器已停止，已退出 :mc 日志跟踪，回到 :wow 视图。');
                 return;
             }
             let st;

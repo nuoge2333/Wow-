@@ -67,5 +67,20 @@ try {
     try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (e) { /* 忽略 */ }
 }
 
+console.log('\n— _follow 存活检测（静态守卫）—');
+const mcSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'mc_console.js'), 'utf8');
+check('_follow 降频检测 isRunning 并优雅离开', () => {
+    if (!/LIVENESS_CHECK_EVERY = 10/.test(mcSrc)) throw new Error('未定义降频常量');
+    if (!/_livenessTick % LIVENESS_CHECK_EVERY/.test(mcSrc)) throw new Error('_follow 未降频检测');
+    if (!/this\.server\.isRunning\(\)/.test(mcSrc)) throw new Error('未用 isRunning 判存活');
+    if (!/this\._finish\('mc\.console:server-exit'\)/.test(mcSrc)) throw new Error('未触发优雅离开');
+});
+check('存活检测刻意不用心跳，避免「在跑但无中继」误踢', () => {
+    // _follow 的新增检测块里应只有 isRunning，不应出现 isConsoleRelayAlive
+    const m = mcSrc.match(/_livenessTick % LIVENESS_CHECK_EVERY[\s\S]{0,600}?_finish\('mc\.console:server-exit'\)/);
+    if (!m) throw new Error('未找到存活检测块');
+    if (/isConsoleRelayAlive/.test(m[0])) throw new Error('存活检测不应使用心跳（会误踢无中继场景）');
+});
+
 console.log(`\n结果：通过 ${passed}，失败 ${failed}`);
 process.exit(failed === 0 ? 0 : 1);
