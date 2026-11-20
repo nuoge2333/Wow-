@@ -194,12 +194,15 @@ git push origin main
 | CHANGELOG 新增 `[3.8.4-26.4c]` 紧急修复章节 + 版本表更新 | ✅ |
 | 全量回归 75 文件 | ✅ 全绿 |
 | 运行时视图闸门与存活检测验证 | ✅ 7/7 |
-| commit + tag | ⏳ 进行中 |
-| 双端推送 main + tag | ⏳ |
-| 打包 `wow-v3.8.4-26.4c.zip` + SHA256SUMS | ⏳ |
-| GitHub Release + 双附件 | ⏳ |
-| Gitee Release + 双附件 | ⏳ |
-| 端到端核对 + 三端对齐 | ⏳ |
+| commit + tag | ✅ `4e3a678` / `v3.8.4-26.4c`（annotated，三端 tag object 一致 `726e586`） |
+| 双端推送 main + tag | ✅ GitHub（GnuTLS 重置重试 3 次成功）+ Gitee 均成功 |
+| 打包 `wow-v3.8.4-26.4c.zip` + SHA256SUMS | ✅ 1,054,830 B，包内 version `3.8.4-26.4c`，排除文件未泄漏；清单双端归档哈希（GitHub `33f6f880…` / Gitee `7ab19e54…`） |
+| GitHub Release + 双附件 | ✅ id `RE_kwDOTjF9W84bAAjd`（databaseId 见附件 772702076/77），`SHA256SUMS` + `wow-v3.8.4-26.4c.zip`，`latest` 指向本版 |
+| Gitee Release + 双附件 | ✅ id `1340500`，`SHA256SUMS` + `wow-v3.8.4-26.4c.zip`，`latest` 指向本版（私人令牌 OpenAPI） |
+| 端到端核对 + 三端对齐 | ✅ 两端清单字节与本地一致；两端归档实测哈希与清单精确匹配；包内 version `3.8.4-26.4c`；本地/Gitee/GitHub 三端 main `4e3a678` 一致 |
+
+> 说明：Gitee 用用户提供的私人令牌（归属 `nuoge233`）经 OpenAPI 建 Release + 传附件；
+> 令牌仅在本次会话的临时目录出现、未写入仓库，发版完成后已立即清理，建议用完后在 Gitee 设置撤销并重新生成。
 
 ### 本版发行进度（v3.8.3-26.4b，2026-11-18）
 
