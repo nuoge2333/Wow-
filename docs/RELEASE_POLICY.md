@@ -101,10 +101,15 @@ git push origin main
 
 ## 五、当前状态
 
-- 已发布的最新版本：`v3.8.3-26.4b`（2026-11-18）
-- 下一个序号是 `4c`（严格十六进制递增，见下方「序号纪律」）
-- 下一周期累积的改动：见 `git log v3.8.3-26.4b..HEAD`
-- 本周期已发行内容（合并为 **v3.8.3-26.4b**，2026-11-18）：
+- 已发布的最新版本：`v3.8.4-26.4c`（2026-11-21，🚨 紧急修复）
+- 下一个序号是 `4d`（严格十六进制递增，见下方「序号纪律」）
+- 下一周期累积的改动：见 `git log v3.8.4-26.4c..HEAD`
+- 本周期已发行内容（合并为 **v3.8.4-26.4c**，2026-11-21 — 🚨 紧急修复）：
+  1. **`:mc` 检测进程退出并回到 `:wow`**：`cli.js` `stopFollow()` 三重守卫下先 `setView('WOW')` 再 `printLine`，提示符由 `view_state` onChange 订阅自动恢复；`mc_console.js` `_follow()` 每 10 tick（约 3s）用跨进程 `isRunning()` 降频检测退出，判死走 `_finish('mc.console:server-exit')` 优雅离开并清半行。刻意不用心跳检测，避免「服务器在跑但无中继」被误踢。
+  2. **Web 连接/断开日志只在 `:wow`**：`web_service.js` 新增 `shouldPrintToTerminal()` 精确闸门，仅 `:wow` 且 TUI 未占屏才打终端，其余视图静默；日志仍落全局文件。
+  3. **浏览器日志提速**：服务端 tail 轮询 250ms→100ms；前端 `dashboard.html` `appendConsole` 改 `requestAnimationFrame` 攒批，一帧一次 DOM 重建，两端逐字节同步。
+  4. 测试同步：`mc_console`/`input_routing_p0`/`interactive_menu`/`web_pages` 断言按新逻辑更新；全量回归 **75 文件全绿**，运行时验证 **7/7**。
+- 上一周期已发行内容（合并为 **v3.8.3-26.4b**，2026-11-18）：
   1. **公测前第三方破坏性测试整改**：终端输入路由（`:mc` MC 指令原样转发、日志/菜单事件隔离）、
      退出状态机重构（唯一 `intendedShutdown` 意图、非主动退出退码 0 也诊断）、崩溃诊断三层防误报
      （signal 判定 + `.manual-stop.flag` + 颜色码剔除 + `jna/oshi/sun` 忽略）、
@@ -179,6 +184,22 @@ git push origin main
   6. **`file.html` 工具栏 `margin: px;` 缺值**（11-13）：补为 `margin: 12px 0`。
 - 上一周期全量回归：`npm test` **54 个文件全绿**（75.9s），`WOW_PTY_STRICT=1`
   严格模式 13 项全过。本周期回归见上（64 个文件）。
+
+### 本版发行进度（v3.8.4-26.4c，2026-11-21 — 🚨 紧急修复）
+
+| 步骤 | 状态 |
+|------|------|
+| 版本号确定 `v3.8.4-26.4c`（紧急修复定性；patch 位 +1、序号 4b→4c 严格十六进制递增，用户拍板） | ✅ |
+| 升版本号（cli.js / package.json / tui.js / package-lock.json） | ✅ |
+| CHANGELOG 新增 `[3.8.4-26.4c]` 紧急修复章节 + 版本表更新 | ✅ |
+| 全量回归 75 文件 | ✅ 全绿 |
+| 运行时视图闸门与存活检测验证 | ✅ 7/7 |
+| commit + tag | ⏳ 进行中 |
+| 双端推送 main + tag | ⏳ |
+| 打包 `wow-v3.8.4-26.4c.zip` + SHA256SUMS | ⏳ |
+| GitHub Release + 双附件 | ⏳ |
+| Gitee Release + 双附件 | ⏳ |
+| 端到端核对 + 三端对齐 | ⏳ |
 
 ### 本版发行进度（v3.8.3-26.4b，2026-11-18）
 
