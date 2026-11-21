@@ -359,7 +359,17 @@ class SchemeManager {
     /**
      * 删除方案（清理pool中未被引用的资源）
      */
-    async delete(name) {
+    /**
+     * 删除方案。
+     *
+     * 公测前加固：默认**不真删**，而是把整个方案目录（含 world/）移动到
+     * `scheme/.trash/<方案名>-<时间戳>/`。移动是 rename，不复制字节，
+     * 几个 GB 的存档也是瞬间完成；后悔了把它移回 `scheme/<方案名>` 即可。
+     *
+     * @param {string} name 方案名
+     * @param {{purge?: boolean}} [options] purge=true 时彻底删除（不可恢复）
+     */
+    async delete(name, options = {}) {
         if (!this._schemeExists(name)) {
             throw new Error(`方案 ${name} 不存在`);
         }
@@ -370,18 +380,28 @@ class SchemeManager {
             throw new Error(`方案 ${name} 正在使用中，请先切换到其它方案再删除`);
         }
 
-        console.log(`🗑️ 删除方案: ${name}`);
-
-        // 1. 加载元数据，记录资源列表
-        const meta = this._loadSchemeMeta(name);
-
-        // 2. 删除方案目录
+        // 1. 删除方案目录（默认进回收站）
         const schemePath = this._getSchemePath(name);
-        fs.removeSync(schemePath);
+        if (options.purge) {
+            console.log(`🗑️ 彻底删除方案: ${name}`);
+            fs.removeSync(schemePath);
+            console.log(`✅ 方案 ${name} 已彻底删除（不可恢复）`);
+        } else {
+            const trashDir = path.join(this.schemesDir, '.trash');
+            fs.ensureDirSync(trashDir);
+            const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+            const dest = path.join(trashDir, `${name}-${stamp}`);
+            fs.moveSync(schemePath, dest);
+            console.log(`🗑️ 方案 ${name} 已移入回收站`);
+            const rootDir = path.dirname(this.schemesDir);
+            console.log(`   位置: ${path.relative(rootDir, dest) || dest}`);
+            console.log(`   恢复: 把它移回 scheme/${name}/ 即可`);
+            console.log(`   提示: 池中的核心/模组可能已被清理，恢复后可用 wow scheme pull 补齐`);
+            console.log(`   确认不要了: 删除该目录，或下次用 --purge 直接彻底删除`);
+        }
 
-        console.log(`✅ 方案 ${name} 已删除`);
-
-        // 3. 如果auto_scheme启用，清理pool资源
+        // 2. 如果auto_scheme启用，清理pool资源（回收站里的方案仍被统计引用，
+        //    所以恢复后核心/模组通常还在池里）
         if (this.autoScheme) {
             await this._cleanPool();
         }
@@ -606,6 +626,8 @@ class SchemeManager {
         const schemes = fs.readdirSync(this.schemesDir);
         const result = [];
         for (const name of schemes) {
+            // 公测加固：.trash/ 是删除方案后的回收站，不是方案，不参与枚举
+            if (name.startsWith('.')) continue;
             const schemePath = path.join(this.schemesDir, name);
             if (fs.statSync(schemePath).isDirectory()) {
                 try {

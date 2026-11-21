@@ -685,15 +685,41 @@ schemeCmd
 
 schemeCmd
     .command('delete <name>')
-    .description('删除方案')
-    .action((name) => {
+    .description('删除方案（默认移入回收站 scheme/.trash，可恢复）')
+    .option('-y, --yes', '跳过确认（Web 面板 / 脚本等非交互场景必须显式传）')
+    .option('--purge', '彻底删除，不进回收站（不可恢复）')
+    .action(async (name, options) => {
         const SchemeManager = load('./scheme_manager');
         if (!SchemeManager) return;
         const schemeManager = new SchemeManager();
+
+        // 公测加固：删除是不可逆的高危操作，交互环境必须输入确认；
+        // 非交互环境（Web 面板 spawn 的子进程没有 TTY）必须显式 --yes，
+        // 否则读不到输入会一直挂着——宁可拒绝，也不让它静默吞掉一次删除。
+        if (!options.yes) {
+            if (!process.stdin.isTTY) {
+                console.error('❌ 非交互环境删除方案必须显式加 --yes（Web 面板会自动传）');
+                process.exitCode = 1;
+                return;
+            }
+            const stdin = load('./stdin_session');
+            if (!stdin || !stdin.confirm) {
+                console.error('❌ 无法发起确认，已取消。确需删除请加 --yes');
+                process.exitCode = 1;
+                return;
+            }
+            const ok = await stdin.confirm(`确认删除方案「${name}」？[y/N] `);
+            if (!ok) {
+                console.log('已取消');
+                return;
+            }
+        }
+
         try {
-            schemeManager.delete(name);
+            await schemeManager.delete(name, { purge: Boolean(options.purge) });
         } catch (e) {
             console.error(`❌ 删除失败: ${e.message}`);
+            process.exitCode = 1;
         }
     });
 

@@ -50,7 +50,7 @@ check('scheme --help 列出 pull', () => assert.match(schemeHelp, /pull <name>/)
 check('scheme --help 列出 prune', () => assert.match(schemeHelp, /prune <name>/));
 check('scheme --help 列出 status', () => assert.match(schemeHelp, /status \[name\]/));
 check('scheme --help 仍保留 create/list/switch/delete/info', () => {
-    for (const c of ['create [options] <name>', 'list', 'switch <name>', 'delete <name>', 'info [name]']) {
+    for (const c of ['create [options] <name>', 'list', 'switch <name>', 'delete [options] <name>', 'info [name]']) {
         assert.ok(schemeHelp.includes(c), `缺少 ${c}`);
     }
 });

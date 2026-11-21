@@ -185,7 +185,7 @@ check('详情 URL 对方案名编码（# 不再截断路径）', () => {
 
 check('switch / delete / info 用 args 数组传方案名（含空格不再拆错）', () => {
     assert.ok(/cmd: 'scheme switch', args: \[name\]/.test(schemeHtml));
-    assert.ok(/cmd: 'scheme delete', args: \[name\]/.test(schemeHtml));
+    assert.ok(/cmd: 'scheme delete', args: \[name, '-y'\]/.test(schemeHtml));
     assert.ok(/apiExec\('scheme info', \[name\]\)/.test(schemeHtml));
 });
 
