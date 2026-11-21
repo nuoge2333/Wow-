@@ -85,7 +85,9 @@ echo "检测到系统: $OS, 架构: $ARCH"
 
 # 优先复用系统已安装的 Node.js（如简幻欢 AIO 自带 Node 22），免去下载、加快启动
 USE_SYSTEM_NODE=0
-MIN_NODE_MAJOR=18
+# V3.8.5：升到 20 —— nodemailer 10 要求 Node >= 20，低于 20 的系统 Node
+# 一律不用，回退到内置便携版（20.17.0），避免装完依赖跑起来才炸。
+MIN_NODE_MAJOR=20
 if command -v node >/dev/null 2>&1; then
     SYS_NODE_VER="$(node -v 2>/dev/null | tr -d 'v')"
     SYS_NODE_MAJOR="$(echo "$SYS_NODE_VER" | cut -d. -f1)"

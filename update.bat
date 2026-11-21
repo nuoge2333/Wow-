@@ -5,7 +5,7 @@ setlocal enabledelayedexpansion
 :: 版本解析：优先 releases/latest；若无 Release 则回退 tags API（过滤 backup/ 等非版本标签，取最大 semver），
 :: 直接下载源站 zip，无需私人令牌，也不保留多镜像。
 
-set SCRIPT_DIR=%~dp0
+set "SCRIPT_DIR=%~dp0"
 cd /d "%SCRIPT_DIR%"
 
 set GITEE_REPO=nuoge233/wow
@@ -13,10 +13,26 @@ set GITHUB_REPO=nuoge2333/Wow-
 set TEMP_DIR=%TEMP%\wow_update_%RANDOM%
 set TEMP_ZIP=%TEMP_DIR%\update.zip
 
+:: 覆盖前备份代码（与 update.sh 同一套策略：只备代码，不碰 scheme/ 与配置）
+set BACKUP_ROOT=%SCRIPT_DIR%backup
+set BACKUP_KEEP=3
+
 echo ========================================
 echo   wow~ Updater
 echo ========================================
 echo.
+
+:: ==================== 参数（联网之前处理，断网也能救火）====================
+if /i "%~1"=="--rollback"    goto :act_rollback
+if /i "%~1"=="--list"        goto :act_list
+if /i "%~1"=="--backup-only" goto :act_backup_only
+if /i "%~1"=="-h"            goto :act_help
+if /i "%~1"=="--help"        goto :act_help
+if not "%~1"=="" (
+    echo Unknown option: %~1
+    call :show_usage
+    goto :cleanup
+)
 
 :: Create temp dir
 mkdir "%TEMP_DIR%" 2>nul
@@ -229,6 +245,19 @@ if "%PROJECT_DIR%"=="" (
     goto :cleanup
 )
 
+:: ==================== 覆盖前备份 ====================
+:: 备份放在覆盖之前：备份失败就中止更新，宁可这次不升，
+:: 也不能让用户落到「升完发现坏了、又退不回去」。
+echo Backing up current code...
+call :backup_current "pre-update" ""
+if errorlevel 1 (
+    echo.
+    echo Backup failed ^(disk full or permission denied^). Update aborted, nothing changed.
+    goto :cleanup
+)
+echo   Backed up to: !BK_DEST!
+set "OLD_PKG=!BK_DEST!\core\package.json"
+
 :: Overwrite (skip runtime / user-data dirs)
 :: V3.5.2 起运行目录为根 scheme/（不再是 server/），必须排除以免覆盖用户方案与存档；
 :: update.bat 为正在执行的自更新脚本本体，覆盖会导致运行中的批处理被改写而中断
@@ -244,12 +273,19 @@ for %%i in ("%PROJECT_DIR%*") do (
     )
 )
 
+:: ==================== 依赖变化检测 ====================
+call :check_deps
+
 echo.
 echo ========================================
 echo   Update complete! %LATEST_TAG% (source: %RELEASE_HOST%)
 echo ========================================
 echo.
 echo Run wow.bat to launch wow~
+echo.
+echo If the new version misbehaves, roll back with:
+echo     update.bat --rollback
+echo   Backups live in backup\ (latest %BACKUP_KEEP% kept)
 
 :cleanup
 rmdir /s /q "%TEMP_DIR%" 2>nul
@@ -285,4 +321,287 @@ if not defined ASK_ANS (
 if /i "!ASK_ANS!"=="y" exit /b 0
 if /i "!ASK_ANS!"=="yes" exit /b 0
 if "!ASK_ANS!"=="是" exit /b 0
+exit /b 1
+
+:: ==================== 备份 / 回滚 ====================
+
+:act_help
+call :show_usage
+goto :cleanup
+
+:act_list
+if not exist "%BACKUP_ROOT%" (
+    echo No backups yet. A backup is created automatically before each update.
+    goto :cleanup
+)
+echo Available backups ^(newest first^):
+for /f "delims=" %%d in ('dir /b /ad /o-d "%BACKUP_ROOT%" 2^>nul') do (
+    if exist "%BACKUP_ROOT%\%%d\COMPLETE" (
+        set "BV="
+        set /p BV=<"%BACKUP_ROOT%\%%d\VERSION"
+        echo   %%d  [version !BV!]
+    ) else (
+        echo   %%d  -- incomplete, skipped
+    )
+)
+goto :cleanup
+
+:act_backup_only
+echo Backing up current code...
+call :backup_current "manual" ""
+if errorlevel 1 (
+    echo Backup failed ^(disk full or permission denied^).
+    goto :cleanup
+)
+echo   Backed up to: !BK_DEST!
+echo   Roll back with: update.bat --rollback "!BK_DEST!"
+goto :cleanup
+
+:act_rollback
+set "RB_TARGET=%~2"
+call :get_version
+set "CUR_VER=!VER!"
+if defined RB_TARGET goto :rb_have_target
+
+:: 自动选目标：最新的「完整且版本与当前不同」的备份。
+:: 跳过同版本，避免踩到回滚前自动生成的快照，连按两次原地打转。
+for /f "delims=" %%d in ('dir /b /ad /o-d "%BACKUP_ROOT%" 2^>nul') do (
+    if not defined RB_TARGET if exist "%BACKUP_ROOT%\%%d\COMPLETE" (
+        set "BV="
+        set /p BV=<"%BACKUP_ROOT%\%%d\VERSION"
+        if /i not "!BV!"=="!CUR_VER!" set "RB_TARGET=%BACKUP_ROOT%\%%d"
+    )
+)
+:: 只有同版本备份时，退回最新一个完整备份
+if not defined RB_TARGET (
+    for /f "delims=" %%d in ('dir /b /ad /o-d "%BACKUP_ROOT%" 2^>nul') do (
+        if not defined RB_TARGET if exist "%BACKUP_ROOT%\%%d\COMPLETE" set "RB_TARGET=%BACKUP_ROOT%\%%d"
+    )
+)
+
+:rb_have_target
+if not defined RB_TARGET (
+    echo No backup available to roll back to.
+    echo Backups are created automatically before each update, in: %BACKUP_ROOT%
+    goto :cleanup
+)
+if not exist "%RB_TARGET%\COMPLETE" (
+    echo Backup is incomplete ^(was it interrupted?^): %RB_TARGET%
+    echo Try: update.bat --list
+    goto :cleanup
+)
+if not exist "%RB_TARGET%\core\src\cli.js" (
+    echo Backup is incomplete ^(missing core\src\cli.js^): %RB_TARGET%
+    goto :cleanup
+)
+
+echo ========================================
+echo   wow~ Rollback
+echo ========================================
+echo.
+echo Backup:  %RB_TARGET%
+set "BV="
+set /p BV=<"%RB_TARGET%\VERSION"
+echo Version: !BV!
+echo Current: !CUR_VER!
+if /i "!BV!"=="!CUR_VER!" (
+    echo.
+    echo WARNING: backup has the same version as current; files are restored but version stays.
+)
+echo.
+
+:: 回滚前也留一份当前版本；把回滚目标作为受保护目录传下去
+call :backup_current "pre-rollback" "%RB_TARGET%"
+if errorlevel 1 (
+    echo WARNING: failed to back up current code ^(disk full?^), continuing.
+) else (
+    echo Current code backed up to: !BK_DEST!
+)
+echo.
+echo Restoring code ^(scheme\, node_modules and core\wow.yaml are left untouched^)...
+call :restore_from "%RB_TARGET%"
+if errorlevel 1 (
+    echo.
+    echo Some files failed to copy. The install may be in a mixed state.
+    echo Retry, or copy manually from: %RB_TARGET%
+    goto :cleanup
+)
+call :get_version
+echo.
+echo ========================================
+echo   Rolled back to !VER!
+echo ========================================
+echo.
+echo Run wow.bat to launch wow~
+goto :cleanup
+
+:: ==================== 子过程 ====================
+
+:show_usage
+echo.
+echo Usage: update.bat [option]
+echo.
+echo   (no option)        Check for updates and install ^(backs up code first^)
+echo   --rollback         Roll back to the most recent different-version backup
+echo   --rollback ^<dir^>  Roll back to a specific backup directory
+echo   --list             List available backups
+echo   --backup-only      Back up current code only ^(no network^)
+echo   -h, --help         Show this help
+echo.
+echo Backups live in: %BACKUP_ROOT%  ^(latest %BACKUP_KEEP% kept^)
+echo Backups never include scheme\, node_modules or core\wow.yaml.
+exit /b 0
+
+:get_version
+set "VER=unknown"
+set "TMPVER="
+if not exist "%SCRIPT_DIR%core\package.json" exit /b 0
+for /f "usebackq tokens=2 delims=:" %%v in (`findstr /r /c:"\"version\"" "%SCRIPT_DIR%core\package.json"`) do (
+    set "RAW=%%v"
+    set "RAW=!RAW: =!"
+    set "RAW=!RAW:,=!"
+    set "RAW=!RAW:"=!"
+    if not defined TMPVER set "TMPVER=!RAW!"
+)
+if defined TMPVER set "VER=!TMPVER!"
+exit /b 0
+
+:backup_current
+set "BK_LABEL=%~1"
+set "BK_PROTECT=%~2"
+set "BK_DEST="
+call :get_version
+set "BK_STAMP="
+for /f "usebackq delims=" %%t in (`powershell -NoProfile -Command "Get-Date -Format 'yyyyMMdd-HHmmss'"`) do set "BK_STAMP=%%t"
+if not defined BK_STAMP set "BK_STAMP=manual-%RANDOM%%RANDOM%"
+set "BK_TMP=%BACKUP_ROOT%\.tmp-!BK_STAMP!"
+set "BK_FINAL=%BACKUP_ROOT%\!BK_STAMP!-!VER!-!BK_LABEL!"
+if not exist "%BACKUP_ROOT%" mkdir "%BACKUP_ROOT%" 2>nul
+:: 清掉上次被打断留下的半成品
+for /d %%t in ("%BACKUP_ROOT%\.tmp-*") do rd /s /q "%%t" 2>nul
+mkdir "%BK_TMP%" 2>nul
+for %%i in (core\src core\scripts core\data core\package.json web themes docs wow.bat wow.sh README.MD LICENSE) do (
+    if exist "%SCRIPT_DIR%%%i\" (
+        xcopy /E /I /Y /Q "%SCRIPT_DIR%%%i" "%BK_TMP%\%%i\" >nul 2>&1
+    ) else if exist "%SCRIPT_DIR%%%i" (
+        for %%p in ("%%i") do if not exist "%BK_TMP%\%%~pi" mkdir "%BK_TMP%\%%~pi" 2>nul
+        copy /Y "%SCRIPT_DIR%%%i" "%BK_TMP%\%%i" >nul 2>&1
+    )
+)
+if not exist "%BK_TMP%\core\src\cli.js" (
+    rd /s /q "%BK_TMP%" 2>nul
+    exit /b 1
+)
+> "%BK_TMP%\VERSION" echo !VER!
+> "%BK_TMP%\COMPLETE" echo ok
+move "%BK_TMP%" "%BK_FINAL%" >nul 2>&1
+if errorlevel 1 (
+    rd /s /q "%BK_TMP%" 2>nul
+    exit /b 1
+)
+set "BK_DEST=!BK_FINAL!"
+call :prune_backups "%BK_PROTECT%"
+exit /b 0
+
+:prune_backups
+set "PR_PROTECT=%~1"
+set /a PR_N=0
+for /f "delims=" %%d in ('dir /b /ad /o-d "%BACKUP_ROOT%" 2^>nul') do (
+    if exist "%BACKUP_ROOT%\%%d\COMPLETE" (
+        if /i not "%BACKUP_ROOT%\%%d"=="!PR_PROTECT!" (
+            set /a PR_N+=1
+            if !PR_N! GTR !BACKUP_KEEP! rd /s /q "%BACKUP_ROOT%\%%d" 2>nul
+        )
+    )
+)
+exit /b 0
+
+:restore_from
+set "RS_SRC=%~1"
+set "RS_FAIL=0"
+for %%i in (core\src core\scripts core\data core\package.json web themes docs wow.bat wow.sh README.MD LICENSE) do (
+    if exist "%RS_SRC%\%%i\" (
+        xcopy /E /I /Y /Q "%RS_SRC%\%%i" "%SCRIPT_DIR%%%i\" >nul 2>&1
+        if errorlevel 1 set "RS_FAIL=1"
+    ) else if exist "%RS_SRC%\%%i" (
+        copy /Y "%RS_SRC%\%%i" "%SCRIPT_DIR%%%i" >nul 2>&1
+        if errorlevel 1 set "RS_FAIL=1"
+    )
+)
+exit /b !RS_FAIL!
+
+:: ==================== 依赖 ====================
+
+:check_deps
+call :deps_hash "%SCRIPT_DIR%core\package.json"
+set "NEW_HASH=!DEP_HASH!"
+call :deps_hash "%OLD_PKG%"
+set "OLD_HASH=!DEP_HASH!"
+if not defined NEW_HASH goto :deps_done
+if not defined OLD_HASH goto :deps_changed
+if /i "!NEW_HASH!"=="!OLD_HASH!" goto :deps_done
+
+:deps_changed
+echo.
+echo WARNING: dependencies in core\package.json changed in this update.
+echo The old node_modules is not replaced; startup may fail with Cannot find module.
+call :ask_continue "  Install dependencies now?" y
+if errorlevel 1 (
+    echo   Skipped. Run: cd core ^&^& npm install
+    goto :deps_done
+)
+call :install_deps_update
+if errorlevel 1 (
+    echo   Dependency install failed. Run: cd core ^&^& npm install
+) else (
+    echo   Dependencies installed.
+)
+
+:deps_done
+if defined NEW_HASH (
+    > "%SCRIPT_DIR%core\.deps-hash" echo !NEW_HASH!
+)
+exit /b 0
+
+:deps_hash
+set "DEP_HASH="
+if not exist "%~1" exit /b 0
+if not exist "%SCRIPT_DIR%core\scripts\deps-hash.ps1" exit /b 0
+for /f "usebackq delims=" %%h in (`powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%core\scripts\deps-hash.ps1" "%~1"`) do set "DEP_HASH=%%h"
+exit /b 0
+
+:install_deps_update
+set "INSTALL_OK="
+if exist "%SCRIPT_DIR%core\node_modules" rmdir /s /q "%SCRIPT_DIR%core\node_modules" 2>nul
+pushd "%SCRIPT_DIR%core"
+for %%r in (
+    "https://registry.npmmirror.com"
+    "https://mirrors.cloud.tencent.com/npm/"
+    "https://mirrors.tuna.tsinghua.edu.cn/npm/"
+    "https://registry.npmjs.org"
+) do (
+    if not defined INSTALL_OK (
+        echo   Trying registry: %%~r
+        call :run_npm_install_update "%%~r"
+        if not errorlevel 1 set "INSTALL_OK=1"
+    )
+)
+popd
+if defined INSTALL_OK exit /b 0
+if exist "%SCRIPT_DIR%core\node_modules" rmdir /s /q "%SCRIPT_DIR%core\node_modules" 2>nul
+exit /b 1
+
+:run_npm_install_update
+set "REG=%~1"
+where npm >nul 2>&1
+if not errorlevel 1 (
+    call npm install --no-audit --no-fund --registry "%REG%"
+    exit /b !errorlevel!
+)
+for /d %%a in ("%SCRIPT_DIR%core\node\win\*") do (
+    if exist "%%a\node.exe" if exist "%%a\extracted\node_modules\npm\bin\npm-cli.js" (
+        call "%%a\node.exe" "%%a\extracted\node_modules\npm\bin\npm-cli.js" install --no-audit --no-fund --registry "%REG%"
+        exit /b !errorlevel!
+    )
+)
 exit /b 1

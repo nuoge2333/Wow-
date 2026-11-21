@@ -131,7 +131,7 @@ if (!hasPython || !isLinux) {
 } else {
     const r = spawnSync('python3', [pyScript], {
         encoding: 'utf8',
-        timeout: 120000,
+        timeout: 180000,
         killSignal: 'SIGKILL',
         cwd: coreDir,
         env: Object.assign({}, process.env, { WOW_STDIN_ASSERT: '1' })

@@ -2,7 +2,8 @@
 # Node.js 依赖
 # ====================
 node_modules/
-package-lock.json
+# V3.8.5：package-lock.json 已纳入版本库——用户手里的依赖版本应当可复现，
+# 而不是由「他第一次安装那天」决定。更新依赖后请一并提交锁文件。
 
 # ====================
 # 运行时自动生成（体积大）
@@ -64,6 +65,12 @@ desktop.ini
 # V3.7.4：TUI.md 内容已并入 docs/COMMANDS.md（第十一节 M/L 模式），
 # 独立副本仅留作本地参考，不进入 git tag 源码归档（发行包）。
 .docs-legacy/
+
+# V3.8.5：update.sh / update.bat 每次覆盖前的代码备份（本机运行时状态，不进版本库）
+backup/
+
+# V3.8.5：wow.bat 记录的依赖指纹（package.json 变了就重装 node_modules）
+core/.deps-hash
 
 # 发版时本地打的源码附件包 / 校验清单只作为 Release 产物，不入库。
 SHA256SUMS
