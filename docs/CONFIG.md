@@ -417,7 +417,7 @@ extensions:
 |------|------|--------|------|
 | `dir` | string | `jre` | JRE 存储路径（位于 core/ 内） |
 | `auto_download` | boolean | `true` | 是否按需自动下载 JRE |
-| `mirror` | string | `https://mirrors.tuna.tsinghua.edu.cn/Adoptium` | JRE 国内镜像源（清华 TUNA，与官方产物同源）。**仅 macOS 下载时优先使用**，失败自动回退 Adoptium 官方；置空则跳过镜像直连官方（V3.5.12 新增） |
+| `mirror` | string | `null`（内置 TUNA+USTC） | JRE 国内镜像源，多个用逗号分隔按序轮询。默认依次尝试**清华 TUNA → 中科大 USTC**（均与官方 Temurin 产物同源），全部失败回退 Adoptium 官方；置空则跳过镜像直连官方。**Windows / Linux / macOS 三平台统一国内优先**（V3.8.5 起，此前仅 macOS） |
 | `version` | string | `null` | 锁定 Temurin 完整版本号（如 `17.0.12+7`）；`null` 自动取该特征版本的最新 GA |
 
 #### Java 版本选择逻辑（V3.5.7）
@@ -429,7 +429,7 @@ extensions:
    按 `Minecraft 版本 → 所需 Java 版本` 精确匹配
 3. **内置 JRE** — `core/jre/<特征版本>/bin/java`
 4. **自动下载** — 以上都没有时，从 Eclipse Temurin 下载对应版本
-   （macOS 优先走 `jre.mirror` 国内镜像，失败自动回退官方源，V3.5.12 起）
+   （三平台统一国内镜像优先多源轮询：清华 TUNA → 中科大 USTC → 官方源，V3.8.5 起）
 
 **Minecraft 版本与 Java 要求的对应关系：**
 
@@ -564,7 +564,8 @@ pool:
 jre:
   dir: jre
   auto_download: true
-  mirror: https://mirrors.tuna.tsinghua.edu.cn/Adoptium   # 置空则跳过镜像直连官方
+  # 留空走内置镜像列表（清华TUNA → 中科大USTC）；也可自定义，多个逗号分隔；置空字符串 = 直连官方
+  # mirror: https://mirrors.tuna.tsinghua.edu.cn/Adoptium
 ```
 
 ---

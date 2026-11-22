@@ -100,7 +100,10 @@ check('config 在无 wow.yaml 时可加载并生成默认配置', () => {
     const yaml = require('js-yaml');
     const config = require('../src/config');
     const defaults = config.DEFAULT_CONFIG;
-    assert.ok(defaults.jre && defaults.jre.mirror, '默认配置应含 jre.mirror');
+    // V3.8.5：jre.mirror 默认改为 null（走内置 TUNA+USTC 多源列表），
+    // 仍保留该键以便用户覆盖；断言「键存在」而非「有默认值」
+    assert.ok(defaults.jre && Object.prototype.hasOwnProperty.call(defaults.jre, 'mirror'),
+        '默认配置应含 jre.mirror 键（值 null 表示走内置多源）');
     assert.ok(!Object.prototype.hasOwnProperty.call(defaults.server, 'scheme'),
         '默认配置不应预设 server.scheme（否则新目录会指向不存在的方案）');
     // 写入默认配置再读回，模拟「首次运行自动生成」

@@ -315,7 +315,7 @@ const SCHEMA = [
     },
     {
         key: 'jre.mirror', type: 'string', group: 'Java 运行时', label: 'JRE 镜像',
-        desc: '默认清华 TUNA 的 Adoptium 镜像；不可达时会自动回退官方源。', advanced: true
+        desc: '国内镜像地址，多个用逗号分隔按序轮询；默认清华TUNA+中科大USTC，全部失败自动回退官方源；置空则直连官方。', advanced: true
     }
 ];
 

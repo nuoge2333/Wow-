@@ -149,10 +149,12 @@ const DEFAULT_CONFIG = {
     jre: {
         dir: 'jre',
         auto_download: true,
-        // V3.5.12：JRE 国内镜像源（清华 TUNA Adoptium 镜像，静态文件与官方同源）。
-        // macOS 下载 JRE 时优先使用；不可达自动回退 Adoptium 官方 API。
-        // 置空则跳过镜像直连官方。
-        mirror: 'https://mirrors.tuna.tsinghua.edu.cn/Adoptium'
+        // V3.8.5：JRE 国内镜像列表默认内置（清华TUNA → 中科大USTC，多源轮询，
+        // 三平台统一国内优先，全部失败回退官方）。此键留 null = 走内置列表；
+        // 也可自定义镜像根地址（多个逗号分隔，按 TUNA 的 Adoptium 目录布局解析）；
+        // 置空字符串 = 跳过镜像直连官方。
+        // 存量 wow.yaml 里旧默认写入的 TUNA 单值会被识别为「未自定义」。
+        mirror: null
     },
     auto_scheme: true,
     // 联机 / 内网穿透（陶瓦 Terracotta）配置 V3.3.0

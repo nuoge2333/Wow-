@@ -16,7 +16,7 @@ const { logger } = require('./log');
 
 // JRE 下载源配置
 const JRE_SOURCES = {
-    // 使用 Eclipse Temurin (Adoptium) 作为默认源
+    // 官方源：Eclipse Temurin (Adoptium) API
     temurin: {
         // V3.5.7 修正：baseUrl 末尾不能带 /version。
         // 拼出的路径段本身已区分 latest/{feature} 与 version/{full}，
@@ -32,32 +32,26 @@ const JRE_SOURCES = {
             arm64: 'aarch64'
         }
     },
-    // 备用源：微软 OpenJDK
-    microsoft: {
-        baseUrl: 'https://aka.ms/download-jdk',
-        platformMap: {
-            windows: 'windows',
-            linux: 'linux',
-            macos: 'macos'
-        }
-    },
-    // 国内镜像源：清华大学 TUNA Adoptium 镜像（V3.5.12）
-    // 官方 api.adoptium.net 会 307 跳 GitHub Release 对象存储，国内下载慢且常中断；
-    // TUNA 直接镜像静态文件，与官方产物同源（Eclipse Temurin）。
-    // 布局：/Adoptium/{feature}/jdk/{arch}/{os}/OpenJDK{feature}U-jdk_{arch}_{os}_hotspot_{ver}.tar.gz
-    // 注意：静态镜像没有「latest」API，需拉目录列表自行取最高版本。
-    tuna: {
-        baseUrl: 'https://mirrors.tuna.tsinghua.edu.cn/Adoptium',
-        platformMap: {
-            windows: 'windows',
-            linux: 'linux',
-            macos: 'mac'
+    // V3.8.5：国内镜像列表（按优先级轮询，Windows / Linux / macOS 三平台统一）。
+    // 官方 api.adoptium.net 会 307 跳 GitHub Release 对象存储，国内下载慢且常中断，
+    // 故默认国内镜像优先、多源轮询，全部失败才回退官方 API。
+    //   1. 清华 TUNA —— Adoptium 目录布局：
+    //      /Adoptium/{feature}/jdk/{arch}/{os}/OpenJDK{feature}U-jdk_{arch}_{os}_hotspot_{ver}.{zip|tar.gz}
+    //      （Windows 为 .zip，Linux/macOS 为 .tar.gz）
+    //   2. 中科大 USTC —— GitHub Releases 布局：
+    //      /adoptium/releases/temurin{feature}-binaries/LatestRelease/OpenJDK{feature}U-jdk_{arch}_{os}_hotspot_{ver}.{zip|tar.gz}
+    // 两个镜像与官方同源（Eclipse Temurin GA 产物），各自同步节奏可能互有先后，
+    // 解析失败（网络不通/目录缺失/无匹配文件）的镜像直接跳过，不阻塞后续源。
+    mirrors: [
+        {
+            name: 'tuna', label: '国内镜像(清华TUNA)', layout: 'adoptium-dir',
+            baseUrl: 'https://mirrors.tuna.tsinghua.edu.cn/Adoptium'
         },
-        archMap: {
-            x64: 'x64',
-            arm64: 'aarch64'
+        {
+            name: 'ustc', label: '国内镜像(中科大USTC)', layout: 'ustc-releases',
+            baseUrl: 'https://mirrors.ustc.edu.cn/adoptium/releases'
         }
-    }
+    ]
 };
 
 // V3.5.12：Temurin 静态文件版本号 → 可比较的键。
@@ -159,31 +153,33 @@ class JreManager {
     }
 
     /**
-     * V3.5.12：解析清华 TUNA 国内镜像上指定特征版本的最新文件直链。
-     * TUNA 为静态目录，无 latest API——拉目录列表，按文件名中的版本号取最高。
-     * 失败（网络不通 / 目录不存在 / 无匹配文件）一律返回 null，由调用方回退官方源。
+     * V3.5.12 起（V3.8.5 泛化）：解析 Adoptium 目录布局镜像上指定特征版本的最新文件直链。
+     * 镜像为静态目录，无 latest API——拉目录列表，按文件名中的版本号取最高。
+     * Windows 平台匹配 .zip，Linux/macOS 匹配 .tar.gz（官方产物命名如此）。
+     * 失败（网络不通 / 目录不存在 / 无匹配文件）一律返回 null，由调用方跳过该镜像。
      *
+     * @param {string} base 镜像根（如 https://mirrors.tuna.tsinghua.edu.cn/Adoptium）
      * @param {string} feature 特征版本（8/11/17/21）
-     * @param {string} osName TUNA 平台名（windows/linux/mac）
-     * @param {string} archName TUNA 架构名（x64/aarch64）
+     * @param {string} osName 平台名（windows/linux/mac）
+     * @param {string} archName 架构名（x64/aarch64）
      * @returns {Promise<string|null>} 直链或 null
      */
-    async _resolveTunaLatestUrl(feature, osName, archName) {
-        // 镜像地址可经 jre.mirror 配置覆盖；置空 = 跳过镜像直连官方
-        const configured = this.config.getConfig('jre.mirror', JRE_SOURCES.tuna.baseUrl);
-        const base = String(configured || '').trim().replace(/\/+$/, '');
-        if (!base) return null;
-        const dir = `${base}/${feature}/jdk/${archName}/${osName}/`;
+    async _resolveAdoptiumDirUrl(base, feature, osName, archName) {
+        const root = String(base || '').trim().replace(/\/+$/, '');
+        if (!root) return null;
+        const dir = `${root}/${feature}/jdk/${archName}/${osName}/`;
+        const ext = osName === 'windows' ? 'zip' : 'tar\\.gz';
         try {
             const resp = await axios.get(dir, {
                 timeout: 15000,
-                headers: { 'User-Agent': 'wow-server-panel/3.5.12 (+https://gitee.com/nuoge233/wow)' }
+                headers: { 'User-Agent': 'wow-server-panel/3.8.5 (+https://gitee.com/nuoge233/wow)' }
             });
             const html = String(resp.data || '');
-            // 文件名：OpenJDK21U-jdk_x64_mac_hotspot_21.0.12.1_1.tar.gz
-            //       OpenJDK8U-jdk_x64_mac_hotspot_8u504b01.tar.gz（JDK 8 专用格式）
+            // 文件名：OpenJDK21U-jdk_x64_windows_hotspot_21.0.12.1_9.zip（Windows）
+            //       OpenJDK21U-jdk_x64_linux_hotspot_21.0.12.1_9.tar.gz
+            //       OpenJDK8U-jdk_x64_linux_hotspot_8u504b01.tar.gz（JDK 8 专用格式）
             const re = new RegExp(
-                `OpenJDK${feature}U-jdk_${archName}_${osName}_hotspot_([0-9a-zA-Z._]+)\\.tar\\.gz`, 'g'
+                `OpenJDK${feature}U-jdk_${archName}_${osName}_hotspot_([0-9a-zA-Z._]+)\\.${ext}`, 'g'
             );
             let m;
             let bestFile = null;
@@ -202,12 +198,94 @@ class JreManager {
     }
 
     /**
-     * V3.5.12：按优先级返回 JRE 下载候选链。
-     * macOS 优先国内镜像（TUNA），失败回退 Adoptium 官方 API；
-     * Windows / Linux 维持官方源不变（用户未要求改动，保持行为稳定）。
-     * 用户锁定完整版本（jre.version）时跳过镜像——精确版本由官方 API 解析。
+     * V3.8.5：解析中科大 USTC 镜像 LatestRelease 目录的最新 JDK 直链。
+     * 布局：/adoptium/releases/temurin{feature}-binaries/LatestRelease/，
+     * 目录本身就是官方最新 GA 的全套产物，匹配到 jdk 文件即用。
      *
-     * @returns {Promise<Array<{url:string, from:string}>>}
+     * @param {string} base 镜像 releases 根（…/adoptium/releases）
+     * @param {string} feature 特征版本（8/11/17/21）
+     * @param {string} osName 平台名（windows/linux/mac）
+     * @param {string} archName 架构名（x64/aarch64）
+     * @returns {Promise<string|null>} 直链或 null
+     */
+    async _resolveUstcLatestUrl(base, feature, osName, archName) {
+        const root = String(base || '').trim().replace(/\/+$/, '');
+        if (!root) return null;
+        const dir = `${root}/temurin${feature}-binaries/LatestRelease/`;
+        const ext = osName === 'windows' ? 'zip' : 'tar\\.gz';
+        try {
+            const resp = await axios.get(dir, {
+                timeout: 15000,
+                headers: { 'User-Agent': 'wow-server-panel/3.8.5 (+https://gitee.com/nuoge233/wow)' }
+            });
+            const html = String(resp.data || '');
+            const re = new RegExp(
+                `OpenJDK${feature}U-jdk_${archName}_${osName}_hotspot_([0-9a-zA-Z._]+)\\.${ext}`, 'g'
+            );
+            const m = re.exec(html);
+            return m ? `${dir}${m[0]}` : null;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    /**
+     * V3.8.5：国内镜像候选解析（Windows / Linux / macOS 三平台统一，按序轮询）。
+     * 内置默认 TUNA → USTC；jre.mirror 配置可覆盖：
+     *   - 单值或逗号/分号分隔多个 → 按序轮询（布局按 TUNA 的 Adoptium 目录格式处理）
+     *   - 显式置空 ''            → 跳过镜像，直连官方源
+     * 解析失败的镜像直接跳过不阻塞，返回的候选均带 from/label 供下载日志展示。
+     *
+     * @returns {Promise<Array<{url:string, from:string, label:string}>>}
+     */
+    async _resolveMirrorCandidates(feature, os, arch) {
+        const osNameMap = { windows: 'windows', linux: 'linux', macos: 'mac' };
+        const archNameMap = { x64: 'x64', arm64: 'aarch64' };
+        const osName = osNameMap[os] || 'linux';
+        const archName = archNameMap[arch] || 'x64';
+
+        const raw = this.config.getConfig('jre.mirror', null);
+        let mirrors = JRE_SOURCES.mirrors;
+        if (raw === '') return []; // 显式置空 = 跳过镜像直连官方
+        const custom = String(raw || '').trim();
+        if (custom) {
+            const customList = custom.split(/[,;\s]+/).filter(Boolean);
+            // 存量兼容：旧版默认配置把 TUNA 地址写进了 wow.yaml，
+            // 值恰好等于内置镜像地址时视为「未自定义」，照常走内置多源列表
+            const builtinUrls = JRE_SOURCES.mirrors.map(m => m.baseUrl);
+            const isBuiltinOnly = customList.length > 0 &&
+                customList.every(u => builtinUrls.includes(u));
+            if (!isBuiltinOnly) {
+                mirrors = customList.map((base, i) => ({
+                    name: `custom${i + 1}`, label: `自定义镜像(${base})`,
+                    layout: 'adoptium-dir', baseUrl: base
+                }));
+            }
+        }
+
+        const out = [];
+        for (const m of mirrors) {
+            let url = null;
+            if (m.layout === 'ustc-releases') {
+                url = await this._resolveUstcLatestUrl(m.baseUrl, feature, osName, archName);
+            } else {
+                url = await this._resolveAdoptiumDirUrl(m.baseUrl, feature, osName, archName);
+            }
+            if (url) out.push({ url, from: m.name, label: m.label });
+            else logger.warn(`JRE 镜像解析失败，跳过: ${m.label || m.baseUrl}`);
+        }
+        return out;
+    }
+
+    /**
+     * V3.8.5：按优先级返回 JRE 下载候选链（三平台统一）。
+     * Windows / Linux / macOS 一律国内镜像优先、多源轮询（TUNA → USTC → Adoptium 官方）；
+     * 此前仅 macOS 走国内镜像、Windows/Linux 直连官方（307 跳 GitHub 对象存储，
+     * 国内下载慢且常中断），现统一为国内优先。
+     * 用户锁定完整版本（jre.version）时跳过镜像——国内镜像目录无「精确版本」语义
+     * （只有 latest 列表），精确版本由官方 API 的 /version/{full} 路径解析。
+     *
+     * @returns {Promise<Array<{url:string, from:string, label:string}>>}
      */
     async _getDownloadUrls(version, os, arch) {
         const official = this._getDownloadUrl(version, os, arch);
@@ -216,15 +294,12 @@ class JreManager {
 
         const userPinned = this.config.getConfig('jre.version', null);
         const feature = this._getFeatureVersion(version);
-        if (os === 'macos' && !userPinned && feature) {
-            const tunaUrl = await this._resolveTunaLatestUrl(
-                feature,
-                JRE_SOURCES.tuna.platformMap[os],
-                JRE_SOURCES.tuna.archMap[arch] || 'x64'
-            );
-            if (tunaUrl) candidates.push({ url: tunaUrl, from: 'tuna' });
+        if (!userPinned && feature) {
+            for (const cand of await this._resolveMirrorCandidates(feature, os, arch)) {
+                candidates.push(cand);
+            }
         }
-        candidates.push({ url: official, from: 'temurin' });
+        candidates.push({ url: official, from: 'temurin', label: '官方源(Adoptium)' });
         return candidates;
     }
 
@@ -273,7 +348,7 @@ class JreManager {
         // 下载
         console.log(`正在下载 JRE ${version} (${this.os}-${this.arch})...`);
         logger.impt(`下载 JRE: ${version} (${this.os}-${this.arch})`);
-        // V3.5.12：国内镜像优先的候选链（macOS：清华TUNA → Adoptium 官方）
+        // V3.8.5：国内镜像优先的多源候选链（三平台：TUNA → USTC → Adoptium 官方）
         const candidates = await this._getDownloadUrls(featureVersion, this.os, this.arch);
         if (!candidates.length) {
             throw new Error(`无法获取 JRE ${version} 的下载链接`);
@@ -286,7 +361,7 @@ class JreManager {
         let archivePath = null;
         const failures = [];
         for (const cand of candidates) {
-            const label = cand.from === 'tuna' ? '国内镜像(清华TUNA)' : '官方源(Adoptium)';
+            const label = cand.label || `下载源(${cand.from})`;
             try {
                 console.log(`  尝试${label}: ${cand.url}`);
                 archivePath = await this._downloadFile(cand.url, tempDir, `jre-${featureVersion}`);
