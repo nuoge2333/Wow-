@@ -292,7 +292,7 @@ serverCmd
 const installCmd = program
     .command('install [target] [version]')
     .description('下载资源到公共池（核心 / 模组 / 插件），不创建方案')
-    .option('-b, --build <id>', '核心构建标识（Mohist 为 git sha；留空自动选择最新）')
+    .option('-b, --build <id>', '核心构建标识（Mohist 为数字构建号；留空自动选择最新）')
     .option('-o, --output <path>', '输出路径（仅 URL 下载时有效）')
     .action(async (target, version, options) => {
         const PoolInstaller = load('./pool_installer');
@@ -343,7 +343,7 @@ const installCmd = program
 installCmd
     .command('core <type> <version>')
     .description('下载服务端核心到 pool/cores/<type>/<version>/')
-    .option('-b, --build <id>', '构建标识（Mohist 为 git sha；留空自动选择最新）')
+    .option('-b, --build <id>', '构建标识（Mohist 为数字构建号；留空自动选择最新）')
     .action(async (type, version, options) => {
         const PoolInstaller = load('./pool_installer');
         if (!PoolInstaller) return;
@@ -618,7 +618,7 @@ schemeCmd
     .description('创建新方案')
     .option('-v, --version <version>', 'Minecraft 版本 (默认: 1.20.1)')
     .option('-t, --type <type>', '核心类型 (vanilla/forge/fabric/neoforge/quilt/mohist/catserver/paper)，模组加载器随类型自动确定，不再单独询问')
-    .option('-b, --build <id>', '构建标识（Mohist 为 git sha；留空自动选择最新）')
+    .option('-b, --build <id>', '构建标识（Mohist 为数字构建号；留空自动选择最新）')
     .action(async (name, options) => {
         const SchemeManager = load('./scheme_manager');
         if (!SchemeManager) return;

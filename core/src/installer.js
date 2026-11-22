@@ -115,33 +115,42 @@ const SERVER_SOURCES = {
         suggestion: '推荐改用 Paper（完全兼容 Bukkit 插件）：wow install paper <版本>'
     },
     // 中文社区核心（Mohist / 墨端）
-    // 旧下载站 dl.mohistmc.cn:41211 已于 2025 年停用（域名无 DNS 解析），
-    // 官方现统一走 mohistmc.com 的 v2 API。构建标识由「数字构建号」改为「git sha」，
-    // 因此不再硬编码构建号，下载时通过 API 解析最新构建。
+    // 下载源变迁史：
+    //   1) dl.mohistmc.cn:41211 —— 2025 年停用（域名无 DNS 解析）
+    //   2) mohistmc.com/api/v2 —— 2026-11 起返回 410 Gone（API 已整体移除）
+    //   3) api.mohistmc.com  —— 现行官方 API（文档 https://api.mohistmc.com/docs-ui）
+    // 现行 API 构建标识为「数字构建号」（非 v2 时代的 git sha），
+    // 未显式指定 -b 时通过 /builds/latest 解析；响应还带 file_sha256 可供校验。
     mohist: {
         type: 'mohist', kind: 'direct',
-        apiBase: 'https://mohistmc.com/api/v2',
-        // 解析某 MC 版本的最新可用构建，返回 { id, urls:[官方源, github源] }
+        apiBase: 'https://api.mohistmc.com',
+        // 解析某 MC 版本的最新可用构建，返回 { id, sha256, urls:[API源, latest源, CDN直链] }
         resolveBuild: async (version) => {
-            const base = 'https://mohistmc.com/api/v2';
+            const base = 'https://api.mohistmc.com';
             const { data } = await axios.get(
-                `${base}/projects/mohist/${version}/builds/latest`,
+                `${base}/project/mohist/${version}/builds/latest`,
                 { timeout: 30000, headers: { 'User-Agent': 'wow-mc-manager' } }
             );
-            if (data && data.build && data.build.id) {
-                const id = data.build.id;
-                const urls = [];
-                if (data.build.url) urls.push(data.build.url);
-                if (data.build.originUrl) urls.push(data.build.originUrl);
-                urls.push(`${base}/projects/mohist/${version}/builds/${id}/download`);
-                return { id, urls: [...new Set(urls)] };
+            if (data && data.id != null) {
+                const id = data.id;
+                const urls = [
+                    `${base}/project/mohist/${version}/builds/${id}/download`,
+                    `${base}/project/mohist/${version}/builds/latest/download`
+                ];
+                if (data.commit && data.commit.hash) {
+                    // 官方 CDN 直链（API 端点 302 的落点），作第三备用源
+                    const sha8 = String(data.commit.hash).slice(0, 8);
+                    urls.push(`https://mohistmc.com/builds-raw/builds/mohist/${version}/${id}/mohist-${version}-${sha8}-server.jar`);
+                }
+                return { id, sha256: data.file_sha256, urls: [...new Set(urls)] };
             }
             throw new Error('无法从 Mohist API 解析最新构建');
         },
-        url: (version, buildId) => `https://mohistmc.com/api/v2/projects/mohist/${version}/builds/${buildId}/download`,
+        url: (version, buildId) => `https://api.mohistmc.com/project/mohist/${version}/builds/${buildId}/download`,
         fileName: (version, buildId) => `mohist-${version}-${buildId}.jar`,
         needsBuild: false,
-        supportedVersions: ['1.12.2', '1.16.5', '1.18.2', '1.19.2', '1.19.4', '1.20.1', '1.20.2']
+        // 与官方 /project/mohist/versions 保持一致（动态查询失败时回落此列表）
+        supportedVersions: ['1.7.10', '1.12.2', '1.16.5', '1.18.2', '1.19.2', '1.19.4', '1.20.1', '1.20.2', '1.21.1', '1.21.4']
     },
     catserver: {
         type: 'catserver', kind: 'direct',
@@ -198,7 +207,7 @@ class Installer {
             return this._getPurpurVersions();
         }
         if (type === 'mohist') {
-            return source.supportedVersions || [];
+            return this._getMohistVersions();
         }
         if (type === 'catserver') {
             return Object.keys(SERVER_SOURCES.catserver.url({}));
@@ -210,6 +219,26 @@ class Installer {
 
         // 其他类型返回预定义列表或空
         return ['1.12.2', '1.16.5', '1.18.2', '1.19.2', '1.20.1', '1.20.4', '1.21'];
+    }
+
+    /**
+     * Mohist 版本列表：动态查官方 API（/project/mohist/versions），
+     * 网络/接口异常时回落硬编码列表，保证离线也有可用版本可选。
+     */
+    async _getMohistVersions() {
+        try {
+            const { data } = await axios.get(
+                'https://api.mohistmc.com/project/mohist/versions',
+                { timeout: 15000, headers: { 'User-Agent': 'wow-mc-manager' } }
+            );
+            if (Array.isArray(data) && data.length) {
+                const names = data.map(v => v && v.name).filter(Boolean);
+                if (names.length) return names;
+            }
+        } catch (e) {
+            logger.warn(`Mohist 版本列表查询失败，回落内置列表: ${e.message}`);
+        }
+        return SERVER_SOURCES.mohist.supportedVersions || [];
     }
 
     /**
@@ -243,6 +272,17 @@ class Installer {
             throw new Error(`${source.reason}\n  → ${source.suggestion}`);
         }
 
+        // Mohist：构建号未显式指定（-b）时先经 API 解析最新构建，再计算文件名。
+        // 修复旧时序缺陷：fileName 在构建号解析之前计算，落盘名成了
+        // mohist-<ver>-undefined.jar，已存在检查与版本隔离清理也随之失配。
+        let fallbackUrls = [];
+        if (type === 'mohist' && !build) {
+            console.log('正在查询 Mohist 最新构建...');
+            const resolved = await source.resolveBuild(version);
+            build = resolved.id;
+            fallbackUrls = (resolved.urls || []).filter(u => u !== source.url(version, build));
+        }
+
         const fileName = source.fileName(version, build || source.knownBuilds?.[version]);
         const targetPath = path.join(installDir, fileName);
 
@@ -256,22 +296,14 @@ class Installer {
         }
 
         let downloadUrl;
-        let fallbackUrls = [];
         if (type === 'vanilla') {
             // V3.6.4：恢复 BMCLAPI 国内镜像最高优先级（-v 直装原版也走镜像）
             const vCandidates = await this._vanillaDownloadCandidates(version);
             downloadUrl = vCandidates[0];
             fallbackUrls = vCandidates.slice(1);
         } else if (type === 'mohist') {
-            // 构建标识现为 git sha；未显式指定（-b）时通过 API 解析最新构建
-            let buildId = build;
-            if (!buildId) {
-                console.log('正在查询 Mohist 最新构建...');
-                const resolved = await source.resolveBuild(version);
-                buildId = resolved.id;
-                fallbackUrls = (resolved.urls || []).filter(u => u !== source.url(version, buildId));
-            }
-            downloadUrl = source.url(version, buildId);
+            // 构建号已在上方解析（或由 -b 显式指定），直接取下载直链
+            downloadUrl = source.url(version, build);
         } else if (source.kind === 'papermc') {
             // V3.5.6：PaperMC 迁移至 fill.papermc.io/v3，需先解析 build 再取直链
             console.log('正在查询 PaperMC 最新构建...');
