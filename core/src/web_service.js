@@ -91,6 +91,32 @@ function isExposedHost(host) {
     return true;
 }
 
+/**
+ * WebSocket 握手的 Origin 校验（与 io.use 配套）。
+ *
+ * 放行条件（满足其一）：
+ *   - 没有 Origin：非浏览器客户端（CLI / 脚本 / 测试），不构成跨站劫持；
+ *   - Origin 的 host:port 与本次握手的 Host 完全一致（同源）；
+ *   - Origin 在 web.cors_origins 白名单内。
+ * 其余一律拒绝。宁可误拒一个奇怪的客户端，也不留一条跨站 WebSocket 通道。
+ *
+ * @param {string} origin 握手的 Origin 头
+ * @param {string} hostHeader 握手的 Host 头
+ * @param {string[]} corsOrigins web.cors_origins 白名单
+ * @returns {boolean}
+ */
+function isSocketOriginAllowed(origin, hostHeader, corsOrigins) {
+    const raw = String(origin || '').trim();
+    if (!raw) return true;
+    let parsed;
+    try { parsed = new URL(raw); } catch (e) { return false; }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
+    const host = String(hostHeader || '').trim().toLowerCase();
+    if (host && parsed.host.toLowerCase() === host) return true;
+    const list = Array.isArray(corsOrigins) ? corsOrigins : [];
+    return list.some(o => String(o || '').trim().toLowerCase() === raw.toLowerCase());
+}
+
 /** startWeb() 实际绑定的地址（options.host 可能覆盖配置，公网判断要以此为准） */
 let activeHost = null;
 
@@ -2663,6 +2689,45 @@ function startWeb(options = {}) {
         }
     });
 
+    /**
+     * 公测前加固：WebSocket 握手鉴权 + Origin 校验。
+     *
+     * 背景：Express 的登录中间件只覆盖 HTTP 普通请求；`/socket.io/` 的
+     * WebSocket 升级请求由 engine.io 直接接管，`requireLogin()` 根本执行不到。
+     * 面板一旦对外暴露（--public / 隧道），任何人都能连上来 emit('command')
+     * 执行 command_policy 白名单内的面板指令，HTTP 那道锁等于没有。
+     *
+     * 两道闸，任一不过即拒绝握手：
+     *   ① Origin：浏览器握手必带 Origin，只放行「同源」与 web.cors_origins；
+     *      不带 Origin 的（CLI / 脚本 / 测试）放行——它们不是跨站劫持的载体。
+     *      require_login=false 时同样校验，挡住「任意网页连 127.0.0.1」。
+     *   ② token：requireLogin() 为真时必须携带有效 JWT（与 HTTP 同一密钥），
+     *      取 handshake.auth.token，兼容 ?token= 查询参数。
+     */
+    io.use((socket, next) => {
+        const hs = socket.handshake || {};
+        const headers = hs.headers || {};
+        if (!isSocketOriginAllowed(headers.origin, headers.host, corsOrigins)) {
+            try { logger.warn(`WebSocket 握手被拒（Origin 不可信）: ${headers.origin || '(无)'}`); } catch (e) { /* 忽略 */ }
+            return next(new Error('origin_not_allowed'));
+        }
+        if (!requireLogin()) return next();
+
+        const auth = hs.auth || {};
+        const token = auth.token || (hs.query && hs.query.token);
+        if (!token) {
+            try { logger.warn('WebSocket 握手被拒（未携带 token）'); } catch (e) { /* 忽略 */ }
+            return next(new Error('unauthorized'));
+        }
+        try {
+            socket.data.user = jwt.verify(String(token), getJwtSecret());
+        } catch (e) {
+            try { logger.warn(`WebSocket 握手被拒（token 无效）: ${e.message}`); } catch (e2) { /* 忽略 */ }
+            return next(new Error('unauthorized'));
+        }
+        return next();
+    });
+
     io.on('connection', (socket) => {
         // 连接心跳只写全局日志文件；终端仅在 :wow 视图显示，绝不污染 :mc / 开服控制台
         const connLine = `WebSocket 客户端已连接: ${socket.id}`;
@@ -3612,6 +3677,8 @@ module.exports = {
     startTunnelForLocal,
     stopTunnelHandle,
     isExposedHost,
+    // 公测加固：WebSocket 握手 Origin 校验（单元测试用）
+    isSocketOriginAllowed,
     // web.require_login 判定（测试 / 预检用）
     requireLogin,
     // V3.5.24：隧道认证闸门（测试与预检用）

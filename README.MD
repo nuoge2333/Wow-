@@ -56,6 +56,10 @@ chmod +x wow.sh
 ```
 
 > 💡 **更新**: 运行 `./update.sh` (Linux/macOS) 或 `update.bat` (Windows) 自动升级到最新版
+>
+> 升级前会自动备份代码（`backup/`，保留最近 3 份）；新版有问题时
+> `./update.sh --rollback`（Windows：`update.bat --rollback`）可一键退回，
+> `--list` 查看可用备份。
 
 ### 3. 初始化环境
 
@@ -177,7 +181,7 @@ Android 设备无法运行 wow~ 服务端（网络沙箱限制，详见 [Android
 |------|------|
 | 操作系统 | Windows 10+, Linux (glibc 2.28+), macOS 10.15+ |
 | Java | 8、17、21（按需自动下载） |
-| Node.js | 自动下载便携版，无需手动安装 |
+| Node.js | 20.17.0 便携版随包自动下载，无需手动安装（系统已装 Node 20+ 则直接复用）|
 | 浏览器 | Chrome 90+, Firefox 88+, Edge 90+, Safari 15+ |
 > 注：Windows 7 无法保证能够稳定运行，建议升级到 Windows 10+。
 > 注：**不支持 Android**。Android 的网络沙箱使服务端无法对外暴露端口，详见 [Android 已知限制说明](docs/other/ANDROID_LIMITATIONS.md)。

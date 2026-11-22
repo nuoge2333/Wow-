@@ -25,6 +25,7 @@ cd wow
 > 程序会读不到旧方案，报「方案目录不存在」。
 >
 > - **推荐**：在旧目录里运行 `update.sh`（或 `update.bat`），自动原地更新并保留方案；
+>   升级前会自动备份代码，新版有问题可用 `./update.sh --rollback`（Windows：`update.bat --rollback`）退回（备份在 `backup/`）；
 > - **若已换目录**：把旧目录的 `scheme/` 和 `core/wow.yaml` 复制到新目录即可，
 >   或在新目录重新执行 `wow init` + `wow scheme create` 建方案。
 

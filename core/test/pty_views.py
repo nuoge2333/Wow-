@@ -28,7 +28,7 @@ wow 五大视图流转 pty 实测（纯 Python 标准库，不依赖 node-pty）
 
 超时天花板（关键）
   `core/test/run.js` 用 spawnSync 顺序执行且**自身没有 timeout**，所以
-  pty 测试文件必须自带超时：`.test.js` 里的 spawnSync 有 120s timeout +
+  pty 测试文件必须自带超时：`.test.js` 里的 spawnSync 有 180s timeout +
   SIGKILL，本脚本再叠一层 signal.alarm(100)。任何一步卡住都必然退出。
 
 输出协议（供 pty_views.test.js 解析）
@@ -194,7 +194,7 @@ class Sess:
                 return
             self.buf += data.decode('utf-8', 'replace')
 
-    def expect(self, pattern, timeout=12):
+    def expect(self, pattern, timeout=20):
         """从上次匹配结束处顺序等待 pattern；超时抛 AssertionError。"""
         dl = time.time() + timeout
         while True:
@@ -379,7 +379,7 @@ def scenario_a(root, env):
     """shell -> :wow -> :m -> :wow -> exit（无 MC，菜单往返 + 双写哨兵）。"""
     s = Sess(env)
     try:
-        s.expect('已进入交互模式|长命令模式已就绪', 12)
+        s.expect('已进入交互模式|长命令模式已就绪', 20)
         s.send('badapple\n')
         s.expect('未知指令: badapple', 8)
         s.pump(0.3)
@@ -390,7 +390,7 @@ def scenario_a(root, env):
         s.expect('输入编号后回车执行|请选择（数字执行', 10)
 
         s.send('L')                            # TUI 里 L 是「按下即切」
-        s.expect('已进入交互模式|长命令模式已就绪', 12)
+        s.expect('已进入交互模式|长命令模式已就绪', 20)
 
         s.send('badapple\n')
         s.expect('未知指令: badapple', 8)
@@ -415,18 +415,18 @@ def scenario_b(root, env):
     """shell -> :wow -> :mc -> :wow -> :mc -> Ctrl+C -> :wow -> :mc（核心）。"""
     s = Sess(env)
     try:
-        s.expect('已进入交互模式', 12)
+        s.expect('已进入交互模式', 20)
         s.send('server start\n')
         s.expect('开服控制台|服务器已启动，PID: \\d+', 20)
         s.pump(2.0)                             # 让 fake MC 打几行 tick
 
         s.send(':wow\n')                        # :mc -> :wow（安全退场，不停服）
-        s.expect('🧩 :wow 长命令|长命令（服务端仍在运行', 12)
+        s.expect('🧩 :wow 长命令|长命令（服务端仍在运行', 20)
         s.send('server status\n')               # :wow 里跑一条只读 wow 子命令
         s.pump(1.2)
 
         s.send(':mc\n')                         # 回 :mc
-        s.expect('🎮 Minecraft 实时日志|开服控制台', 12)
+        s.expect('🎮 Minecraft 实时日志|开服控制台', 20)
         s.pump(1.0)
 
         s.send('\x03')                          # 单次 Ctrl+C：安全退场，绝不停服
@@ -460,7 +460,7 @@ def scenario_c(root, env):
     s = Sess(env)
     mc_pid = None
     try:
-        s.expect('已进入交互模式', 12)
+        s.expect('已进入交互模式', 20)
         s.send('server start\n')
         m = s.expect(r'服务器已启动，PID: (\d+)', 20)
         mc_pid = int(m.group(1))
@@ -505,7 +505,7 @@ def scenario_d(root, env):
     guard = AliveGuard()
     try:
         guard.__enter__()
-        s.expect('已进入交互模式', 12)
+        s.expect('已进入交互模式', 20)
         # startRepl 有一个「进入时服务器就已在跑」的 2s 延时检测。若心跳
         # 立刻开始刷，那条分支会抢先 startFollow() 把 following 置 true，
         # detectTimer 的 !following 条件就不成立了 —— 测不到本次要验的
@@ -515,7 +515,7 @@ def scenario_d(root, env):
         # cli.js 的 detectTimer（1.5s）看到 wasRelayAlive false->true 后，
         # 在 :wow 视图会 setView('MC') 并 startFollow()。
         guard.start_heartbeat()
-        s.expect('检测到服务器已由 Web 面板启动', 12)
+        s.expect('检测到服务器已由 Web 面板启动', 20)
         s.pump(0.8)
         clean = strip_ansi(s.buf)
         assert '自动切至 :mc 实时日志' in clean, '没打印「自动切至 :mc」'

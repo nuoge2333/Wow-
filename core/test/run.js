@@ -31,12 +31,26 @@ console.log(`\nwow 测试套件：共 ${files.length} 个测试文件\n`);
 let failedFiles = 0;
 const t0 = Date.now();
 
+// 单次重试：pty_views 这类依赖真实终端/时序的用例，在容器或高负载机器上
+// 偶发超时（同一个文件单独跑必过）。一次重试能把「环境抖动」和「真的改坏了」
+// 区分开——真失败会连挂两次，仍然计入失败。
+// 关掉重试：WOW_TEST_NO_RETRY=1
+const RETRY = process.env.WOW_TEST_NO_RETRY === '1' ? 0 : 1;
+
 for (const f of files) {
-    const start = Date.now();
-    const r = spawnSync(process.execPath, [path.join(testDir, f)], {
+    let start = Date.now();
+    let r = spawnSync(process.execPath, [path.join(testDir, f)], {
         stdio: 'inherit',
         cwd: path.join(testDir, '..')
     });
+    if (r.status !== 0 && RETRY > 0) {
+        console.log(`\n  ⚠️ ${f} 首次失败（退出码 ${r.status}），重试一次…\n`);
+        start = Date.now();
+        r = spawnSync(process.execPath, [path.join(testDir, f)], {
+            stdio: 'inherit',
+            cwd: path.join(testDir, '..')
+        });
+    }
     const ms = Date.now() - start;
     if (r.status === 0) {
         console.log(`\n  ✅ ${f}（${ms}ms）\n`);

@@ -633,7 +633,7 @@
                         // 名称含空格时（`scheme switch my server`）拼接会被拆成
                         // 两个参数，后端报「方案 my 不存在」。
                         switch: { cmd: 'scheme switch', args: [name], msg: `切换到 ${name}` },
-                        delete: { cmd: 'scheme delete', args: [name], msg: `删除 ${name}` }
+                        delete: { cmd: 'scheme delete', args: [name, '-y'], msg: `删除 ${name}` }
                     };
                     const entry = actionMap[action];
                     if (!entry) return;
