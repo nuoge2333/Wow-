@@ -125,6 +125,37 @@
 
 ---
 
+## [未发版 · feat/ai-provider] — AI 分析端点容错 + 服务商预设
+
+> 尚未发版。按项目规则，用户未说「发版」前不升版本号、不打 tag、不建 Release。
+> 分支：`feat/ai-provider`（基于 `main @ c8c9849`）。
+
+### 现象
+- AI 日志分析（`wow logs analyze`）的 `ai.api_url` 若只填了服务商域名（如 `https://api.deepseek.com`），
+  后端直接拿去 `fetch`，因缺少 `/v1/chat/completions` 而 404/410，用户需反复试错拼接路径。
+
+### 根因
+- `log_handler.analyze()` 把配置里的 `api_url` 原样交给 `fetch`，未做路径补全或校验。
+- 没有服务商概念，切 DeepSeek / 通义 / 智谱 等需手动查各家 OpenAI 兼容地址并连同模型一起填。
+
+### 修法
+- 新增纯函数模块 `core/src/ai_endpoint.js`：
+  - `normalizeApiUrl()`：幂等补全。裸域名 → `/v1/chat/completions`；已含 `/vN` 版本段
+    （智谱 `/api/paas/v4`、豆包 `/api/v3`、通义 `/compatible-mode/v1`）→ 只补 `/chat/completions`；
+    已含完整端点 → 原样。
+  - `resolveAiEndpoint()`：优先级「显式入参 > provider 预设 > 内置默认」，8 家服务商预设
+    （custom/openai/deepseek/qwen/kimi/glm/doubao/ollama）一次填好 URL 与模型。
+- `config.js` 新增 `ai.provider`（默认 `custom`，老配置零影响）；`config_schema.js` 登记为 `select`，
+  Web 设置页自动渲染下拉框、M 模式共用同一份配置。
+- `log_handler.analyze()` 接入 `resolveAiEndpoint()`，并在分析前打印实际服务商/模型/端点便于自查。
+- CLI `logs analyze` 新增 `--provider <name>`。
+
+### 验证
+- 新增 `core/test/ai_endpoint.test.js`，25 项覆盖归一化边界、provider 预设、优先级与 schema 一致性。
+- 每步 `npm test` 全绿；真实 fetch 端点按各家官方文档（2026-11）核对。
+
+---
+
 ## [3.8.4-26.4c] — 2026-11-21：🚨 紧急修复（Emergency Hotfix）
 
 > 3.8.3 发版后紧接的三项线上体验问题热修，合并为一次小版本紧急发布。

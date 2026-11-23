@@ -259,17 +259,32 @@ const SCHEMA = [
 
     // ==================== AI ====================
     {
+        key: 'ai.provider', type: 'select', group: 'AI 日志分析', label: 'AI 服务商',
+        desc: '选中国内服务商（DeepSeek / 通义 / Kimi / 智谱 / 豆包）后，API 地址与模型会自动套用官方预设，下方两项可留空；要自建中转或换模型再手动填写覆盖。',
+        // 选项须与 core/src/ai_endpoint.js 的 AI_PROVIDERS 保持一致
+        options: [
+            { value: 'custom', label: '自定义 / 兼容 OpenAI' },
+            { value: 'deepseek', label: 'DeepSeek' },
+            { value: 'qwen', label: '通义千问（百炼兼容模式）' },
+            { value: 'kimi', label: 'Kimi（月之暗面）' },
+            { value: 'glm', label: '智谱 GLM' },
+            { value: 'doubao', label: '豆包（火山方舟）' },
+            { value: 'ollama', label: 'Ollama（本地）' },
+            { value: 'openai', label: 'OpenAI' }
+        ]
+    },
+    {
         key: 'ai.api_key', type: 'secret', group: 'AI 日志分析', label: 'API Key',
         desc: '用于 `wow logs analyze` 的在线日志分析。不填就只能用本地初诊（崩溃时的自动诊断仍可用）。',
         placeholder: '留空表示不修改'
     },
     {
         key: 'ai.model', type: 'string', group: 'AI 日志分析', label: '模型名',
-        desc: '例如 gpt-4o-mini。留空则使用服务端默认模型。', advanced: true
+        desc: '例如 gpt-4o-mini。选了服务商时可留空（自动用预设模型）；自定义时留空走默认模型。', advanced: true
     },
     {
         key: 'ai.api_url', type: 'string', group: 'AI 日志分析', label: 'API 地址',
-        desc: '兼容 OpenAI 协议的服务地址，可填自建中转。留空用官方地址。', advanced: true
+        desc: '兼容 OpenAI 协议的服务地址，可填自建中转。只填域名（如 https://api.deepseek.com）会自动补全 /v1/chat/completions；选了服务商时可留空（自动用预设地址）。', advanced: true
     },
 
     // ==================== 正版验证 ====================

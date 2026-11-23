@@ -113,6 +113,7 @@ const DEFAULT_CONFIG = {
         send_logs_interval: 0
     },
     ai: {
+        provider: 'custom',
         api_key: null,
         model: null,
         api_url: null

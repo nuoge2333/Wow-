@@ -720,8 +720,19 @@ wow logs analyze [options]
 | 选项 | 说明 |
 |------|------|
 | `--api-key <key>` | AI API 密钥（覆盖配置） |
-| `--model <model>` | 模型名称 |
-| `--api-url <url>` | API 端点 |
+| `--provider <name>` | AI 服务商：`deepseek` / `qwen` / `kimi` / `glm` / `doubao` / `ollama` / `openai` / `custom`，自动填好 URL 与模型 |
+| `--model <model>` | 模型名称（覆盖服务商预设） |
+| `--api-url <url>` | API 端点（只填域名也会自动补全 `/v1/chat/completions`） |
+
+**示例（选 DeepSeek，URL 和模型自动填好）：**
+```bash
+wow logs analyze --provider deepseek --api-key sk-xxx
+```
+
+**示例（自定义中转，只给域名即可）：**
+```bash
+wow logs analyze --api-url https://my.proxy.com --model my-model --api-key sk-xxx
+```
 
 ---
 

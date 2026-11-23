@@ -10,6 +10,7 @@ const path = require('path');
 const { spawn } = require('child_process');
 const utils = require('./utils');
 const config = require('./config');
+const { resolveAiEndpoint } = require('./ai_endpoint');
 
 class LogHandler {
     constructor() {
@@ -51,8 +52,15 @@ class LogHandler {
      */
     async analyze(options = {}) {
         const apiKey = options.apiKey || config.getConfig('ai.api_key');
-        const model = options.model || config.getConfig('ai.model') || 'gpt-3.5-turbo';
-        const apiUrl = options.apiUrl || config.getConfig('ai.api_url') || 'https://api.openai.com/v1/chat/completions';
+        // 端点容错：显式入参 > 服务商预设 > 配置 > 内置默认。
+        // apiUrl 经归一化后再用，用户只填域名也能自动补全 /v1/chat/completions。
+        const endpoint = resolveAiEndpoint({
+            provider: options.provider || config.getConfig('ai.provider'),
+            apiUrl: options.apiUrl || config.getConfig('ai.api_url'),
+            model: options.model || config.getConfig('ai.model')
+        });
+        const model = endpoint.model;
+        const apiUrl = endpoint.apiUrl;
 
         if (!apiKey) {
             console.error('❌ 未配置 AI API Key，请在 wow.yaml 中设置 ai.api_key');
@@ -84,7 +92,9 @@ class LogHandler {
         }
 
         console.log('📊 正在分析日志...');
+        if (endpoint.presetUsed) console.log(`   服务商: ${endpoint.presetLabel}`);
         console.log(`   模型: ${model}`);
+        console.log(`   端点: ${apiUrl}`);
         console.log(`   日志行数: ${lines.length} (分析最近 500 行)`);
 
         // 构建提示词

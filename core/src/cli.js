@@ -1643,8 +1643,9 @@ logsCmd
     .command('analyze')
     .description('分析日志（AI 分析，需服务器关闭）')
     .option('--api-key <key>', 'AI API 密钥（覆盖配置）')
+    .option('--provider <name>', 'AI 服务商（deepseek/qwen/kimi/glm/doubao/ollama/openai/custom，自动填 URL 与模型）')
     .option('--model <model>', '模型名称')
-    .option('--api-url <url>', 'API 端点')
+    .option('--api-url <url>', 'API 端点（只填域名也会自动补全 /v1/chat/completions）')
     .action(async (options) => {
         const LogHandler = load('./log_handler');
         if (!LogHandler) return;

@@ -341,17 +341,43 @@ mail:
 
 | 字段 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
+| `provider` | string | `custom` | AI 服务商。选 `deepseek` / `qwen` / `kimi` / `glm` / `doubao` / `ollama` / `openai` 会自动填好 `api_url` 与 `model`，无需手动填写 |
 | `api_key` | string | `null` | AI API 密钥 |
-| `model` | string | `null` | 模型名称（如 `gpt-3.5-turbo`） |
-| `api_url` | string | `null` | API 端点（默认使用 OpenAI 兼容接口） |
+| `model` | string | `null` | 模型名称。选服务商时可留空（用预设模型）；自定义时留空走默认 |
+| `api_url` | string | `null` | API 端点。**只填域名也会自动补全** `/v1/chat/completions`；已含 `/vN` 的（如智谱 `/api/paas/v4`）只补 `/chat/completions` |
 
-**示例：**
+> **端点容错**：后端在发起请求前统一归一化 `api_url`，幂等处理。所以 `https://api.deepseek.com`、`https://api.deepseek.com/v1`、完整端点三种写法都能用。
+
+**示例 A：选服务商（推荐，URL 与模型自动填好）**
 ```yaml
 ai:
+  provider: deepseek
   api_key: sk-xxxxxxxxxxxxxxxxxxxxxxxx
-  model: gpt-3.5-turbo
-  api_url: https://api.openai.com/v1/chat/completions
+  # model / api_url 留空，自动用 DeepSeek 预设
 ```
+
+**示例 B：自定义 / 兼容 OpenAI 中转**
+```yaml
+ai:
+  provider: custom
+  api_key: sk-xxxxxxxxxxxxxxxxxxxxxxxx
+  model: my-model
+  api_url: https://my.proxy.com   # 自动补 /v1/chat/completions
+```
+
+**可用服务商预设：**
+
+| provider | 路径 | 默认模型 |
+|----------|------|----------|
+| `deepseek` | `https://api.deepseek.com/v1/chat/completions` | `deepseek-chat` |
+| `qwen` | `https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions` | `qwen-plus` |
+| `kimi` | `https://api.moonshot.cn/v1/chat/completions` | `moonshot-v1-8k` |
+| `glm` | `https://open.bigmodel.cn/api/paas/v4/chat/completions` | `glm-4-flash` |
+| `doubao` | `https://ark.cn-beijing.volces.com/api/v3/chat/completions` | 需在控制台创建推理接入点（`ep-`），用 `--model` 手动指定 |
+| `ollama` | `http://localhost:11434/v1/chat/completions` | `qwen2.5:7b` |
+| `openai` | `https://api.openai.com/v1/chat/completions` | `gpt-4o-mini` |
+
+> 在 **Web 面板 → 设置 → AI 日志分析 → AI 服务商** 下拉框中可直接选择，保存后即时生效；M 模式工具页调用同一份配置。
 
 ---
 
@@ -538,6 +564,7 @@ mail:
   send_logs_interval: 0
 
 ai:
+  provider: custom
   api_key: null
   model: null
   api_url: null
