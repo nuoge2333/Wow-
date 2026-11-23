@@ -154,6 +154,15 @@
 - 新增 `core/test/ai_endpoint.test.js`，25 项覆盖归一化边界、provider 预设、优先级与 schema 一致性。
 - 每步 `npm test` 全绿；真实 fetch 端点按各家官方文档（2026-11）核对。
 
+### 附加修复：启动命令预览不再错指 `server.jar`
+
+> 同分支累积修复，与 AI provider 无关，一并记录。
+
+- **现象**：Web 设置页「最终启动命令」预览始终显示 `-jar server.jar`，但方案创建后根本不存在该文件（核心实际叫 `vanilla-1.20.1.jar` / `paper-1.20.1.jar` / `mohist-...jar`），用户据此判断「server start 带错路径」。
+- **根因**：`web_service.js` 的 `/api/config/preview-jvm` 把 jar 名硬编码为 `|| 'server.jar'`，与真实开服的 `server._getServerJar()` 各走一套，长期漂移。
+- **修法**：把 `_getServerJar()` 的解析逻辑抽成纯函数 `ServerManager.resolveServerJar(serverDir, config)` 并导出；真实开服（薄封装）与 Web 预览共用同一逻辑。Forge/NeoForge 的 `@args.txt` 启动也在预览中同步体现；配置指向陈旧文件时回退目录扫描。
+- **验证**：新增 `core/test/server_jar_preview.test.js`（12 项）；`forge_core_path` / `server_start_path` / `jvm_args` / `set_page` 关键回归全绿。
+
 ---
 
 ## [3.8.4-26.4c] — 2026-11-21：🚨 紧急修复（Emergency Hotfix）

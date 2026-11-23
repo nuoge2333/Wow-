@@ -1810,8 +1810,26 @@ function startWeb(options = {}) {
                 args.push(`-javaagent:<authlib-injector.jar>=${authServer}`);
             }
 
-            const jarFile = (body.jar && String(body.jar).trim()) || 'server.jar';
-            const command = ['java', ...args, '-jar', jarFile, 'nogui'].join(' ');
+            // 修复：预览必须与真实开服展示同一核心文件名。
+            // 过去这里硬编码 'server.jar'，但方案创建时 installer 会把核心命名为
+            // vanilla-<ver>.jar / paper-<ver>.jar / mohist-<ver>-<build>.jar 等，
+            // 页面展示的命令永远指向不存在的 server.jar（用户报「启动命令带错路径」）。
+            const serverDir = utils.getServerDir();
+            let jarFile = body.jar && String(body.jar).trim();
+            if (!jarFile) {
+                try {
+                    jarFile = ServerManager.resolveServerJar(serverDir, config);
+                } catch (e) {
+                    jarFile = config.getConfig('server.jar') || 'server.jar';
+                }
+            }
+            // 现代 Forge/NeoForge 用 @unix_args.txt 启动（无独立 -jar），预览同步体现
+            const launchArgsFile = config.getConfig('server.launchArgsFile');
+            const usesArgsFile = !body.jar && launchArgsFile
+                && /\.txt$/i.test(jarFile)
+                && fs.existsSync(path.join(serverDir, jarFile));
+            const tail = usesArgsFile ? ['@' + jarFile, 'nogui'] : ['-jar', jarFile, 'nogui'];
+            const command = ['java', ...args, ...tail].join(' ');
 
             const totalBytes = os.totalmem();
             const memCheck = Jvm.checkMemLimit(memOverride.args, totalBytes);

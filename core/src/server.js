@@ -1211,71 +1211,10 @@ class ServerManager {
     }
 
     /**
-     * 获取服务器核心文件
+     * 获取服务器核心文件（薄封装：真实启动与 Web 预览共用同一解析逻辑）
      */
     _getServerJar() {
-        const serverDir = this.serverDir;
-        // 1) 优先使用配置里记录的核心（Fabric/Quilt 安装后会同时存在原版 server.jar，
-        //    必须以启动器 jar 为准，否则会误选原版核心）
-        const cfgJar = this.config.getConfig('server.jar');
-        if (cfgJar && fs.existsSync(path.join(serverDir, cfgJar))) {
-            return cfgJar;
-        }
-        const files = fs.readdirSync(serverDir);
-        // 排除安装器（*-installer.jar 不是可运行的服务器核心，误选会导致 "Invalid or corrupt jarfile"）
-        // 以及外置登录用的 authlib-injector
-        const jarFiles = files.filter(f => {
-            const lf = f.toLowerCase();
-            return lf.endsWith('.jar') && !lf.includes('authlib-injector') && !lf.includes('installer');
-        });
-        if (jarFiles.length === 0) {
-            // V3.5.8：新型 Forge/NeoForge 只有 args 文件、根目录没有独立核心 jar，
-            // 此时配置里若记录了 server.jar（可能在 libraries/ 深处）就直接认它，
-            // 不再盲目报「未找到核心」。
-            const argsCfg = this.config.getConfig('server.launchArgsFile');
-            if (argsCfg && fs.existsSync(path.join(serverDir, argsCfg))) {
-                return cfgJar && fs.existsSync(path.join(serverDir, cfgJar))
-                    ? cfgJar
-                    : argsCfg;
-            }
-            throw new Error('未找到服务器核心文件 (.jar)');
-        }
-        if (jarFiles.length === 1) {
-            return jarFiles[0];
-        }
-        // 多个候选：按配置的服务端类型（server.type）精确匹配，避免盲选
-        const type = (this.config.getConfig('server.type') || '').toLowerCase();
-        const prefer = {
-            quilt: /quilt-server-launch\.jar$/,
-            fabric: /fabric-server-launch\.jar$/,
-            forge: /forge-.+-server\.jar$/,
-            neoforge: /neoforge-.+-server\.jar$/
-        }[type];
-        if (prefer) {
-            const hit = jarFiles.find(f => prefer.test(f));
-            if (hit) return hit;
-        }
-        // Forge/NeoForge 老版本：根目录的核心叫 forge-<mc>-<loader>.jar（无 -server 后缀），
-        // 与同目录的 minecraft_server.<mc>.jar（原版）并存——旧实现会「含 server」地误选原版，
-        // 结果装的是 Forge、跑起来却是原版。这里显式优先 forge-/neoforge- 前缀的核心。
-        if (type === 'forge' || type === 'neoforge') {
-            const prefix = type === 'forge' ? 'forge-' : 'neoforge-';
-            const fam = jarFiles.filter(f => {
-                const lf = f.toLowerCase();
-                return lf.startsWith(prefix)
-                    && !lf.startsWith('minecraft_server.')
-                    && !/^server-[\d.]+\.jar$/.test(lf);
-            });
-            if (fam.length) {
-                return fam.find(f => /-server\.jar$/i.test(f)) || fam[0];
-            }
-        }
-        // 兜底：优先选含 'server' 的启动器 jar
-        const byServer = jarFiles.find(f => f.toLowerCase().includes('server'));
-        if (byServer) return byServer;
-        // 仍无法确定：告警后取首个（保持原有尽力而为行为）
-        console.warn(`⚠️ 检测到多个核心 jar（${jarFiles.join(', ')}），已默认选用 ${jarFiles[0]}。如需指定，请在 wow.yaml 设置 server.jar。`);
-        return jarFiles[0];
+        return resolveServerJar(this.serverDir, this.config);
     }
 
     /**
@@ -2171,10 +2110,99 @@ function enqueueConsoleCommand(line) {
     }
 }
 
+/**
+ * 解析服务器核心文件名（纯函数，无实例副作用）。
+ *
+ * 供两处共用，杜绝「真实启动 vs 展示预览」漂移：
+ *   - ServerManager._getServerJar() —— 真实开服
+ *   - Web /api/config/preview-jvm —— 设置页展示的最终启动命令
+ *
+ * 历史 bug：预览端点曾硬编码 'server.jar'，但方案创建时 installer 会把核心
+ * 命名为 vanilla-<ver>.jar / paper-<ver>.jar / mohist-<ver>-<build>.jar 等，
+ * 项目里根本没有 server.jar，于是页面展示的命令永远指向不存在的文件。
+ *
+ * @param {string} serverDir 方案/服务器目录
+ * @param {object} configObj  配置模块（需有 getConfig）
+ * @returns {string} 核心文件名（相对 serverDir）或启动参数文件路径
+ */
+function resolveServerJar(serverDir, configObj) {
+    // 1) 优先使用配置里记录的核心（Fabric/Quilt 安装后会同时存在原版 server.jar，
+    //    必须以启动器 jar 为准，否则会误选原版核心）
+    const cfgJar = configObj.getConfig('server.jar');
+    if (cfgJar && fs.existsSync(path.join(serverDir, cfgJar))) {
+        return cfgJar;
+    }
+    let files;
+    try {
+        files = fs.readdirSync(serverDir);
+    } catch (e) {
+        // 目录不存在时仍尊重配置里的记录（预览场景目录可能尚未物化）
+        if (cfgJar) return cfgJar;
+        throw new Error('未找到服务器核心文件 (.jar)');
+    }
+    // 排除安装器（*-installer.jar 不是可运行的服务器核心，误选会导致 "Invalid or corrupt jarfile"）
+    // 以及外置登录用的 authlib-injector
+    const jarFiles = files.filter(f => {
+        const lf = f.toLowerCase();
+        return lf.endsWith('.jar') && !lf.includes('authlib-injector') && !lf.includes('installer');
+    });
+    if (jarFiles.length === 0) {
+        // V3.5.8：新型 Forge/NeoForge 只有 args 文件、根目录没有独立核心 jar，
+        // 此时配置里若记录了 server.jar（可能在 libraries/ 深处）就直接认它，
+        // 不再盲目报「未找到核心」。
+        const argsCfg = configObj.getConfig('server.launchArgsFile');
+        if (argsCfg && fs.existsSync(path.join(serverDir, argsCfg))) {
+            return cfgJar && fs.existsSync(path.join(serverDir, cfgJar))
+                ? cfgJar
+                : argsCfg;
+        }
+        if (cfgJar) return cfgJar;
+        throw new Error('未找到服务器核心文件 (.jar)');
+    }
+    if (jarFiles.length === 1) {
+        return jarFiles[0];
+    }
+    // 多个候选：按配置的服务端类型（server.type）精确匹配，避免盲选
+    const type = (configObj.getConfig('server.type') || '').toLowerCase();
+    const prefer = {
+        quilt: /quilt-server-launch\.jar$/,
+        fabric: /fabric-server-launch\.jar$/,
+        forge: /forge-.+-server\.jar$/,
+        neoforge: /neoforge-.+-server\.jar$/
+    }[type];
+    if (prefer) {
+        const hit = jarFiles.find(f => prefer.test(f));
+        if (hit) return hit;
+    }
+    // Forge/NeoForge 老版本：根目录的核心叫 forge-<mc>-<loader>.jar（无 -server 后缀），
+    // 与同目录的 minecraft_server.<mc>.jar（原版）并存——旧实现会「含 server」地误选原版，
+    // 结果装的是 Forge、跑起来却是原版。这里显式优先 forge-/neoforge- 前缀的核心。
+    if (type === 'forge' || type === 'neoforge') {
+        const prefix = type === 'forge' ? 'forge-' : 'neoforge-';
+        const fam = jarFiles.filter(f => {
+            const lf = f.toLowerCase();
+            return lf.startsWith(prefix)
+                && !lf.startsWith('minecraft_server.')
+                && !/^server-[\d.]+\.jar$/.test(lf);
+        });
+        if (fam.length) {
+            return fam.find(f => /-server\.jar$/i.test(f)) || fam[0];
+        }
+    }
+    // 兜底：优先选含 'server' 的启动器 jar
+    const byServer = jarFiles.find(f => f.toLowerCase().includes('server'));
+    if (byServer) return byServer;
+    // 仍无法确定：告警后取首个（保持原有尽力而为行为）
+    console.warn(`⚠️ 检测到多个核心 jar（${jarFiles.join(', ')}），已默认选用 ${jarFiles[0]}。如需指定，请在 wow.yaml 设置 server.jar。`);
+    return jarFiles[0];
+}
+
 module.exports = ServerManager;
 // V3.5.21：把开服控制台的输入分类器挂到导出上，供单测直接验证
 // 「扩展命令不会被当成 MC 指令转发」这一行为（它是模块内私有函数，原本无法从外部调用）。
 ServerManager.classifyConsoleInput = classifyConsoleInput;
+// 启动命令预览与真实开服共用同一 jar 解析逻辑（修复硬编码 server.jar）
+ServerManager.resolveServerJar = resolveServerJar;
 // V3.5.19：Web 面板需要判断中继是否在线、并往队列里投递指令
 ServerManager.isConsoleRelayAlive = isConsoleRelayAlive;
 ServerManager.enqueueConsoleCommand = enqueueConsoleCommand;
