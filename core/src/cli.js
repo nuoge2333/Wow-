@@ -2589,10 +2589,12 @@ async function startRepl(options = {}) {
         following = false;
     };
 
-    const startFollow = (notice) => {
+    const startFollow = (notice, force = false) => {
         if (following) return;
-        // 从 M→L：服务端日志只落文件/缓冲，不回显到指令终端（P0 日志隔离）
-        if (!autoFollowAllowed) return;
+        // 从 M→L：服务端日志默认只落文件/缓冲，不回显到指令终端（P0 日志隔离）。
+        // force=true 表示代码已明确把视图切到 :mc（用户要看 MC 日志），此时必须跟随；
+        // 否则 web 面板启动服务器后会出现「进入了 MC 控制台却没有任何日志」。
+        if (!autoFollowAllowed && !force) return;
         const ServerManager = load('./server');
         if (!ServerManager) return;
         let logFile;
@@ -2662,7 +2664,11 @@ async function startRepl(options = {}) {
             } else {
                 // :wow 视图：自动切至 :mc 实时日志（执行令流转矩阵 2）
                 setView('MC', 'web:started:from-wow');
-                startFollow('📋 检测到服务器已由 Web 面板启动，自动切至 :mc 实时日志：');
+                // 既然已把视图切到 :mc（提示符已变成 [MC 控制台]>），就必须强制开始跟随，
+                // 否则 M→L 场景（autoFollowAllowed=false）会出现「进了 MC 控制台却没有日志」。
+                // force 只放行「已经切到 :mc」这一明确意图，不等于放开 M→L 的整体日志隔离
+                // （M 视图不切页、setTimeout 初始兜底仍走 autoFollowAllowed 判定）。
+                startFollow('📋 检测到服务器已由 Web 面板启动，自动切至 :mc 实时日志：', true);
             }
         }
         wasRelayAlive = alive;

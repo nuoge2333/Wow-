@@ -125,6 +125,33 @@
 
 ---
 
+## [未发版 · main] — Web 启服后 CLI 进入 :mc 无日志
+
+> 尚未发版。按项目规则，用户未说「发版」前不升版本号、不打 tag、不建 Release。
+
+### 现象
+- Web 面板点 `server start` 后，CLI 长命令端自动切入 `:mc`（提示符变成 `[MC 控制台]>`），
+  但控制台里一条服务端日志都不显示；用户以为「服务器没输出 / 卡死」。
+
+### 根因
+- `cli.js` `detectTimer` 检测到控制台中继心跳 `false→true` 跳变后，先 `setView('MC')` 把视图切到 `:mc`，
+  再调用 `startFollow()`。但 `startFollow()` 开头有 P0 日志隔离守卫 `if (!autoFollowAllowed) return;`，
+  当用户是「从 M 菜单按 L 进入长命令」时 `fromMenu=true → autoFollowAllowed=false`，跟随被直接跳过。
+- 结果：**视图已经切到 `:mc`，却没有任何日志跟随定时器在跑** —— 进了控制台但看不到日志。
+
+### 修法
+- `startFollow(notice, force = false)` 增加 `force` 参数：默认仍遵守 `autoFollowAllowed`（保留 M→L 隔离，
+  刚进长命令不被历史日志刷屏）；`force=true` 时放行。
+- `detectTimer` 的「切到 `:mc`」分支以 `force=true` 调用 `startFollow()` —— 既然明确切进了 MC 控制台，
+  就必须开始跟随日志。MENU 视图分支不切页、不强制；进入 REPL 的 `setTimeout` 初始兜底仍走隔离判定，不被放开。
+
+### 验证
+- 新增 `core/test/web_start_mc_log.test.js`（5 项），锁定 force 语义、切视图必强制跟随、MENU 不切页、初始兜底不强制、退出切回 `:wow`。
+- 同步更新 `input_routing_p0.test.js` 的 `startFollow` 断言（保持隔离强度，非放水）。
+- 全量 `npm test` **80 个文件全绿**。
+
+---
+
 ## [未发版 · feat/ai-provider] — AI 分析端点容错 + 服务商预设
 
 > 尚未发版。按项目规则，用户未说「发版」前不升版本号、不打 tag、不建 Release。

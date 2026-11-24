@@ -93,11 +93,12 @@ check('提示符随视图订阅同步（onChange + setPrompt）', () => {
     assert.ok(/next === vsMod\.VIEW\.MC \? MC_PROMPT : WOW_PROMPT/.test(cliSrc), '提示符未按视图切换');
     assert.ok(/rl\.setPrompt\(initPrompt\)|prompt: initPrompt/.test(cliSrc), '初始提示符未按视图设定');
 });
-check('M→L 传 fromMenu，L 模式日志隔离', () => {
+check('M→L 传 fromMenu，L 模式日志隔离（默认仍不自动跟随）', () => {
     assert.ok(/startRepl\(\{ fromMenu: true \}\)/.test(cliSrc), '菜单入口未传 fromMenu');
     assert.ok(/const autoFollowAllowed = options\.fromMenu !== true/.test(cliSrc), '未定义自动跟随开关');
-    const m = cliSrc.match(/const startFollow = \(notice\) => \{[\s\S]{0,200}?if \(!autoFollowAllowed\) return;/);
-    assert.ok(m, 'startFollow 未对 fromMenu 提前返回');
+    // startFollow 支持 force 参数：默认（force=false）仍对 fromMenu 提前返回，隔离不被破坏。
+    const def = cliSrc.match(/const startFollow = \(notice, force = false\) => \{[\s\S]{0,260}?if \(!autoFollowAllowed && !force\) return;/);
+    assert.ok(def, 'startFollow 默认未对 fromMenu 提前返回（或缺少 force 参数）');
 });
 check('stopFollow 服务器退出后切回 :wow（带 view/ownServerOp 守卫）', () => {
     const m = cliSrc.match(/const stopFollow = \(reason\) => \{[\s\S]{0,800}?following = false;/);
