@@ -125,7 +125,7 @@
 
 ---
 
-## [未发版 · main] — Windows Web 端开陶瓦房间号不显示 + Web 启服后 CLI 进入 :mc 无日志
+## [未发版 · main] — Windows Web 端开陶瓦房间号不显示 + Web 启服后 CLI 进入 :mc 无日志 + :mc 误报已停止
 
 ### 一、Windows Web 端开陶瓦房间号不显示
 
@@ -163,9 +163,32 @@
   就必须开始跟随日志。MENU 视图分支不切页、不强制；进入 REPL 的 `setTimeout` 初始兜底仍走隔离判定，不被放开。
 
 ### 验证
-- 新增 `core/test/web_start_mc_log.test.js`（5 项），锁定 force 语义、切视图必强制跟随、MENU 不切页、初始兜底不强制、退出切回 `:wow`。
+- 新增 `core/test/web_start_mc_log.test.js`，锁定 force 语义、切视图必强制跟随、MENU 不切页、初始兜底不强制、退出切回 `:wow`。
 - 同步更新 `input_routing_p0.test.js` 的 `startFollow` 断言（保持隔离强度，非放水）。
 - 全量 `npm test` **80 个文件全绿**。
+
+### 三、:mc 日志跟随在服务器仍在运行时误报「已停止」
+
+> 尚未发版。按项目规则，用户未说「发版」前不升版本号、不打 tag、不建 Release。
+
+### 现象
+- Web 启服、CLI 自动进入 `:mc` 跟随日志后，即便 `seed` 等指令刚被服务端正常响应、日志持续在写，
+  跟随定时器仍突兀打印「⏹ 服务器已停止，已退出 :mc 日志跟踪，回到 :wow 视图」把用户踢回 `:wow`。
+- 用户随即执行 `wow :mc` 又能正常接入（该入口以 PID 判活，证明服务器根本没停），只是历史日志被重放 12 行。
+
+### 根因
+- `cli.js` 的 `followTimer` 每 500ms 用 `isConsoleRelayAlive()`（心跳文件 3s maxAge）作为判停的唯一依据。
+  心跳只代表「有进程在读 MC stdin」，会因中继子进程瞬时阻塞/卡顿而陈旧（Windows 上 `tasklist` execSync
+  可阻塞秒级）；心跳陈旧 ≠ 服务器进程退出。这与 `mc_console.js` 刻意不用心跳判活的口径相矛盾。
+
+### 修法
+- `followTimer` 判活改以「MC 进程真实 PID」为准（`sm.isRunning()`，与 `McConsole.attach` / Web 面板一致），
+  心跳不再作为判停信号；沿用 `mc_console.js` 的降频策略（每 6 个 tick ≈ 3s 查一次），避免 Windows 上
+  `tasklist`（execSync）每 500ms 阻塞一次；异常时保守视为存活、不误踢。
+
+### 验证
+- `core/test/web_start_mc_log.test.js` 增加 1 项：锁定 followTimer 用 `sm.isRunning()` 判活、
+  判活降频、且不再有「心跳陈旧即判停」逻辑。P0 20 项全绿。
 
 ---
 

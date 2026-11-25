@@ -2599,8 +2599,9 @@ async function startRepl(options = {}) {
         if (!ServerManager) return;
         let logFile;
         let noPersist = false;
+        let sm = null;
         try {
-            const sm = new ServerManager();
+            sm = new ServerManager();
             // log.disabled=true：wow 不再写 wow-stdout.log，改跟 MC 自己写的
             // latest.log（允许保留）；保留 stdoutLogFile 这个 token 供回归断言。
             noPersist = config.getConfig('log.disabled', false) === true;
@@ -2615,11 +2616,24 @@ async function startRepl(options = {}) {
         }
         printLine(notice);
         printLine('   💡 继续输入 wow 指令不受影响；服务器停止后自动退出跟踪。');
+        // 判活降频：isRunning() 在 Windows 上要走 tasklist（execSync），500ms 一查太频。
+        // 与 mc_console.js 的 LIVENESS_CHECK_EVERY 同策略——每 6 个 tick（约 3s）查一次真实 PID。
+        const LIVENESS_EVERY = 6;
+        let livenessTick = 0;
         followTimer = setInterval(() => {
-            // 心跳消失 = 服务器进程退出（中继 250ms 一刷，3s 没刷就是没了）
-            if (!ServerManager.isConsoleRelayAlive()) {
-                stopFollow('⏹ 服务器已停止，已退出 :mc 日志跟踪，回到 :wow 视图。');
-                return;
+            // 判活改以「MC 进程真实 PID」为准（与 mc_console.attach / Web 面板一致）。
+            // 心跳（isConsoleRelayAlive）只代表「有人在读 MC stdin」，会瞬时陈旧
+            // （中继子进程阻塞/卡顿），不能据此判定服务器已停——否则会出现
+            // 「服务器还在跑、日志还在写，却误报『服务器已停止』并退出跟踪」。
+            // mc_console.js 早就刻意不用心跳判活，这里对齐同一口径。
+            if (++livenessTick % LIVENESS_EVERY === 0) {
+                let alive = true;
+                try { alive = sm && sm.isRunning() !== false; }
+                catch (e) { /* 检测异常时保守视为存活，避免误踢 */ }
+                if (!alive) {
+                    stopFollow('⏹ 服务器已停止，已退出 :mc 日志跟踪，回到 :wow 视图。');
+                    return;
+                }
             }
             let st;
             try { st = fs.statSync(logFile); } catch (e) { return; }
