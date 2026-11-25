@@ -107,7 +107,10 @@ check('hostRoom 反向加 mode===\'guest\' 守卫，并写入 mode:\'host\'', ()
 
 check('getStatus 暴露 mode / player 字段', () => {
     const i = terraSrc.indexOf('async function getStatus');
-    const body = terraSrc.slice(i, i + 900);
+    // 不强依赖固定字符窗口：函数内注释可能很长，截到函数结束花括号更稳。
+    const rest = terraSrc.slice(i);
+    const j = rest.indexOf('\n}');
+    const body = j > 0 ? rest.slice(0, j) : rest.slice(0, 2400);
     assert.ok(/mode:/.test(body), 'getStatus 未返回 mode');
     assert.ok(/player:/.test(body), 'getStatus 未返回 player');
 });

@@ -125,22 +125,30 @@
 
 ---
 
-## [未发版 · main] — Windows Web 端开陶瓦房间号不显示 + Web 启服后 CLI 进入 :mc 无日志 + :mc 误报已停止
+## [未发版 · main] — Windows Web 端开陶瓦房间号闪现 + Web 启服后 CLI 进入 :mc 无日志 + :mc 误报已停止
 
-### 一、Windows Web 端开陶瓦房间号不显示
+### 一、Windows Web 端开陶瓦房间号闪现即消失（原「不显示』的残留）
 
 > 尚未发版。按项目规则，用户未说「发版」前不升版本号、不打 tag、不建 Release。
 
-- **现象**：Windows 下在 Web 面板点「我要当房主（开房）」，`hostRoom()` 明明拿到了房间号，
-  但前端 `refresh()` 紧接着把房间号刷成「—」，用户看不到房间号。Linux/macOS 正常。
-- **根因**：`terracotta.js` 的 `isAlive(pid)` 无条件用 `process.kill(pid, 0)`。陶瓦守护是
-  `detached + unref` 的跨会话进程，Windows 下这种 PID 探测会稳定抛 ESRCH/EPERM，
-  `getStatus()` 因此返回 `running:false / roomCode:null`，前端刷新即清空房间号。
-  这正是 B1 安全修复在 `server.js` 已解决的同一类 Windows PID 判定问题，陶瓦侧漏改。
-- **修法**：`isAlive()` 按 `utils.getOS()==='windows'` 分支走
-  `execSync('tasklist /FI "PID eq <pid>"')` + 单词边界匹配（与 `server.js._isProcessAlive()` 同一套），
-  非 Windows 仍用 `process.kill(pid, 0)`。消费者契约（`getStatus()` 以 running/isAlive 门控房间号）不变。
-- **验证**：新增 `core/test/terracotta_win_alive.test.js`（5 项静态断言）；陶瓦 `guest`/`diagnose` 回归全绿。
+- **现象**：Windows 下 Web 面板开陶瓦成功、CLI 也显示了房间号，但前端房间号**闪一下又被刷成「未开房」**，
+  Edge 开发者工具无 JS 报错。（上一版已修 `isAlive` 的 tasklist 判定，本轮是更深一层残留。）
+- **闪现链路**：`lan.html` 开房成功回调先用 `/lan/host` 响应显示房间号，随即 `refresh()` →
+  `/api/lan/status` → `getStatus()`；只要它返回 `running:false`，前端就擦掉房间号。
+- **根因（两处）**：
+  1. `readState()` 进程内缓存 `_state` 且命中即返回、永不重读；而陶瓦状态由 Web 面板 / CLI /
+     `auto_room` 子进程**多进程写入**，某进程会一直看到自己第一次读到的旧值。
+  2. `getStatus()` 在探测陶瓦本地 HTTP API 之前，先用 `isAlive(st.pid)` 前置门控。Windows 下
+     陶瓦启动器常孵化真正的守护进程后自行退出、记录的 `child.pid` 失效，PID 判活误报已停；
+     但房间号本就从该 API 取回，API 明明是活的。
+- **修法**：
+  1. `readState()` 每次从 `core/.lan.json` 重读，消除跨进程陈旧缓存。
+  2. `getStatus()` 改为以「本地 HTTP API 是否响应」为权威判活（`apiState`/`apiMeta` 并发探测，
+     最坏只等一次超时）；仅当 API 不通时才退回 `isAlive(st.pid)` 兜底。房间号与 `mode`/`player`
+     契约不变。上一版的 `isAlive` tasklist 判定保留为兜底。
+- **验证**：新增 `core/test/terracotta_status_flash.test.js`（5 项）；`terracotta_win_alive`(5)、
+  `terracotta_guest`(19)、`terracotta_diagnose`(9) 全绿。`terracotta_guest.test.js` 中一处
+  固定 900 字符窗口的脆弱断言改为截到函数结束，健壮性提升（断言强度不变）。
 
 ### 二、Web 启服后 CLI 进入 :mc 无日志
 

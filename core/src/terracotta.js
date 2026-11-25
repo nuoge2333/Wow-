@@ -104,7 +104,11 @@ function getCopyright() {
  * 读取运行时状态（带内存缓存）
  */
 function readState() {
-    if (_state) return _state;
+    // 陶瓦状态可被多个进程写入：Web 面板(/api/lan/host)、CLI(wow lan host)、
+    // 以及 server start 里 auto_room 的子进程。旧实现在进程内缓存 _state 后
+    // 永不重读，某个进程会一直看到自己第一次读到的旧值，看不到别的进程刚写入
+    // 的房间号——表现为 Web 面板开房成功后 refresh() 又变回「未开房」。
+    // 状态文件很小、调用也不频繁，每次都从磁盘重读，彻底消除跨进程陈旧缓存。
     try {
         if (fs.existsSync(STATE_FILE)) {
             _state = fs.readJsonSync(STATE_FILE);
@@ -1175,12 +1179,25 @@ async function stopHost() {
  */
 async function getStatus() {
     const st = readState();
-    if (!st || !st.running || !st.port || !isAlive(st.pid)) {
+    if (!st || !st.running || !st.port) {
         return { running: false, roomCode: null, port: null, state: null, meta: null };
     }
-    let state = null, meta = null;
-    try { state = await apiState(st.port); } catch (e) {}
-    try { meta = await apiMeta(st.port); } catch (e) {}
+    // 判活以「陶瓦本地 HTTP API 是否响应」为权威信号——房间号本身就是从这里取回的，
+    // API 通就说明房间确实在跑。旧实现在探测 API 之前先用 isAlive(st.pid) 门控，
+    // 但 Windows 下陶瓦启动器常在孵化真正的守护进程后自行退出，子进程 detached 运行，
+    // 记录的 child.pid 可能已不存在；tasklist/kill 判活因此返回 false，于是明明
+    // host-ok、CLI 也拿到了房间号，getStatus 却报 running:false，前端 refresh()
+    // 把刚显示的房间号又刷成「未开房」。API 不通时才退回 PID 判活兜底。
+    // 两次 API 调用并发，整段最坏只等一次超时，不拖慢前端刷新。
+    const [stateRes, metaRes] = await Promise.allSettled([
+        apiState(st.port), apiMeta(st.port)
+    ]);
+    const state = stateRes.status === 'fulfilled' ? stateRes.value : null;
+    const meta = metaRes.status === 'fulfilled' ? metaRes.value : null;
+    const apiAlive = stateRes.status === 'fulfilled' || metaRes.status === 'fulfilled';
+    if (!apiAlive && !isAlive(st.pid)) {
+        return { running: false, roomCode: null, port: null, state: null, meta: null };
+    }
     return {
         running: true,
         // host = 我要当房主 / guest = 我要当房客；老状态文件没有该字段时
