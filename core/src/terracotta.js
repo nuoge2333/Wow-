@@ -56,7 +56,7 @@
 const fs = require('fs-extra');
 const path = require('path');
 const os = require('os');
-const { spawn } = require('child_process');
+const { spawn, execSync } = require('child_process');
 const axios = require('axios');
 const ProgressBar = require('progress');
 const net = require('net');
@@ -714,12 +714,27 @@ async function stopDaemon() {
 }
 
 /**
- * 判断进程是否存活
+ * 判断进程是否存活。
+ *
+ * Windows 必须用 tasklist 而不是 process.kill(pid, 0)：陶瓦守护是 detached +
+ * unref 启动的独立会话进程，Windows 下 process.kill(pid, 0) 对这种跨会话 PID
+ * 会稳定抛 ESRCH/EPERM，导致误判守护已死——表现为 web 面板开房成功后
+ * getStatus() 立刻返回 running:false / roomCode:null，前端 refresh() 把刚拿到的
+ * 房间号刷成「—」（Windows 独有；Linux/macOS 的 kill(pid,0) 可靠）。
+ * 与 server.js 的 _isProcessAlive() 保持同一套 Windows 判定。
  */
 function isAlive(pid) {
     if (!pid) return false;
-    try { process.kill(pid, 0); return true; }
-    catch (e) { return false; }
+    try {
+        if (utils.getOS() === 'windows') {
+            const out = execSync(`tasklist /FI "PID eq ${pid}"`, {
+                timeout: 2000, encoding: 'utf8', windowsHide: true
+            });
+            return new RegExp(`\\b${pid}\\b`).test(out);
+        }
+        process.kill(pid, 0);
+        return true;
+    } catch (e) { return false; }
 }
 
 /**

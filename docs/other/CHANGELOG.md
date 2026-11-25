@@ -125,7 +125,24 @@
 
 ---
 
-## [未发版 · main] — Web 启服后 CLI 进入 :mc 无日志
+## [未发版 · main] — Windows Web 端开陶瓦房间号不显示 + Web 启服后 CLI 进入 :mc 无日志
+
+### 一、Windows Web 端开陶瓦房间号不显示
+
+> 尚未发版。按项目规则，用户未说「发版」前不升版本号、不打 tag、不建 Release。
+
+- **现象**：Windows 下在 Web 面板点「我要当房主（开房）」，`hostRoom()` 明明拿到了房间号，
+  但前端 `refresh()` 紧接着把房间号刷成「—」，用户看不到房间号。Linux/macOS 正常。
+- **根因**：`terracotta.js` 的 `isAlive(pid)` 无条件用 `process.kill(pid, 0)`。陶瓦守护是
+  `detached + unref` 的跨会话进程，Windows 下这种 PID 探测会稳定抛 ESRCH/EPERM，
+  `getStatus()` 因此返回 `running:false / roomCode:null`，前端刷新即清空房间号。
+  这正是 B1 安全修复在 `server.js` 已解决的同一类 Windows PID 判定问题，陶瓦侧漏改。
+- **修法**：`isAlive()` 按 `utils.getOS()==='windows'` 分支走
+  `execSync('tasklist /FI "PID eq <pid>"')` + 单词边界匹配（与 `server.js._isProcessAlive()` 同一套），
+  非 Windows 仍用 `process.kill(pid, 0)`。消费者契约（`getStatus()` 以 running/isAlive 门控房间号）不变。
+- **验证**：新增 `core/test/terracotta_win_alive.test.js`（5 项静态断言）；陶瓦 `guest`/`diagnose` 回归全绿。
+
+### 二、Web 启服后 CLI 进入 :mc 无日志
 
 > 尚未发版。按项目规则，用户未说「发版」前不升版本号、不打 tag、不建 Release。
 
