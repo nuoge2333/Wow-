@@ -144,6 +144,7 @@ async function searchModrinth(query, opts = {}, projectType = 'mod') {
             slug: hit.slug,
             projectType,
             url: `https://modrinth.com/${projectType}/${hit.slug}`,
+            icon_url: hit.icon_url || '',
             download_url: file ? file.url : '',
             filename: file ? file.filename : ''
         });
@@ -240,6 +241,7 @@ async function searchCurseForge(query, opts = {}, projectType = 'mod') {
             slug: m.slug,
             projectType,
             url: m.links && m.links.websiteUrl,
+            icon_url: (m.thumbnailUrl && m.thumbnailUrl.url) || m.thumbnailUrl || '',
             download_url: file ? (file.downloadUrl || '') : '',
             filename: file ? file.fileName : ''
         };
@@ -308,6 +310,8 @@ async function getModrinthInfo(id) {
         version: file ? file.version_number : 'latest',
         downloads: formatNumber(p.downloads),
         description: p.description || '',
+        body: p.body || '',
+        icon_url: p.icon_url || '',
         url: `https://modrinth.com/mod/${p.slug}`,
         download_url: file ? file.url : '',
         dependencies: await getModrinthDependencies(p.id)
@@ -425,6 +429,9 @@ async function getCurseForgeInfo(id) {    // V3.5.25：走三层降级并缓存�
         version: file ? file.displayName : 'latest',
         downloads: formatNumber(m.downloadCount),
         description: m.summary || '',
+        // CurseForge 详情接口无 Markdown 正文；留空由前端回退到 description
+        body: '',
+        icon_url: (m.thumbnailUrl && m.thumbnailUrl.url) || m.thumbnailUrl || '',
         url: m.links && m.links.websiteUrl,
         download_url: file ? (file.downloadUrl || '') : '',
         dependencies: []

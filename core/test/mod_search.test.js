@@ -38,7 +38,8 @@ axios.get = async (url, opts) => {
         lastSearchParams = opts.params;
         return { data: { hits: [
             { project_id: 'abc', slug: 'abc-mod', title: 'ABC Mod', author: 'a', downloads: 1234,
-              description: 'd', versions: ['1.20.1'], categories: ['fabric', 'technology'] }
+              description: 'd', versions: ['1.20.1'], categories: ['fabric', 'technology'],
+              icon_url: 'https://cdn.modrinth.com/abc.png' }
         ] } };
     }
     if (/\/project\/[^/]+\/version$/.test(url)) {
@@ -46,7 +47,9 @@ axios.get = async (url, opts) => {
     }
     if (/\/project\/[^/]+$/.test(url)) {
         return { data: { id: 'abc', slug: 'abc-mod', title: 'ABC Mod', downloads: 1234,
-                         description: 'd', team: 'team1' } };
+                         description: 'd', team: 'team1',
+                         icon_url: 'https://cdn.modrinth.com/abc.png',
+                         body: '# ABC Mod\n\n详细说明正文。' } };
     }
     if (/\/team\//.test(url)) {
         return { data: [{ role: 'Owner', user: { username: 'owner1' } }] };
@@ -139,6 +142,17 @@ checkAsync('返回结果含 download_url / filename / loaders 过滤', async () 
     assert.strictEqual(hit.download_url, 'https://dl/abc.jar');
     assert.strictEqual(hit.filename, 'abc.jar');
     assert.ok(hit.loaders.includes('fabric'), 'loaders 应含 fabric');
+});
+
+checkAsync('搜索结果透传 icon_url', async () => {
+    const r = await modSearch.search('modrinth', 'jei', { loader: 'fabric' });
+    assert.strictEqual(r.results[0].icon_url, 'https://cdn.modrinth.com/abc.png');
+});
+
+checkAsync('详情透传 icon_url 与 Markdown body', async () => {
+    const info = await modSearch.getInfo('modrinth', 'abc');
+    assert.strictEqual(info.icon_url, 'https://cdn.modrinth.com/abc.png');
+    assert.ok(/# ABC Mod/.test(info.body), '详情 body 应保留 Markdown 原文');
 });
 
 console.log(`\n${failed === 0 ? '✅ 全部通过' : '❌ 存在失败'}：${passed} passed, ${failed} failed\n`);

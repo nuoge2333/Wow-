@@ -155,6 +155,29 @@
             color: #8899aa;
             font-size: 11px;
         }
+        /* 模组图标：左图右文，空 URL / 裂图都由 onerror 兜底为内置占位图 */
+        .result-item .mod-icon {
+            width: 52px;
+            height: 52px;
+            border-radius: 8px;
+            object-fit: cover;
+            background: #0d1420;
+            flex-shrink: 0;
+            margin-right: 12px;
+            border: 1px solid #223049;
+        }
+        .result-item .mod-summary {
+            color: #8fa3c0;
+            font-size: 12px;
+            line-height: 1.5;
+            margin-top: 5px;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+        .btn-sm.link { background: #7b1fa2; }
+        .btn-sm.link:hover { background: #6a1b9a; }
         .result-item .actions {
             display: flex;
             gap: 6px;
@@ -369,6 +392,41 @@
         }
         .modal-box h3 { margin: 0 0 6px; font-size: 18px; color: #e6edf7; }
         .modal-box .modal-sub { font-size: 13px; color: #8fa3c0; margin-bottom: 16px; line-height: 1.6; }
+        /* ===== 模组详情弹层：图标 + Markdown 正文 + 外链 ===== */
+        .modal-box.detail-box { width: min(760px, 94vw); }
+        .detail-head { display: flex; gap: 14px; align-items: flex-start; margin-bottom: 14px; }
+        .detail-head .detail-icon {
+            width: 72px; height: 72px; border-radius: 10px; object-fit: cover;
+            background: #0d1420; border: 1px solid #223049; flex-shrink: 0;
+        }
+        .detail-head .detail-meta { flex: 1; min-width: 0; }
+        .detail-head .detail-meta h3 { margin: 0 0 6px; word-break: break-word; }
+        .detail-head .detail-stats { font-size: 12px; color: #8fa3c0; line-height: 1.8; }
+        .detail-head .detail-stats .tag {
+            display: inline-block; background: #1a2332; padding: 0 8px;
+            border-radius: 4px; margin-right: 6px; color: #8899aa; font-size: 11px;
+        }
+        .detail-body {
+            background: #0f1a2f; border: 1px solid #223049; border-radius: 8px;
+            padding: 14px 18px; max-height: 46vh; overflow-y: auto;
+            font-size: 13px; line-height: 1.7; color: #c3d1e6;
+            word-break: break-word;
+        }
+        .detail-body h1, .detail-body h2, .detail-body h3, .detail-body h4 { color: #e6edf7; margin: 16px 0 6px; }
+        .detail-body h1 { font-size: 20px; } .detail-body h2 { font-size: 17px; } .detail-body h3 { font-size: 15px; }
+        .detail-body p { margin: 8px 0; }
+        .detail-body a { color: #58a6ff; }
+        .detail-body code { background: #1a2332; padding: 1px 5px; border-radius: 3px; font-size: 12px; }
+        .detail-body pre { background: #0a1220; padding: 10px; border-radius: 6px; overflow-x: auto; }
+        .detail-body ul, .detail-body ol { padding-left: 22px; }
+        .detail-body img { max-width: 100%; }
+        .detail-body .docs-plain { white-space: pre-wrap; word-break: break-word; }
+        .detail-deps { margin-top: 12px; font-size: 12px; color: #8fa3c0; line-height: 1.7; }
+        .detail-actions { margin-top: 16px; display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+        .detail-actions button { padding: 9px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+        .detail-actions .open-link { border: 1px solid #4a5f7d; background: #23324a; color: #dbe7f6; }
+        .detail-actions .open-link:hover { background: #2c3e5a; }
+        .detail-actions .cancel { border: 1px solid #3a4a63; background: transparent; color: #8fa3c0; }
         .modal-field { margin-bottom: 14px; }
         .modal-field label { display: block; font-size: 13px; color: #b8c8e0; margin-bottom: 6px; }
         .modal-field select {
@@ -592,7 +650,29 @@
         </div>
     </div>
 
+    <!-- 模组详情弹层：图标 + 简介 + Markdown 正文 + 外链 -->
+    <div class="modal-mask" id="mod-detail-modal">
+        <div class="modal-box detail-box">
+            <div class="detail-head">
+                <img class="detail-icon" id="detail-icon" alt="" src="">
+                <div class="detail-meta">
+                    <h3 id="detail-title">模组详情</h3>
+                    <div class="detail-stats" id="detail-stats"></div>
+                </div>
+            </div>
+            <div class="detail-body" id="detail-body"></div>
+            <div class="detail-deps" id="detail-deps"></div>
+            <div class="detail-actions">
+                <button class="cancel" id="detail-close">关闭</button>
+                <button class="open-link" id="detail-open-link">🔗 打开主页</button>
+            </div>
+        </div>
+    </div>
+
     <script src="/socket.io/socket.io.js"></script>
+    <!-- Markdown 详情渲染依赖：本地 vendor，离线可用，绝不走 CDN -->
+    <script src="/js/vendor/marked.min.js"></script>
+    <script src="/js/vendor/purify.min.js"></script>
     <script>
         (function() {
             const token = sessionStorage.getItem('wow_token');
@@ -907,8 +987,10 @@
                         const loaders = (item.loaders || []).map(l => `<span class="tag">${escapeHtml(l)}</span>`).join('');
                         const project = item.project_id || item.slug || item.name;
                         const attrs = `data-project="${escapeHtml(project)}" data-name="${escapeHtml(item.name)}" ` +
-                            `data-source="${escapeHtml(source)}" data-kind="${ui.kind}"`;
+                            `data-source="${escapeHtml(source)}" data-kind="${ui.kind}" ` +
+                            `data-url="${escapeHtml(item.url || '')}" data-icon="${escapeHtml(item.icon_url || '')}"`;
                         return `<div class="result-item">
+                            ${iconImgHtml(item.icon_url, item.name)}
                             <div class="info">
                                 <div class="name">${escapeHtml(item.name)}</div>
                                 <div class="meta">
@@ -916,13 +998,14 @@
                                     版本 ${escapeHtml(item.version || 'latest')} ·
                                     下载 ${escapeHtml(item.downloads || '0')} ·
                                     ${loaders}
-                                    ${item.summary ? '<br>' + escapeHtml(item.summary.slice(0, 100)) : ''}
                                 </div>
+                                ${item.summary ? `<div class="mod-summary" title="${escapeHtml(item.summary)}">${escapeHtml(item.summary)}</div>` : ''}
                             </div>
                             <div class="actions">
                                 <button class="btn-sm download" ${attrs}>⬇️ 下载</button>
                                 <button class="btn-sm deps" ${attrs}>📦 依赖</button>
                                 <button class="btn-sm info" ${attrs}>ℹ️ 详情</button>
+                                ${item.url ? `<button class="btn-sm link btn-homepage" ${attrs} title="在新标签页打开模组主页">🔗 主页</button>` : ''}
                             </div>
                         </div>`;
                     }).join('');
@@ -949,7 +1032,24 @@
                 });
                 // 详情 / 依赖打开同一个「项目详情 + 依赖清单」弹层（依赖按钮不再形同虚设）
                 container.querySelectorAll('.result-item .btn-sm.info, .result-item .btn-sm.deps').forEach(el => {
-                    el.addEventListener('click', () => showContentInfo(el.dataset.project, el.dataset.source));
+                    el.addEventListener('click', () => showContentInfo(el.dataset.project, el.dataset.source, {
+                        name: el.dataset.name,
+                        url: el.dataset.url,
+                        icon: el.dataset.icon
+                    }));
+                });
+                // 主页按钮：新标签页外链（用后端返回的 url，缺失时按来源 + slug 兜底）
+                container.querySelectorAll('.result-item .btn-homepage').forEach(el => {
+                    el.addEventListener('click', () => {
+                        let url = el.dataset.url;
+                        if (!url) {
+                            const src = el.dataset.source === 'curseforge'
+                                ? 'https://www.curseforge.com/minecraft/mc-mods/'
+                                : 'https://modrinth.com/mod/';
+                            url = src + encodeURIComponent(el.dataset.project);
+                        }
+                        window.open(url, '_blank', 'noopener,noreferrer');
+                    });
                 });
             }
 
@@ -958,6 +1058,34 @@
                 const div = document.createElement('div');
                 div.textContent = text;
                 return div.innerHTML;
+            }
+
+            // 内置默认占位图：像素风工作台（内联 SVG data URI，绝不请求外部资源、绝不破图）
+            const MOD_PLACEHOLDER = 'data:image/svg+xml;utf8,' + encodeURIComponent(
+                '<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" shape-rendering="crispEdges">' +
+                '<rect width="64" height="64" fill="#2b3a4a"/>' +
+                '<rect x="8" y="14" width="48" height="12" fill="#8b5a2b"/>' +
+                '<rect x="8" y="14" width="48" height="4" fill="#a9713d"/>' +
+                '<rect x="8" y="26" width="48" height="4" fill="#6b4423"/>' +
+                '<rect x="12" y="30" width="7" height="22" fill="#6b4423"/>' +
+                '<rect x="45" y="30" width="7" height="22" fill="#6b4423"/>' +
+                '<rect x="27" y="18" width="10" height="4" fill="#5a3a1c"/>' +
+                '<rect x="18" y="34" width="6" height="10" fill="#b8c0c8"/>' +
+                '<rect x="40" y="34" width="6" height="6" fill="#d4a017"/>' +
+                '<rect x="39" y="40" width="8" height="4" fill="#7a7f86"/>' +
+                '</svg>'
+            );
+            // 安全图标 URL：只接受 http(s) 与内置 data URI，空值/异常一律回退占位图
+            function safeIconUrl(url) {
+                const u = String(url || '').trim();
+                if (!u) return MOD_PLACEHOLDER;
+                if (/^https?:\/\//i.test(u) || u.startsWith('data:image/')) return u;
+                return MOD_PLACEHOLDER;
+            }
+            // 图标 img 模板：onerror 兜底，杜绝裂图
+            function iconImgHtml(url, alt) {
+                return `<img class="mod-icon" src="${escapeHtml(safeIconUrl(url))}" alt="${escapeHtml(alt || '')}" ` +
+                    `loading="lazy" onerror="this.onerror=null;this.src='${MOD_PLACEHOLDER}'">`;
             }
 
             // ==================== 异步任务提交 ====================
@@ -1159,15 +1287,94 @@
             });
 
             // ==================== 项目详情 / 依赖清单 ====================
-            async function showContentInfo(project, source) {
+            const detailModal = document.getElementById('mod-detail-modal');
+            const detailIcon = document.getElementById('detail-icon');
+            const detailTitle = document.getElementById('detail-title');
+            const detailStats = document.getElementById('detail-stats');
+            const detailBody = document.getElementById('detail-body');
+            const detailDeps = document.getElementById('detail-deps');
+            const detailOpenLink = document.getElementById('detail-open-link');
+            let detailCurrentUrl = '';
+
+            function closeDetail() { detailModal.classList.remove('active'); }
+            document.getElementById('detail-close').addEventListener('click', closeDetail);
+            detailModal.addEventListener('click', (e) => { if (e.target === detailModal) closeDetail(); });
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape' && detailModal.classList.contains('active')) closeDetail();
+            });
+            detailOpenLink.addEventListener('click', () => {
+                if (detailCurrentUrl) window.open(detailCurrentUrl, '_blank', 'noopener,noreferrer');
+            });
+
+            /** 安全渲染 Markdown：marked → DOMPurify 清洗；库缺失/异常一律降级为纯文本，绝不 innerHTML 原文 */
+            function renderDetailMarkdown(md) {
+                const hasLibs = !!(window.marked && typeof window.marked.parse === 'function' &&
+                    window.DOMPurify && typeof window.DOMPurify.sanitize === 'function');
+                const text = String(md || '');
+                if (!hasLibs || !text) {
+                    const pre = document.createElement('pre');
+                    pre.className = 'docs-plain';
+                    pre.textContent = text || '（该来源未提供详细正文）';
+                    detailBody.textContent = '';
+                    detailBody.appendChild(pre);
+                    return;
+                }
+                try {
+                    const raw = window.marked.parse(text);
+                    const clean = window.DOMPurify.sanitize(raw, {
+                        USE_PROFILES: { html: true },
+                        FORBID_TAGS: ['script', 'style', 'iframe', 'form', 'input', 'object', 'embed', 'link', 'meta', 'base'],
+                        FORBID_ATTR: ['style', 'srcdoc', 'formaction'],
+                        ADD_ATTR: ['target', 'rel']
+                    });
+                    detailBody.textContent = '';
+                    detailBody.innerHTML = clean;
+                    // 外链一律新标签页 + noopener，防 target=blank 反向操纵
+                    detailBody.querySelectorAll('a[href]').forEach(a => {
+                        a.setAttribute('target', '_blank');
+                        a.setAttribute('rel', 'noopener noreferrer');
+                    });
+                } catch (e) {
+                    const pre = document.createElement('pre');
+                    pre.className = 'docs-plain';
+                    pre.textContent = text;
+                    detailBody.textContent = '';
+                    detailBody.appendChild(pre);
+                }
+            }
+
+            async function showContentInfo(project, source, fallback) {
+                fallback = fallback || {};
+                detailIcon.onerror = () => { detailIcon.onerror = null; detailIcon.src = MOD_PLACEHOLDER; };
+                detailIcon.src = safeIconUrl(fallback.icon || MOD_PLACEHOLDER);
+                detailTitle.textContent = fallback.name || project;
+                detailStats.textContent = '正在加载详情...';
+                detailBody.textContent = '';
+                detailDeps.textContent = '';
+                detailCurrentUrl = '';
+                detailOpenLink.style.display = 'none';
+                detailModal.classList.add('active');
                 try {
                     const data = await apiGet(`/api/mod/info?source=${encodeURIComponent(source)}&project=${encodeURIComponent(project)}`);
+                    detailTitle.textContent = data.name || fallback.name || project;
+                    // 用详情接口返回的图标覆盖列表图标（更权威），空则保留列表图标
+                    if (data.icon_url) detailIcon.src = safeIconUrl(data.icon_url);
+                    const loaders = (data.loaders || []).map(l => `<span class="tag">${escapeHtml(l)}</span>`).join('');
+                    detailStats.innerHTML =
+                        `作者 ${escapeHtml(data.author || '未知作者')} · 版本 ${escapeHtml(data.version || 'latest')} · 下载 ${escapeHtml(data.downloads || '0')}` +
+                        (loaders ? '<br>' + loaders : '') +
+                        (data.description ? `<br>${escapeHtml(data.description)}` : '');
+                    // 正文：优先 body（Markdown），缺失则回退 description
+                    renderDetailMarkdown(data.body || data.description || '');
                     const deps = (data.dependencies || []).length
-                        ? (data.dependencies || []).map(d =>
-                            `  · ${d.project_id || d.name || d.slug || String(d)}（${d.dependency_type || 'required'}）`).join('\n')
-                        : '  无（或该来源未提供依赖信息）';
-                    alert(`📦 ${data.name}\n作者: ${data.author}\n版本: ${data.version}\n下载: ${data.downloads}\n描述: ${data.description || '无'}\n\n前置依赖:\n${deps}`);
+                        ? data.dependencies.map(d => d.project_id || d.name || d.slug || String(d)).join('、')
+                        : '无（或该来源未提供依赖信息）';
+                    detailDeps.textContent = '前置依赖：' + deps;
+                    detailCurrentUrl = data.url || fallback.url || '';
+                    detailOpenLink.style.display = detailCurrentUrl ? '' : 'none';
                 } catch (e) {
+                    detailStats.textContent = '';
+                    detailBody.textContent = '获取详情失败: ' + e.message;
                     showToast('获取详情失败: ' + e.message, 'error');
                 }
             }

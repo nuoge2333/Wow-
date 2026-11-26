@@ -1332,6 +1332,199 @@ function startWeb(options = {}) {
     });
 
     // ========================================================================
+    // 单方案多存档管理 + 服务器图标生态（world_manager）
+    // 约定：server.properties 只经 world_manager 内的 ServerProps.writeProps 改写，
+    //       图标只在文件系统物理复制，绝不进 pool 哈希系统。
+    // ========================================================================
+
+    /** 解析请求里的方案名 → { name, schemePath }，无激活方案时返回 null */
+    function resolveWorldScheme(req) {
+        const SchemeManager = require('./scheme_manager');
+        const sm = new SchemeManager();
+        const wanted = pickParam((req.body && req.body.scheme) || req.query.scheme);
+        const name = wanted || sm.currentScheme || '';
+        if (!name) return { error: '当前没有激活方案，请先在「方案管理」中切换方案', status: 400 };
+        if (!sm._schemeExists(name)) return { error: `方案「${name}」不存在`, status: 404 };
+        return { name, schemePath: sm._getSchemePath(name), sm };
+    }
+
+    /** 服务器是否在运行（用真实 PID 判活，与开服/CLI 同一口径） */
+    function isSchemeServerRunning(schemePath) {
+        try {
+            const pidFile = path.join(schemePath, 'server.pid');
+            if (!fs.existsSync(pidFile)) return false;
+            const pid = parseInt(fs.readFileSync(pidFile, 'utf8').trim(), 10);
+            if (!pid) return false;
+            if (utils.getOS && utils.getOS() === 'windows') {
+                const { execSync } = require('child_process');
+                const out = execSync(`tasklist /FI "PID eq ${pid}"`, { timeout: 2000, encoding: 'utf8', windowsHide: true });
+                return new RegExp(`\\b${pid}\\b`).test(out);
+            }
+            process.kill(pid, 0);
+            return true;
+        } catch (e) {
+            return false;
+        }
+    }
+
+    /**
+     * 存档列表：自动尝试旧 world 迁移，再返回 saves/ 下所有有效存档 + 当前 level-name。
+     * GET /api/worlds?scheme=<name>
+     */
+    app.get('/api/worlds', (req, res) => {
+        try {
+            const ctx = resolveWorldScheme(req);
+            if (ctx.error) return res.status(ctx.status).json({ success: false, error: ctx.error });
+            const WM = require('./world_manager');
+            // 打开面板即自动迁移旧存档（幂等、防丢档）
+            let migration = { migrated: false, moved: [] };
+            try { migration = WM.migrateLegacyWorld(ctx.schemePath); } catch (e) {}
+            const levelName = WM.getCurrentLevelName(ctx.schemePath);
+            const worlds = WM.listWorlds(ctx.schemePath, levelName);
+            res.json({
+                success: true,
+                scheme: ctx.name,
+                levelName,
+                currentRel: WM.levelNameToRel(levelName),
+                worlds,
+                migration
+            });
+        } catch (e) {
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+    /** 手动触发旧存档迁移（一般 GET /api/worlds 已自动迁移，此接口供重试） */
+    app.post('/api/worlds/migrate', (req, res) => {
+        try {
+            const ctx = resolveWorldScheme(req);
+            if (ctx.error) return res.status(ctx.status).json({ success: false, error: ctx.error });
+            const WM = require('./world_manager');
+            const r = WM.migrateLegacyWorld(ctx.schemePath);
+            logger.impt(`Web 存档迁移: ${ctx.name}（${r.moved.join(', ') || '无需迁移'}）`);
+            res.json({ success: true, ...r });
+        } catch (e) {
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+    /** 新建存档：服务器运行中强制拦截 */
+    app.post('/api/worlds/create', (req, res) => {
+        try {
+            const ctx = resolveWorldScheme(req);
+            if (ctx.error) return res.status(ctx.status).json({ success: false, error: ctx.error });
+            if (isSchemeServerRunning(ctx.schemePath)) {
+                return res.status(409).json({ success: false, error: '请先停止服务器再新建/切换存档。' });
+            }
+            const WM = require('./world_manager');
+            const body = req.body || {};
+            const r = WM.createWorld(ctx.schemePath, {
+                name: body.name, seed: body.seed, levelType: body.levelType
+            });
+            if (!r.ok) return res.status(400).json({ success: false, error: r.reason });
+            logger.impt(`Web 新建存档: ${ctx.name}/saves/${r.name}`);
+            res.json({ success: true, ...r });
+        } catch (e) {
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+    /** 切换存档：服务器运行中强制拦截 */
+    app.post('/api/worlds/switch', (req, res) => {
+        try {
+            const ctx = resolveWorldScheme(req);
+            if (ctx.error) return res.status(ctx.status).json({ success: false, error: ctx.error });
+            if (isSchemeServerRunning(ctx.schemePath)) {
+                return res.status(409).json({ success: false, error: '请先停止服务器再新建/切换存档。' });
+            }
+            const WM = require('./world_manager');
+            const r = WM.switchWorld(ctx.schemePath, req.body && req.body.name);
+            if (!r.ok) return res.status(400).json({ success: false, error: r.reason });
+            logger.impt(`Web 切换存档: ${ctx.name} → ${r.rel}`);
+            res.json({ success: true, ...r });
+        } catch (e) {
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+    /** 素材库图标列表：GET /api/icons/pool?scheme=<name> */
+    app.get('/api/icons/pool', (req, res) => {
+        try {
+            const ctx = resolveWorldScheme(req);
+            if (ctx.error) return res.status(ctx.status).json({ success: false, error: ctx.error });
+            const WM = require('./world_manager');
+            // 缩略图用 data URI 内联返回：<img> 无法携带 Bearer 头，独立图片路由在开启登录时会 401。
+            const icons = WM.listPoolIcons().map(i => {
+                let dataUrl = '';
+                try { dataUrl = 'data:image/png;base64,' + fs.readFileSync(i.file).toString('base64'); } catch (e) {}
+                return { name: i.name, size: i.size, dataUrl };
+            });
+            res.json({
+                success: true,
+                current: { serverIcon: WM.iconTargets(ctx.schemePath).serverIcon },
+                icons
+            });
+        } catch (e) {
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+    /**
+     * 保存图标到当前方案（双写 server-icon.png + <level-name>/icon.png）。
+     * POST /api/icons/save { scheme?, image: "data:image/png;base64,..." | "<base64>", toPool?:bool, poolName?:string }
+     */
+    app.post('/api/icons/save', (req, res) => {
+        try {
+            const ctx = resolveWorldScheme(req);
+            if (ctx.error) return res.status(ctx.status).json({ success: false, error: ctx.error });
+            const body = req.body || {};
+            let raw = String(body.image || '');
+            const comma = raw.indexOf(',');
+            if (raw.startsWith('data:') && comma !== -1) raw = raw.slice(comma + 1);
+            let buf;
+            try { buf = Buffer.from(raw, 'base64'); } catch (e) { buf = Buffer.alloc(0); }
+            const WM = require('./world_manager');
+            const r = WM.saveIcon(ctx.schemePath, buf, { toPool: !!body.toPool, poolName: body.poolName });
+            if (!r.ok) return res.status(400).json({ success: false, error: r.reason });
+            logger.impt(`Web 保存服务器图标: ${ctx.name}${body.toPool ? '（并存入素材库）' : ''}`);
+            res.json({ success: true, ...r });
+        } catch (e) {
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+    /** 读取素材库 PNG 缩略图：GET /api/icons/file?scheme=<name>&name=<file.png> */
+    app.get('/api/icons/file', (req, res) => {
+        try {
+            const WM = require('./world_manager');
+            const name = String((req.query && req.query.name) || '').trim();
+            if (!name || name.includes('/') || name.includes('\\') || name === '..' || !/\.png$/i.test(name)) {
+                return res.status(400).send('bad name');
+            }
+            const file = path.join(WM.iconsPoolDir(), name);
+            if (!fs.existsSync(file)) return res.status(404).send('not found');
+            res.type('png').send(fs.readFileSync(file));
+        } catch (e) {
+            res.status(500).send(e.message);
+        }
+    });
+
+    /** 应用素材库图标到当前方案：POST /api/icons/apply { scheme?, name: "xxx.png" } */
+    app.post('/api/icons/apply', (req, res) => {
+        try {
+            const ctx = resolveWorldScheme(req);
+            if (ctx.error) return res.status(ctx.status).json({ success: false, error: ctx.error });
+            const WM = require('./world_manager');
+            const r = WM.applyPoolIcon(ctx.schemePath, req.body && req.body.name);
+            if (!r.ok) return res.status(400).json({ success: false, error: r.reason });
+            logger.impt(`Web 应用素材库图标: ${ctx.name} ← ${req.body.name}`);
+            res.json({ success: true, ...r });
+        } catch (e) {
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+    // ========================================================================
     // 模组表单引擎（V3.6.2 · 608 进阶）
     // 引擎与数据解耦：这里只做「读写 schema 库 + 调引擎」，不认识任何具体模组。
     // ========================================================================

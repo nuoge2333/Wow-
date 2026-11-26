@@ -955,8 +955,13 @@ class SchemeManager {
         }
 
         // 删除未被引用的资源
+        // 白名单：图标素材库（pool/icons/）只做物理复制、不进哈希系统，绝不能被清理误删。
+        // 即便历史数据曾误把 icons 下的路径登记进 index.yaml，也在这里豁免。
+        const POOL_KEEP_DIRS = new Set(['icons']);
         let removed = 0;
         for (const [hash, pathStr] of Object.entries(this.poolIndex.resources)) {
+            const topDir = String(pathStr).replace(/\\/g, '/').split('/')[0];
+            if (POOL_KEEP_DIRS.has(topDir)) continue; // 素材库白名单，防误删
             if (!usedHashes.has(hash)) {
                 const fullPath = path.join(this.poolDir, pathStr);
                 if (fs.existsSync(fullPath)) {

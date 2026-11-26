@@ -125,6 +125,47 @@
 
 ---
 
+## [未发版 · main] — Web 模组展示完善 + 单方案多存档管理与服务器图标生态
+
+> 尚未发版。按项目规则，用户未说「发版」前不升版本号、不打 tag、不建 Release。
+
+### 一、Web 端模组展示与图标完善
+
+- **图标**：后端 `mod_search.js` 透传 `icon_url`（Modrinth `icon_url` / CurseForge `thumbnailUrl`）；
+  `down.html` 卡片左图右文渲染图标，空 URL / 裂图由 `safeIconUrl` + `onerror` 兜底为**内置像素风工作台 SVG**
+  （内联 data URI，绝不请求外部、绝不破图）。
+- **简介**：列表独立 `.mod-summary` 节点展示英文 `summary`，CSS `-webkit-line-clamp:2` 截断防撑破 UI。
+- **详情 / 外链**：详情弹层替换原 `alert()`，用本地 `marked` + `DOMPurify` 安全渲染 `body`（Markdown），
+  库缺失/异常一律降级纯文本；卡片新增「🔗 主页」按钮，新标签页外链（用后端 `url`，缺失按来源 + slug 兜底）。
+- **验证**：新增 `core/test/mod_display.test.js`（11 项静态断言）；`mod_search.test.js` 增 2 项透传断言（12/12）；
+  `web_pages.test.js` 51/51（两份 down.html 逐字节一致）。
+
+### 二、单方案多存档管理（核心逻辑）
+
+- **旧数据安全迁移**：打开 Web 面板即检测方案根 `world/` + `level-name=world`，物理移动
+  `world`/`world_nether`/`world_the_end` 到 `saves/`，改 `level-name=saves/world`，输出
+  `✅ 已自动将旧存档迁移至 saves 目录`，幂等且目标已存在不覆盖（防丢档）。
+- **新建存档**：Web 表单（名称 `^[a-zA-Z0-9_-]+$`、level-seed 选填、level-type 四选一），拼 `saves/<name>`，
+  经 `ServerProps.writeProps`（等价 config server 接口 `/api/props`）写 server.properties 保留注释；
+  服务器运行中 POST 返回 409 强制拦截。
+- **存档列表 / 切换**：扫描 `saves/` 下含 `level.dat` 的子目录；切换改 `level-name`，前端弹防呆警告
+  （背包与成就不会带入新世界）；运行中同样拦截。
+- **server.properties 纪律**：所有写操作只经 `ServerProps.writeProps`，绝不直接写文本文件，注释/格式零丢失。
+
+### 三、原生 Canvas 图标画板 + 双路径应用 + 素材库
+
+- **画板**：`scheme.html` 新增 64×64 `<canvas>`（`image-rendering:pixelated`、320px 显示），原生取色器 /
+  橡皮擦（`clearRect`）/ 清空画板，`offsetX/5`、`offsetY/5` 映射 + `fillRect(x,y,1,1)`，`toBlob()` 导出 PNG。
+  **未引入任何第三方 Canvas 库**。
+- **双路径**：保存图标写 `scheme/<方案>/server-icon.png`（多人列表）+ `saves/<current>/icon.png`（单人/局域网），
+  提示「图标已保存！重启服务器即可在列表看到」。
+- **素材库**：`core/pool/icons/` 共享，`fs.copyFileSync` 物理复制，**绝不写 pool/index.yaml、不进哈希系统**；
+  `_cleanPool()` 加 `icons` 白名单防误删（即便被误登记也豁免）；缩略图以 data URI 内联返回（`<img>` 无法带 Bearer 头）。
+- **验证**：新增 `world_manager.test.js`（19 项，含迁移/新建/切换/图标/素材库/白名单）、
+  `world_ui.test.js`（12 项）、`web_worlds_e2e.test.js`（21 项真实 HTTP，含认证/错误码/落盘）。
+
+---
+
 ## [未发版 · main] — Windows Web 端开陶瓦房间号闪现 + Web 启服后 CLI 进入 :mc 无日志 + :mc 误报已停止
 
 ### 一、Windows Web 端开陶瓦房间号闪现即消失（原「不显示』的残留）
