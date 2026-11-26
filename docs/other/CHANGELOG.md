@@ -42,7 +42,8 @@
 
 | 版本 | 状态 | 发布时间 |
 |------|------|------|
-| **3.8.4-26.4c** | 当前版本（🚨 紧急修复：`:mc` 进程退出检测 / Web 连接日志视图隔离 / 浏览器日志提速） | 2026-11-21 |
+| **3.9.0-26.4d** | 当前版本（Web 模组展示完善 + 单方案多存档与服务器图标生态 + 多项稳定性修复） | 2026-11-26 |
+| **3.8.4-26.4c** | 上一版本（🚨 紧急修复：`:mc` 进程退出检测 / Web 连接日志视图隔离 / 浏览器日志提速） | 2026-11-21 |
 | **3.8.3-26.4b** | 上一版本（公测前终端/退出/诊断/安全 P0 修复 + 资源池统一安装 + 精确版本 + 上传加固） | 2026-11-18 |
 | **3.8.2-26.4a** | 上一版本（公测前 18 项 Bug 修复 + 主题包更新机制） | 2026-11-15 |
 | **3.8.1-26.49** | 上一版本（内置帮助文档抽屉 + Web 内容页留白 + 移动端菜单抽屉） | 2026-11-14 |
@@ -125,9 +126,10 @@
 
 ---
 
-## [未发版 · main] — Web 模组展示完善 + 单方案多存档管理与服务器图标生态
+## [3.9.0-26.4d] — 2026-11-26：Web 模组展示完善 + 单方案多存档与服务器图标生态 + 多项稳定性修复
 
-> 尚未发版。按项目规则，用户未说「发版」前不升版本号、不打 tag、不建 Release。
+> 本版由用户明确指令「发版 V3.9.0」触发。语义版本 3.9.0（功能迭代 minor +1），
+> 发行包序号 `4c→4d` 十六进制递增。合并 `v3.8.4-26.4c..HEAD` 期间全部改动。
 
 ### 一、Web 端模组展示与图标完善
 
@@ -164,13 +166,11 @@
 - **验证**：新增 `world_manager.test.js`（19 项，含迁移/新建/切换/图标/素材库/白名单）、
   `world_ui.test.js`（12 项）、`web_worlds_e2e.test.js`（21 项真实 HTTP，含认证/错误码/落盘）。
 
----
 
-## [未发版 · main] — Windows Web 端开陶瓦房间号闪现 + Web 启服后 CLI 进入 :mc 无日志 + :mc 误报已停止
+### 四、稳定性修复：陶瓦房间号闪现 / Web 启服 `:mc` 无日志 / `:mc` 误报已停止
 
-### 一、Windows Web 端开陶瓦房间号闪现即消失（原「不显示』的残留）
+#### （1）Windows Web 端开陶瓦房间号闪现即消失
 
-> 尚未发版。按项目规则，用户未说「发版」前不升版本号、不打 tag、不建 Release。
 
 - **现象**：Windows 下 Web 面板开陶瓦成功、CLI 也显示了房间号，但前端房间号**闪一下又被刷成「未开房」**，
   Edge 开发者工具无 JS 报错。（上一版已修 `isAlive` 的 tasklist 判定，本轮是更深一层残留。）
@@ -191,70 +191,65 @@
   `terracotta_guest`(19)、`terracotta_diagnose`(9) 全绿。`terracotta_guest.test.js` 中一处
   固定 900 字符窗口的脆弱断言改为截到函数结束，健壮性提升（断言强度不变）。
 
-### 二、Web 启服后 CLI 进入 :mc 无日志
+#### （2）Web 启服后 CLI 进入 `:mc` 无日志
 
-> 尚未发版。按项目规则，用户未说「发版」前不升版本号、不打 tag、不建 Release。
 
-### 现象
+##### 现象
 - Web 面板点 `server start` 后，CLI 长命令端自动切入 `:mc`（提示符变成 `[MC 控制台]>`），
   但控制台里一条服务端日志都不显示；用户以为「服务器没输出 / 卡死」。
 
-### 根因
+##### 根因
 - `cli.js` `detectTimer` 检测到控制台中继心跳 `false→true` 跳变后，先 `setView('MC')` 把视图切到 `:mc`，
   再调用 `startFollow()`。但 `startFollow()` 开头有 P0 日志隔离守卫 `if (!autoFollowAllowed) return;`，
   当用户是「从 M 菜单按 L 进入长命令」时 `fromMenu=true → autoFollowAllowed=false`，跟随被直接跳过。
 - 结果：**视图已经切到 `:mc`，却没有任何日志跟随定时器在跑** —— 进了控制台但看不到日志。
 
-### 修法
+##### 修法
 - `startFollow(notice, force = false)` 增加 `force` 参数：默认仍遵守 `autoFollowAllowed`（保留 M→L 隔离，
   刚进长命令不被历史日志刷屏）；`force=true` 时放行。
 - `detectTimer` 的「切到 `:mc`」分支以 `force=true` 调用 `startFollow()` —— 既然明确切进了 MC 控制台，
   就必须开始跟随日志。MENU 视图分支不切页、不强制；进入 REPL 的 `setTimeout` 初始兜底仍走隔离判定，不被放开。
 
-### 验证
+##### 验证
 - 新增 `core/test/web_start_mc_log.test.js`，锁定 force 语义、切视图必强制跟随、MENU 不切页、初始兜底不强制、退出切回 `:wow`。
 - 同步更新 `input_routing_p0.test.js` 的 `startFollow` 断言（保持隔离强度，非放水）。
 - 全量 `npm test` **80 个文件全绿**。
 
-### 三、:mc 日志跟随在服务器仍在运行时误报「已停止」
+#### （3）:mc 日志跟随在服务器仍在运行时误报「已停止」
 
-> 尚未发版。按项目规则，用户未说「发版」前不升版本号、不打 tag、不建 Release。
 
-### 现象
+##### 现象
 - Web 启服、CLI 自动进入 `:mc` 跟随日志后，即便 `seed` 等指令刚被服务端正常响应、日志持续在写，
   跟随定时器仍突兀打印「⏹ 服务器已停止，已退出 :mc 日志跟踪，回到 :wow 视图」把用户踢回 `:wow`。
 - 用户随即执行 `wow :mc` 又能正常接入（该入口以 PID 判活，证明服务器根本没停），只是历史日志被重放 12 行。
 
-### 根因
+##### 根因
 - `cli.js` 的 `followTimer` 每 500ms 用 `isConsoleRelayAlive()`（心跳文件 3s maxAge）作为判停的唯一依据。
   心跳只代表「有进程在读 MC stdin」，会因中继子进程瞬时阻塞/卡顿而陈旧（Windows 上 `tasklist` execSync
   可阻塞秒级）；心跳陈旧 ≠ 服务器进程退出。这与 `mc_console.js` 刻意不用心跳判活的口径相矛盾。
 
-### 修法
+##### 修法
 - `followTimer` 判活改以「MC 进程真实 PID」为准（`sm.isRunning()`，与 `McConsole.attach` / Web 面板一致），
   心跳不再作为判停信号；沿用 `mc_console.js` 的降频策略（每 6 个 tick ≈ 3s 查一次），避免 Windows 上
   `tasklist`（execSync）每 500ms 阻塞一次；异常时保守视为存活、不误踢。
 
-### 验证
+##### 验证
 - `core/test/web_start_mc_log.test.js` 增加 1 项：锁定 followTimer 用 `sm.isRunning()` 判活、
   判活降频、且不再有「心跳陈旧即判停」逻辑。P0 20 项全绿。
 
----
 
-## [未发版 · feat/ai-provider] — AI 分析端点容错 + 服务商预设
+### 五、AI 分析端点容错 + 服务商预设（含启动命令预览修复）
 
-> 尚未发版。按项目规则，用户未说「发版」前不升版本号、不打 tag、不建 Release。
-> 分支：`feat/ai-provider`（基于 `main @ c8c9849`）。
 
-### 现象
+#### 现象
 - AI 日志分析（`wow logs analyze`）的 `ai.api_url` 若只填了服务商域名（如 `https://api.deepseek.com`），
   后端直接拿去 `fetch`，因缺少 `/v1/chat/completions` 而 404/410，用户需反复试错拼接路径。
 
-### 根因
+#### 根因
 - `log_handler.analyze()` 把配置里的 `api_url` 原样交给 `fetch`，未做路径补全或校验。
 - 没有服务商概念，切 DeepSeek / 通义 / 智谱 等需手动查各家 OpenAI 兼容地址并连同模型一起填。
 
-### 修法
+#### 修法
 - 新增纯函数模块 `core/src/ai_endpoint.js`：
   - `normalizeApiUrl()`：幂等补全。裸域名 → `/v1/chat/completions`；已含 `/vN` 版本段
     （智谱 `/api/paas/v4`、豆包 `/api/v3`、通义 `/compatible-mode/v1`）→ 只补 `/chat/completions`；
@@ -266,11 +261,11 @@
 - `log_handler.analyze()` 接入 `resolveAiEndpoint()`，并在分析前打印实际服务商/模型/端点便于自查。
 - CLI `logs analyze` 新增 `--provider <name>`。
 
-### 验证
+#### 验证
 - 新增 `core/test/ai_endpoint.test.js`，25 项覆盖归一化边界、provider 预设、优先级与 schema 一致性。
 - 每步 `npm test` 全绿；真实 fetch 端点按各家官方文档（2026-11）核对。
 
-### 附加修复：启动命令预览不再错指 `server.jar`
+#### 附加修复：启动命令预览不再错指 `server.jar`
 
 > 同分支累积修复，与 AI provider 无关，一并记录。
 
