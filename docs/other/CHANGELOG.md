@@ -128,6 +128,18 @@
 
 ## 未发版修复（2026-11-28，基于 3.9.0-26.4d）
 
+### sync push 瘦身方案没补齐核心 + config set 值带引号
+
+- **sync push 没补齐核心**：`sync_client.push()` 的清单从「方案目录实体文件」扫描生成，方案若处于瘦身状态
+  （核心/模组 `in_pool=true`、实体已移入 pool）会扫到 0 核心 0 模组，执行端 `core_plan=skip`，收到空壳方案。
+  修法：生成清单前先 `_materializeScheme` 幂等补齐（覆盖 core/mods/plugins 的 in_pool 与 MINIMAL 状态），
+  补齐后重读 meta；补齐失败即中止推送并给出明确原因。
+- **config set 带引号**：Windows cmd / 包装脚本下 `config set key "value"` 的 argv 会保留字面引号，
+  原样写进 wow.yaml 变成 `key: '"value"'`，读回的 token / 路径全带一对引号而失效。
+  修法：`config.setConfig` / `setConfigs` 落盘前统一 `stripWrappingQuotes`，仅剥离首尾成对且内部无同种引号的值；
+  CLI 回显同步显示清理后的值。
+- 验证：新增 `core/test/sync_push_fix.test.js`（11 项）；全量 `npm test` **92 个文件全绿**。
+
 ### 🚨 P0：Windows 跨进程日志跟踪「假死」误报服务器已停止
 
 **现象**：Windows 11 下由 Web 面板启动服务器，终端 `:mc` 视图在输出 `Done` 后不久错误提示

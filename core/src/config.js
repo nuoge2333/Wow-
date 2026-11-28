@@ -235,6 +235,28 @@ function getConfig(key, defaultValue = null) {
 }
 
 /**
+ * 剥离字符串值两端成对的引号（config set 落盘前的清理）。
+ *
+ * Windows cmd / 若干包装脚本下，`wow config set key "value"` 传入的 argv 会
+ * 把字面引号一起带进来；若原样写进 wow.yaml，就是 `key: '"value"'`，
+ * 读回来时 token / 路径全都带着一对引号而失效。这里在写入前统一去掉。
+ *
+ * 只在「首尾是同种引号、且内部不含同种未转义引号」时才剥离，避免误伤
+ * `a "b" c` 这类内容本身含引号的值；非字符串、空串、不成对一律原样返回。
+ * @param {*} value
+ * @returns {*}
+ */
+function stripWrappingQuotes(value) {
+    if (typeof value !== 'string' || value.length < 2) return value;
+    const first = value[0];
+    const last = value[value.length - 1];
+    if (first !== last || (first !== '"' && first !== "'")) return value;
+    const inner = value.slice(1, -1);
+    if (inner.includes(first)) return value; // 内部还有同种引号 → 视为值的一部分，不动
+    return inner;
+}
+
+/**
  * 设置配置值，自动创建嵌套路径
  */
 function setConfig(key, value) {
@@ -248,7 +270,7 @@ function setConfig(key, value) {
         }
         current = current[part];
     }
-    current[parts[parts.length - 1]] = value;
+    current[parts[parts.length - 1]] = stripWrappingQuotes(value);
     saveConfig(config);
 }
 
@@ -659,7 +681,7 @@ function setConfigs(patch) {
             }
             current = current[part];
         }
-        current[parts[parts.length - 1]] = value;
+        current[parts[parts.length - 1]] = stripWrappingQuotes(value);
         count++;
     }
     if (count) saveConfig(config);
@@ -670,6 +692,7 @@ module.exports = {
     getConfig,
     setConfig,
     setConfigs,
+    stripWrappingQuotes,
     loadConfig,
     saveConfig,
     getFullConfig,

@@ -236,9 +236,32 @@ async function push(opts = {}) {
     const schemeName = opts.schemeName || sm.currentScheme;
     if (!schemeName) return { ok: false, reason: '未指定方案且当前无激活方案' };
     if (!sm._schemeExists(schemeName)) return { ok: false, reason: `方案 ${schemeName} 不存在` };
-    const meta = sm._loadSchemeMeta(schemeName);
+    let meta = sm._loadSchemeMeta(schemeName);
     const schemePath = sm._getSchemePath(schemeName);
     const remoteName = opts.remoteName || schemeName;
+
+    // ---- 0. 补齐瘦身方案（P0）----
+    // 清单是从「方案目录里的实体文件」扫描出来的（buildManifest）。瘦身状态下
+    // 核心/模组在 pool 里、方案目录只有 scheme.yaml，直接扫会扫到 0 核心 0 模组，
+    // 执行端 core_plan=skip、什么都装不上——用户看到的就是「sync push 后没补齐核心」。
+    // 推送前先把方案补齐回 FULL（幂等；已是 FULL 则 _materializeScheme 内部几乎无操作），
+    // 再生成清单。补齐只影响本端方案目录，不改 pool 引用关系的正确性。
+    const inPool = (r) => !!(r && r.in_pool);
+    const slim = meta.state !== 'full'
+        || inPool(meta.resources && meta.resources.core)
+        || (meta.resources && meta.resources.mods || []).some(inPool)
+        || (meta.resources && meta.resources.plugins || []).some(inPool)
+        || (Array.isArray(meta.resources && meta.resources.mods) && meta.resources.mods.length === 0 && meta.resources.core && meta.resources.core.hash);
+    if (slim && typeof sm._materializeScheme === 'function') {
+        log(`🧩 方案 ${schemeName} 处于瘦身状态（${meta.state}），推送前先从资源池补齐核心与模组...`);
+        try {
+            await sm._materializeScheme(schemeName);
+            meta = sm._loadSchemeMeta(schemeName); // 补齐后 in_pool / 文件布局已更新，重读 meta
+            log('   ✅ 已补齐（核心/模组/插件已回到方案目录）');
+        } catch (e) {
+            return { ok: false, reason: `推送前补齐方案失败：${e.message}` };
+        }
+    }
 
     // ---- 1. 清单 ----
     log('📋 生成同步清单...');

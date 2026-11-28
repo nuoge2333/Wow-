@@ -1748,6 +1748,8 @@ const configCmd = program.command('config').description('配置管理');
 function runConfigWow(key, value, opts = {}) {
     const secret = /(^|\.)(auth_token|auth_password|api_key|token|password|secret)$/i.test(key);
     if (value !== undefined) {
+        // 与落盘保持一致：setConfig 会剥离值两端成对引号，回显也显示清理后的值
+        const shown = (config.stripWrappingQuotes ? config.stripWrappingQuotes(value) : value);
         // BUG-07：必须确认真正写入成功后才打印 ✅；保存失败向上抛出，这里拦截并明确报错。
         try {
             config.setConfig(key, value);
@@ -1756,11 +1758,11 @@ function runConfigWow(key, value, opts = {}) {
             process.exitCode = 1;
             return;
         }
-        if (secret && !opts.plain && value !== null) {
+        if (secret && !opts.plain && shown !== null) {
             // 凭据类不回显明文：终端录屏、共享屏幕、聊天截图都会泄
-            console.log(`✅ ${key} 已设置（凭据类，长度 ${String(value).length}，不显示明文）`);
+            console.log(`✅ ${key} 已设置（凭据类，长度 ${String(shown).length}，不显示明文）`);
         } else {
-            console.log(`✅ ${key} = ${value}`);
+            console.log(`✅ ${key} = ${shown}`);
         }
     } else {
         // V3.6.4（P2-14）：布尔类型配置未提供 value → 在 true / false 间自动切换。
