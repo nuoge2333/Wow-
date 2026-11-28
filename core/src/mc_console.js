@@ -12,6 +12,7 @@ const fs = require('fs-extra');
 const path = require('path');
 const stdinSession = require('./stdin_session');
 const utils = require('./utils');
+const aliveProbe = require('./alive_probe');
 
 const FOLLOW_INTERVAL_MS = 300;
 // 存活检测降频：每 10 个 tick（约 3s）查一次服务器进程是否还在。
@@ -103,6 +104,27 @@ function isExitCommand(line) {
     return EXIT_WORDS.has(String(line == null ? '' : line).trim().toLowerCase());
 }
 
+/**
+ * 日志静默但服务器仍在运行时的状态提示。
+ * 只提示，绝不退出 :mc；刷提示前保存用户半行、刷完回填，不吞字。
+ */
+function printSilenceNotice(rl) {
+    const savedLine = (rl && typeof rl.line === 'string') ? rl.line : '';
+    const savedCursor = (rl && typeof rl.cursor === 'number') ? rl.cursor : savedLine.length;
+    if (rl && rl.clearLine) { try { rl.clearLine(0); } catch (e) { /* 忽略 */ } }
+    process.stdout.write('\x1b[90m⏳ 暂无新日志，服务器运行中...（进程存活中）\x1b[39m\n');
+    if (rl && rl.prompt) { try { rl.prompt(true); } catch (e) { /* 忽略 */ } }
+    if (savedLine && rl && rl.write) {
+        try {
+            rl.write(savedLine);
+            const back = Math.max(0, savedLine.length - savedCursor);
+            for (let i = 0; i < back && rl.write; i++) {
+                try { rl.write(null, { name: 'left' }); } catch (e) { break; }
+            }
+        } catch (e) { /* 忽略 */ }
+    }
+}
+
 class McConsole {
     constructor() {
         const ServerManager = require('./server');
@@ -114,6 +136,13 @@ class McConsole {
         this.lastSize = 0;
         this.closed = false;
         this._livenessTick = 0;
+        this._silenceTicks = 0;
+        this._fallbackDeaths = 0;
+        // P0（Windows 假死修复）：跨进程判活统一走 alive_probe——
+        // PID + Web /api/status 双证据、连续 3 次确证才判停，异常保守视为存活。
+        this._liveness = (aliveProbe && typeof aliveProbe.createLivenessTracker === 'function')
+            ? aliveProbe.createLivenessTracker(this.server, { deathThreshold: 3 })
+            : null;
         this._finish = null; // attach() 内 finish 的引用，供 _follow() 检测退出后优雅离开
     }
 
@@ -213,15 +242,23 @@ class McConsole {
     _follow() {
         if (this.closed) return;
 
-        // 降频存活检测：每 10 个 tick（约 3s）查一次服务器 PID 是否还在。
-        // 顶层 `wow :mc` 是独立进程，拿不到子进程的 exit 事件，只能靠跨进程的
-        // isRunning()（PID 文件 + process.kill(pid,0)）判断。刻意不用心跳
-        // isConsoleRelayAlive()——「服务器在跑但无中继」是受支持场景，用心跳会误踢。
+        // 降频存活检测：每 10 个 tick（约 3s）探一次服务器进程是否还在。
+        // 顶层 `wow :mc` 是独立进程，拿不到子进程 exit 事件，只能靠跨进程判活。
+        // P0（Windows 假死修复）：统一走 alive_probe —— PID 文件 + Web /api/status
+        // 双证据、连续 3 次「确证死亡」才判停；探测中/异常/不确定一律保守视为存活。
+        // 刻意不用心跳 isConsoleRelayAlive()——「服务器在跑但无中继」是受支持场景。
         if (++this._livenessTick % LIVENESS_CHECK_EVERY === 0) {
-            let alive = true;
-            try { alive = this.server.isRunning() !== false; }
-            catch (e) { /* 检测异常时保守视为存活，避免误踢 */ }
-            if (!alive) {
+            let certainDead = false;
+            if (this._liveness) {
+                certainDead = this._liveness.tick().certainDead;
+            } else {
+                // 降级兜底：探测器不可用时仍连续确认，绝不单次判停
+                let alive = true;
+                try { alive = this.server.isRunning() !== false; } catch (e) { /* 保守视为存活 */ }
+                this._fallbackDeaths = alive ? 0 : this._fallbackDeaths + 1;
+                certainDead = this._fallbackDeaths >= 3;
+            }
+            if (certainDead) {
                 const rl = this.lease && this.lease.rl;
                 // 先清掉用户半行，避免提示被拼到输入行尾
                 if (rl && rl.clearLine) { try { rl.clearLine(0); } catch (e) { /* 忽略 */ } }
@@ -236,8 +273,13 @@ class McConsole {
         if (size <= this.lastSize) {
             // 日志轮转 / 截断：重置基线，避免下次读出整段旧内容
             if (size < this.lastSize) this.lastSize = size;
+            // 日志静默 ≠ 服务器停止：进程存活时仅显示状态提示，绝不退出 :mc
+            if (++this._silenceTicks === 40) {   // 300ms × 40 ≈ 12s
+                printSilenceNotice(this.lease && this.lease.rl);
+            }
             return;
         }
+        this._silenceTicks = 0;
         const chunk = readRange(this.logFile, this.lastSize, size);
         this.lastSize = size;
         if (!chunk) return;

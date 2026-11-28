@@ -126,6 +126,31 @@
 
 ---
 
+## 未发版修复（2026-11-28，基于 3.9.0-26.4d）
+
+### 🚨 P0：Windows 跨进程日志跟踪「假死」误报服务器已停止
+
+**现象**：Windows 11 下由 Web 面板启动服务器，终端 `:mc` 视图在输出 `Done` 后不久错误提示
+「⏹ 服务器已停止，已退出 :mc 日志跟踪，回到 :wow 视图」，但服务器实际仍在后台运行。
+
+**根因**：`:mc` 跟随定时器每 3s 单次调用 `ServerManager.isRunning()`，该方法在 Windows 上执行
+`tasklist`（`execSync`, timeout 2000ms）。MC 刚启动系统负载最高，`tasklist` 一超时/异常，
+`catch → false` 立即 `stopFollow` —— 单次探测失败就被当作进程退出；且日志静默时无任何状态提示。
+
+**修法**：
+- 新增 `core/src/alive_probe.js`：跨进程判活统一走「PID 文件 + Web `/api/status`」双证据，且必须
+  **连续 3 次确证死亡**才判停；探测中 / 异常 / 不确定（如 PID 文件尚不存在）一律保守视为存活。
+  Web 面板是服务器启动方，`/api/status` 说在跑时以面板为准（本机 CLI 就地签短效 JWT 访问）。
+- `cli.js` 的 `followTimer` 与 `mc_console.js` 的 `_follow` 均改用该连续确认口径；日志静默超过约 10s
+  且进程存活时显示灰色「⏳ 暂无新日志，服务器运行中...（进程存活中）」，**绝不退出 :mc**。
+  退出提示只在连续确证死亡分支打印。
+- `interactive.js` 的 `tailLogs`：Windows 分支弃用 `fs.watch`（常漏事件），改 `setInterval + fs.stat`
+  轮询按文件大小增量读取，收尾时清理定时器。
+- 验证：新增 `core/test/cross_process_alive.test.js`（11 项），更新 `web_start_mc_log.test.js` /
+  `mc_console.test.js` 的静态守卫断言；全量 `npm test` **91 个文件全绿**。
+
+---
+
 ## [3.9.0-26.4d] — 2026-11-26：Web 模组展示完善 + 单方案多存档与服务器图标生态 + 多项稳定性修复
 
 > 本版由用户明确指令「发版 V3.9.0」触发。语义版本 3.9.0（功能迭代 minor +1），

@@ -1942,15 +1942,17 @@ async function tailLogs(options) {
         let done = false;
         let child = null;
         let watcher = null;
+        let pollTimer = null;   // Windows 轮询定时器（P0：取代 fs.watch）
         let readPos = 0;
 
-        /** 收尾：卸监听、杀掉 tail、关 watcher、补换行、resolve */
+        /** 收尾：卸监听、杀掉 tail、关 watcher / 轮询定时器、补换行、resolve */
         const finish = () => {
             if (done) return;
             done = true;
             process.removeListener('SIGINT', onSigint);
             try { if (child) child.kill(); } catch (e) { /* 已退出 */ }
             try { if (watcher) watcher.close(); } catch (e) { /* 忽略 */ }
+            try { if (pollTimer) clearInterval(pollTimer); } catch (e) { /* 忽略 */ }
             // 终端在 raw 模式下不会给 ^C 补换行，这里补一个，收尾语才不粘在日志末尾
             process.stdout.write('\n');
             console.log('⏹ 已退出日志跟踪。');
@@ -1969,15 +1971,19 @@ async function tailLogs(options) {
         process.on('SIGINT', onSigint);
 
         if (process.platform === 'win32') {
-            // Windows 没有 tail：先打印尾部 20 行，再用 fs.watch 追加
+            // Windows 没有 tail。P0（假死修复）：绝不用 fs.watch——Windows 上
+            // 它经常漏掉日志追加事件（网络盘/编辑器轮转/高负载时尤甚），导致
+            // 「日志明明在写却一行都不刷」。改为 setInterval + fs.stat 轮询，
+            // 只看文件大小增量，稳定可靠且跨平台。
             try {
                 const buf = fs.readFileSync(file, 'utf8').split('\n');
                 buf.slice(Math.max(0, buf.length - 21), -1).forEach(l => console.log(l));
                 readPos = fs.statSync(file).size;
-                watcher = fs.watch(file, () => {
+                pollTimer = setInterval(() => {
+                    if (done) return;
                     try {
                         const st = fs.statSync(file);
-                        if (st.size < readPos) readPos = 0;   // 日志轮转
+                        if (st.size < readPos) readPos = 0;   // 日志轮转 / 截断
                         if (st.size === readPos) return;
                         const len = st.size - readPos;
                         const chunk = Buffer.alloc(len);
@@ -1986,9 +1992,9 @@ async function tailLogs(options) {
                         fs.closeSync(fd);
                         readPos = st.size;
                         process.stdout.write(chunk.toString('utf8'));
-                    } catch (e) { /* 忽略单次读失败 */ }
-                });
-                watcher.on('error', finish);
+                    } catch (e) { /* 忽略单次读失败，下一轮再试 */ }
+                }, 300);
+                if (pollTimer.unref) pollTimer.unref();
             } catch (e) {
                 console.log(`❌ 跟踪失败: ${e.message}`);
                 finish();

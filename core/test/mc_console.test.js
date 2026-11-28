@@ -76,10 +76,11 @@ check('_follow 降频检测 isRunning 并优雅离开', () => {
     if (!/this\._finish\('mc\.console:server-exit'\)/.test(mcSrc)) throw new Error('未触发优雅离开');
 });
 check('存活检测刻意不用心跳，避免「在跑但无中继」误踢', () => {
-    // _follow 的新增检测块里应只有 isRunning，不应出现 isConsoleRelayAlive
-    const m = mcSrc.match(/_livenessTick % LIVENESS_CHECK_EVERY[\s\S]{0,600}?_finish\('mc\.console:server-exit'\)/);
+    // _follow 检测块应走 alive_probe 连续确证，不应出现 isConsoleRelayAlive
+    const m = mcSrc.match(/_livenessTick % LIVENESS_CHECK_EVERY[\s\S]{0,1200}?_finish\('mc\.console:server-exit'\)/);
     if (!m) throw new Error('未找到存活检测块');
     if (/isConsoleRelayAlive/.test(m[0])) throw new Error('存活检测不应使用心跳（会误踢无中继场景）');
+    if (!/certainDead/.test(m[0])) throw new Error('存活检测未用连续确证 certainDead（单次探测超时会误踢）');
 });
 
 console.log(`\n结果：通过 ${passed}，失败 ${failed}`);

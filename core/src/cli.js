@@ -2632,21 +2632,35 @@ async function startRepl(options = {}) {
         }
         printLine(notice);
         printLine('   💡 继续输入 wow 指令不受影响；服务器停止后自动退出跟踪。');
-        // 判活降频：isRunning() 在 Windows 上要走 tasklist（execSync），500ms 一查太频。
-        // 与 mc_console.js 的 LIVENESS_CHECK_EVERY 同策略——每 6 个 tick（约 3s）查一次真实 PID。
-        const LIVENESS_EVERY = 6;
+        // ── P0（Windows 跨进程假死修复）：判活改为「双证据 + 连续确认」 ──
+        // 旧逻辑每 3s 单次 sm.isRunning()（Windows tasklist），一超时就 stopFollow——
+        // MC 刚输出 Done 时负载最高，tasklist 超时即把仍在跑的服务器误判为已停止。
+        // 新逻辑由 alive_probe 统一处理：PID 文件判活 + Web /api/status 复核，
+        // 连续 3 次确证死亡才判停；探测中/异常/不确定一律保守视为存活。
+        const aliveProbe = load('./alive_probe');
+        const liveness = aliveProbe && typeof aliveProbe.createLivenessTracker === 'function'
+            ? aliveProbe.createLivenessTracker(sm, { deathThreshold: 3 })
+            : (() => {
+                // 降级兜底：探测器不可用时仍要求连续确认，绝不单次判停
+                let deaths = 0;
+                return {
+                    tick() {
+                        let alive = true;
+                        try { alive = sm && sm.isRunning() !== false; } catch (e) { /* 保守视为存活 */ }
+                        deaths = alive ? 0 : deaths + 1;
+                        return { certainDead: deaths >= 3 };
+                    }
+                };
+            })();
+        const LIVENESS_EVERY = 6;             // 每 6 tick（约 3s）探测一次
+        const SILENCE_NOTICE_TICKS = 20;      // 静默 10s 后首次提示
+        const SILENCE_NOTICE_REPEAT = 60;     // 之后每 30s 复述一次，避免刷屏
         let livenessTick = 0;
+        let silenceTicks = 0;
         followTimer = setInterval(() => {
-            // 判活改以「MC 进程真实 PID」为准（与 mc_console.attach / Web 面板一致）。
-            // 心跳（isConsoleRelayAlive）只代表「有人在读 MC stdin」，会瞬时陈旧
-            // （中继子进程阻塞/卡顿），不能据此判定服务器已停——否则会出现
-            // 「服务器还在跑、日志还在写，却误报『服务器已停止』并退出跟踪」。
-            // mc_console.js 早就刻意不用心跳判活，这里对齐同一口径。
             if (++livenessTick % LIVENESS_EVERY === 0) {
-                let alive = true;
-                try { alive = sm && sm.isRunning() !== false; }
-                catch (e) { /* 检测异常时保守视为存活，避免误踢 */ }
-                if (!alive) {
+                // 只有连续确证进程已死，才允许打印退出提示并离开 :mc
+                if (liveness.tick().certainDead) {
                     stopFollow('⏹ 服务器已停止，已退出 :mc 日志跟踪，回到 :wow 视图。');
                     return;
                 }
@@ -2654,7 +2668,16 @@ async function startRepl(options = {}) {
             let st;
             try { st = fs.statSync(logFile); } catch (e) { return; }
             if (st.size < followOffset) followOffset = 0;  // 日志被重写（重启）
-            if (st.size <= followOffset) return;
+            if (st.size <= followOffset) {
+                // 日志静默 ≠ 服务器停止。进程存活时只显示状态提示，绝不退出 :mc。
+                silenceTicks++;
+                if (silenceTicks === SILENCE_NOTICE_TICKS ||
+                    (silenceTicks > SILENCE_NOTICE_TICKS && silenceTicks % SILENCE_NOTICE_REPEAT === 0)) {
+                    printLine('\x1b[90m⏳ 暂无新日志，服务器运行中...（进程存活中）\x1b[39m');
+                }
+                return;
+            }
+            silenceTicks = 0;
             let fd;
             try {
                 fd = fs.openSync(logFile, 'r');

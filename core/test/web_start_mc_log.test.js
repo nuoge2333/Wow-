@@ -59,15 +59,16 @@ check('stopFollow 退出跟踪仍切回 :wow 并恢复提示符', () => {
     assert.ok(/⏹ 服务器已停止，已退出 :mc 日志跟踪，回到 :wow 视图/.test(cliSrc), '缺退出文案');
 });
 
-check('followTimer 用真实 PID 判活而非心跳（防「还在跑却误报已停止」）', () => {
+check('followTimer 用连续确证判活而非心跳/单次探测（防「还在跑却误报已停止」）', () => {
     // 定位 startFollow 内的 followTimer 区间
     const start = cliSrc.indexOf('followTimer = setInterval');
     const end = cliSrc.indexOf('}, 500);', start);
     assert.ok(start > 0 && end > start, '未找到 followTimer 定时器');
     const timer = cliSrc.slice(start, end);
-    assert.ok(/sm\.isRunning\(\)/.test(timer), '判活未用真实 PID isRunning()（心跳陈旧会误报服务器已停止）');
+    assert.ok(/liveness\.tick\(\)\.certainDead/.test(timer),
+        '判活未用连续确证 certainDead（单次 tasklist 超时会误报服务器已停止）');
     assert.ok(/LIVENESS_EVERY/.test(timer) && /%\s*LIVENESS_EVERY/.test(timer),
-        'PID 判活未降频（Windows tasklist 不能每 500ms 查一次）');
+        '判活未降频（Windows tasklist 不能每 500ms 查一次）');
     // 定时器里不能再有「心跳消失即判停」的旧逻辑
     assert.ok(!/if \(!ServerManager\.isConsoleRelayAlive\(\)\)\s*\{\s*stopFollow/.test(timer),
         '仍存在心跳陈旧即判停的旧逻辑（会误踢仍在运行的服务器）');
