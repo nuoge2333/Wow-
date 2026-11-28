@@ -269,7 +269,93 @@ function nextStepHint(kind, info = {}) {
     ];
 }
 
+/**
+ * 方案能否安装指定类别的资源（Web 下载弹窗的兼容方案筛选依据）。
+ * - 模组（mods）：需要 Forge/NeoForge/Fabric/Quilt 这类模组加载器方案；
+ * - 插件（plugins）：需要 Paper/Purpur/Spigot/Bukkit/CatServer/Mohist 这类服务端方案。
+ * 只依据方案的 loader / type 元数据，不读磁盘，供前端列表过滤与后端二次校验共用。
+ * @param {{loader?:string, type?:string}} meta
+ * @param {'mods'|'plugins'} category
+ */
+const MOD_LOADERS = new Set(['forge', 'neoforge', 'fabric', 'quilt']);
+const PLUGIN_TYPES = new Set(['paper', 'purpur', 'spigot', 'bukkit', 'catserver', 'mohist', 'leaves']);
+function isSchemeCompatible(meta, category) {
+    if (!meta) return false;
+    const cat = category === 'plugins' ? 'plugins' : 'mods';
+    const loader = String(meta.loader || '').toLowerCase();
+    const type = String(meta.type || '').toLowerCase();
+    if (cat === 'plugins') {
+        return PLUGIN_TYPES.has(type) || PLUGIN_TYPES.has(loader);
+    }
+    return MOD_LOADERS.has(loader) || MOD_LOADERS.has(type);
+}
+
+/**
+ * 把 installContent 已下载入池的资源安装到指定方案目录（Web「下载并直装方案」用）。
+ * - 仅安装本体（installed[0]），不重复安装依赖（依赖已在池里，供后续方案按需拉取）；
+ * - 目标目录 = scheme/<name>/<mods|plugins>/，文件名沿用池内文件名；
+ * - 逐方案校验存在性、类别兼容性，不兼容的跳过并给出原因；
+ * - 幂等：目标已存在同名文件视为已安装，不覆盖。
+ * @param {{ok:boolean, installed?:Array, rel?:string}} result installContent 的返回值
+ * @param {'mods'|'plugins'} category 类别
+ * @param {string[]} schemeNames 目标方案名数组
+ * @returns {{ok:boolean, installed:Array<{scheme:string,name:string,already?:boolean}>, skipped:Array<{scheme:string,reason:string}>}}
+ */
+function installToSchemes(result, category, schemeNames) {
+    const cat = category === 'plugins' ? 'plugins' : 'mods';
+    const out = { ok: true, installed: [], skipped: [] };
+    if (!result || !result.ok) {
+        return { ok: false, installed: [], skipped: [], error: '下载未成功，无法安装到方案' };
+    }
+    const names = Array.isArray(schemeNames)
+        ? schemeNames
+        : String(schemeNames || '').split(',').map(s => s.trim()).filter(Boolean);
+    if (!names.length) return out;
+
+    // 本体文件：优先 installed[0]（可能是对象或字符串 rel），否则用顶层 rel
+    const first = (result.installed || [])[0];
+    const rel = (first && typeof first === 'object' ? first.rel : first) || result.rel;
+    if (!rel) return { ok: false, installed: [], skipped: [], error: '下载结果缺少文件路径' };
+    const fileName = path.basename(String(rel).replace(/\\/g, '/'));
+
+    const SchemeManager = require('./scheme_manager');
+    const sm = new SchemeManager();
+    for (const name of names) {
+        const scheme = String(name || '').trim();
+        if (!scheme) continue;
+        if (!sm._schemeExists(scheme)) {
+            out.skipped.push({ scheme, reason: '方案不存在' });
+            continue;
+        }
+        const meta = sm._loadSchemeMeta(scheme);
+        if (!isSchemeCompatible(meta, cat)) {
+            out.skipped.push({ scheme, reason: `方案类型 ${meta.type || meta.loader || '未知'} 不支持${cat === 'plugins' ? '插件' : '模组'}` });
+            continue;
+        }
+        const src = path.join(poolRoot(), String(rel).split('/').join(path.sep));
+        if (!fs.existsSync(src)) {
+            out.skipped.push({ scheme, reason: '池内文件缺失' });
+            continue;
+        }
+        try {
+            const destDir = path.join(sm._getSchemePath(scheme), cat);
+            fs.ensureDirSync(destDir);
+            const dest = path.join(destDir, fileName);
+            if (fs.existsSync(dest)) {
+                out.installed.push({ scheme, name: fileName, already: true });
+                continue;
+            }
+            fs.copyFileSync(src, dest);
+            out.installed.push({ scheme, name: fileName });
+        } catch (e) {
+            out.skipped.push({ scheme, reason: `写入失败: ${e.message}` });
+        }
+    }
+    return out;
+}
+
 module.exports = {
     poolRoot, indexPath, loadIndex, saveIndex, sha256File,
-    registerFile, installUrl, installCore, installContent, nextStepHint
+    registerFile, installUrl, installCore, installContent, nextStepHint,
+    isSchemeCompatible, installToSchemes
 };

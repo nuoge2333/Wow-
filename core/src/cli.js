@@ -361,6 +361,7 @@ installCmd
     .option('--version <v>', 'MC 版本（搜索词模式用于匹配版本）')
     .option('--version-id <id>', '精确版本 ID（前端版本下拉选中的版本，禁止后端自动挑版本）')
     .option('--no-auto', '关闭自动解析：只下载本体，不拉取前置依赖')
+    .option('--schemes <names>', '下载后直接安装到这些方案（逗号分隔，仅兼容方案生效；勾选自动解析时使用）')
     .action(async (input, options) => {
         const PoolInstaller = load('./pool_installer');
         if (!PoolInstaller) return;
@@ -374,7 +375,14 @@ installCmd
         if (!r.ok) { console.error(`❌ 模组下载失败: ${r.error}`); process.exitCode = 1; return; }
         for (const w of (r.warnings || [])) console.warn(`⚠️ ${w}`);
         if (r.deps && r.deps.length) console.log(`   ↳ 已自动拉取 ${r.deps.length} 个前置依赖：${r.deps.join(', ')}`);
-        for (const line of PoolInstaller.nextStepHint('mod', { name: path.basename(r.rel) })) console.log(line);
+        if (options.schemes) {
+            const ir = PoolInstaller.installToSchemes(r, 'mods', options.schemes);
+            for (const it of ir.installed) console.log(`   ✅ 已安装到方案 ${it.scheme}/${path.basename(r.rel)}${it.already ? '（已存在）' : ''}`);
+            for (const sk of ir.skipped) console.warn(`   ⚠️ 跳过方案 ${sk.scheme}: ${sk.reason}`);
+        }
+        if (!options.schemes) {
+            for (const line of PoolInstaller.nextStepHint('mod', { name: path.basename(r.rel) })) console.log(line);
+        }
     });
 
 installCmd
@@ -385,6 +393,7 @@ installCmd
     .option('--version <v>', 'MC 版本（搜索词模式用于匹配版本）')
     .option('--version-id <id>', '精确版本 ID（前端版本下拉选中的版本，禁止后端自动挑版本）')
     .option('--no-auto', '关闭自动解析：只下载本体，不拉取前置依赖')
+    .option('--schemes <names>', '下载后直接安装到这些方案（逗号分隔，仅兼容方案生效；勾选自动解析时使用）')
     .action(async (input, options) => {
         const PoolInstaller = load('./pool_installer');
         if (!PoolInstaller) return;
@@ -398,7 +407,14 @@ installCmd
         if (!r.ok) { console.error(`❌ 插件下载失败: ${r.error}`); process.exitCode = 1; return; }
         for (const w of (r.warnings || [])) console.warn(`⚠️ ${w}`);
         if (r.deps && r.deps.length) console.log(`   ↳ 已自动拉取 ${r.deps.length} 个前置依赖：${r.deps.join(', ')}`);
-        for (const line of PoolInstaller.nextStepHint('plugin', { name: path.basename(r.rel) })) console.log(line);
+        if (options.schemes) {
+            const ir = PoolInstaller.installToSchemes(r, 'plugins', options.schemes);
+            for (const it of ir.installed) console.log(`   ✅ 已安装到方案 ${it.scheme}/${path.basename(r.rel)}${it.already ? '（已存在）' : ''}`);
+            for (const sk of ir.skipped) console.warn(`   ⚠️ 跳过方案 ${sk.scheme}: ${sk.reason}`);
+        }
+        if (!options.schemes) {
+            for (const line of PoolInstaller.nextStepHint('plugin', { name: path.basename(r.rel) })) console.log(line);
+        }
     });
 
 // ==================== mod ====================

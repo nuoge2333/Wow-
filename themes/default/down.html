@@ -617,9 +617,18 @@
             <label class="modal-check" id="install-auto-row">
                 <input type="checkbox" id="install-auto-resolve" checked />
                 <span>自动选择合适的版本并拉取前置依赖
-                    <br><span style="color:#8fa3c0;font-size:12px;">按加载器 / MC 版本选最适配版本，并递归抓取必需依赖（最多 3 层）。</span>
+                    <br><span style="color:#8fa3c0;font-size:12px;">按加载器 / MC 版本选最适配版本，并递归抓取必需依赖（最多 3 层）。勾选后可选择直接安装到方案。</span>
                 </span>
             </label>
+            <!-- 自动解析勾选后展示：兼容方案多选，确认后直接装到方案 mods/plugins 目录 -->
+            <div id="install-schemes-area" style="display:none;margin:10px 0;padding:12px;background:#0f1a2f;border:1px solid #223049;border-radius:8px;">
+                <div style="font-size:13px;color:#c8d6e8;margin-bottom:8px;">🎯 安装到以下方案（可多选，直接装进对应 <code>mods/</code> / <code>plugins/</code> 目录）</div>
+                <div id="install-schemes-list" style="max-height:150px;overflow-y:auto;"></div>
+                <div id="install-schemes-hint" style="font-size:12px;color:#8fa3c0;margin-top:8px;"></div>
+            </div>
+            <div id="install-no-scheme-warn" style="display:none;margin:10px 0;padding:10px 12px;background:#3a1d1d;border:1px solid #6b2b2b;border-radius:8px;color:#ffb4b4;font-size:13px;line-height:1.6;">
+                ⚠️ 当前没有可安装该资源的方案（模组需 Forge/NeoForge/Fabric/Quilt 方案，插件需 Paper/Purpur/Spigot/Bukkit/Mohist/CatServer 方案）。「自动选择版本并拉取依赖」已禁用，仅可下载到资源池；请先到「方案管理」创建兼容方案。
+            </div>
             <div id="install-manual-area" style="display:none;margin:10px 0;">
                 <label for="install-version-select" style="display:block;font-size:13px;margin-bottom:5px;">选择版本：</label>
                 <select id="install-version-select" style="width:100%;max-width:100%;">
@@ -705,9 +714,14 @@
             const installConfirmBtn = document.getElementById('install-confirm-btn');
             const installCancelBtn = document.getElementById('install-cancel-btn');
             const installAutoResolve = document.getElementById('install-auto-resolve');
+            const installSchemesArea = document.getElementById('install-schemes-area');
+            const installSchemesList = document.getElementById('install-schemes-list');
+            const installSchemesHint = document.getElementById('install-schemes-hint');
+            const installNoSchemeWarn = document.getElementById('install-no-scheme-warn');
             const installManualArea = document.getElementById('install-manual-area');
             const installVersionSelect = document.getElementById('install-version-select');
             const installDepsInfo = document.getElementById('install-deps-info');
+            let compatibleSchemes = [];   // 当前资源类别的兼容方案列表
             // 三选一确认弹窗
             const depsModal = document.getElementById('install-deps-modal');
             const depsModalSub = document.getElementById('install-deps-modal-sub');
@@ -1030,12 +1044,21 @@
                         kind: el.dataset.kind
                     }));
                 });
-                // 详情 / 依赖打开同一个「项目详情 + 依赖清单」弹层（依赖按钮不再形同虚设）
-                container.querySelectorAll('.result-item .btn-sm.info, .result-item .btn-sm.deps').forEach(el => {
+                // 详情按钮：打开「项目详情 + 依赖清单」弹层
+                container.querySelectorAll('.result-item .btn-sm.info').forEach(el => {
                     el.addEventListener('click', () => showContentInfo(el.dataset.project, el.dataset.source, {
                         name: el.dataset.name,
                         url: el.dataset.url,
                         icon: el.dataset.icon
+                    }));
+                });
+                // 依赖按钮：回滚旧版——一键下载「本体 + 前置依赖」到资源池（与详情按钮职责区分）
+                container.querySelectorAll('.result-item .btn-sm.deps').forEach(el => {
+                    el.addEventListener('click', () => downloadWithDeps({
+                        project: el.dataset.project,
+                        name: el.dataset.name,
+                        source: el.dataset.source,
+                        kind: el.dataset.kind
                     }));
                 });
                 // 主页按钮：新标签页外链（用后端返回的 url，缺失时按来源 + slug 兜底）
@@ -1124,11 +1147,12 @@
                 return { loader: modLoaderFilter ? modLoaderFilter.value : '', mcVersion: modVersionFilter ? modVersionFilter.value.trim() : '' };
             }
 
-            function openInstallModal(item) {
+            async function openInstallModal(item) {
                 if (!item || !item.project) return;
                 pendingInstall = item;
                 versionCache = [];
                 depsDecision = null;
+                compatibleSchemes = [];
                 const isPlugin = item.kind === 'plugins';
                 installTitle.textContent = `下载${isPlugin ? '插件' : '模组'}到资源池`;
                 installSub.innerHTML =
@@ -1136,17 +1160,62 @@
                     `资源将存入 <code>pool/${isPlugin ? 'plugins' : 'mods'}/</code> 并登记哈希，初始引用数为 0。`;
                 installCfWarn.style.display = (item.source === 'curseforge') ? 'block' : 'none';
                 installAutoResolve.checked = true;
+                installAutoResolve.disabled = true;   // 拉取兼容方案期间先禁用
                 installManualArea.style.display = 'none';
-                installConfirmBtn.disabled = false;
+                installSchemesArea.style.display = 'none';
+                installNoSchemeWarn.style.display = 'none';
+                installConfirmBtn.disabled = true;
                 installConfirmBtn.textContent = '⬇️ 下载到池';
                 installModal.classList.add('active');
+
+                // 拉取兼容方案：无兼容方案则「一律取消勾选」并禁用自动解析
+                try {
+                    const data = await apiGet('/api/schemes/compatible?kind=' + (isPlugin ? 'plugins' : 'mods'));
+                    compatibleSchemes = data.schemes || [];
+                } catch (e) {
+                    compatibleSchemes = [];
+                }
+                if (!pendingInstall || pendingInstall.project !== item.project) return; // 弹窗已切换
+                if (!compatibleSchemes.length) {
+                    installAutoResolve.checked = false;   // 一律取消勾选
+                    installAutoResolve.disabled = true;
+                    installNoSchemeWarn.style.display = 'block';
+                    installSchemesArea.style.display = 'none';
+                } else {
+                    installAutoResolve.checked = true;
+                    installAutoResolve.disabled = false;
+                    installNoSchemeWarn.style.display = 'none';
+                    renderInstallSchemes();
+                    installSchemesArea.style.display = 'block';
+                }
+                installConfirmBtn.disabled = false;
+            }
+
+            /** 渲染兼容方案多选项（默认全选；激活方案排前） */
+            function renderInstallSchemes() {
+                const sorted = compatibleSchemes.slice().sort((a, b) => (b.active ? 1 : 0) - (a.active ? 1 : 0));
+                installSchemesList.innerHTML = sorted.map((s, i) => {
+                    const label = `${escapeHtml(s.name)} · ${escapeHtml(s.type || s.loader || '未知')} ${s.version ? '· MC ' + escapeHtml(s.version) : ''}${s.active ? '（当前）' : ''}`;
+                    return `<label class="modal-check" style="padding:5px 2px;display:flex;gap:8px;align-items:center;cursor:pointer;">
+                        <input type="checkbox" class="install-scheme-cb" value="${escapeHtml(s.name)}" checked />
+                        <span>${label}</span>
+                    </label>`;
+                }).join('');
+                installSchemesHint.textContent = `共 ${sorted.length} 个兼容方案，已全选；可取消勾选不需要的方案。本体将直接装进所选方案的 ${sorted[0] && sorted[0].type && /paper|purpur|spigot|bukkit|mohist|catserver|leaves/i.test(sorted[0].type) ? 'plugins' : 'mods'} 目录。`;
+            }
+
+            /** 读取当前勾选的目标方案名 */
+            function selectedInstallSchemes() {
+                return Array.from(installSchemesList.querySelectorAll('.install-scheme-cb:checked'))
+                    .map(cb => cb.value).filter(Boolean);
             }
 
             // 开关切换：关闭时拉取版本列表
             installAutoResolve.addEventListener('change', async () => {
                 const on = installAutoResolve.checked;
                 installManualArea.style.display = on ? 'none' : 'block';
-                installConfirmBtn.textContent = on ? '⬇️ 下载到池' : '⬇️ 下一步';
+                installSchemesArea.style.display = (on && compatibleSchemes.length) ? 'block' : 'none';
+                installConfirmBtn.textContent = on ? '⬇️ 下载并安装到方案' : '⬇️ 下载到池（下一步）';
                 if (on || !pendingInstall) return;
                 const item = pendingInstall;
                 const { loader, mcVersion } = currentLoaderAndVersion(item);
@@ -1209,11 +1278,39 @@
                     `<span style="color:#8fa3c0;font-size:12px;">点「下一步」后可选择全装 / 仅装本体。</span>`;
             }
 
+            /**
+             * 依赖按钮旧版行为：一键下载「本体 + 前置依赖」到资源池。
+             * 不打开下载配置弹窗、不传 --schemes（不涉及方案直装），
+             * 由后端 install mod/plugin 走 dep_resolver 递归拉依赖（最多 3 层）。
+             */
+            async function downloadWithDeps(item) {
+                if (!item || !item.project) return;
+                const isPlugin = item.kind === 'plugins';
+                const command = isPlugin ? 'install plugin' : 'install mod';
+                const args = [item.project, '--source', item.source];
+                const { loader, mcVersion } = currentLoaderAndVersion(item);
+                if (loader) args.push('--loader', loader);
+                if (mcVersion) args.push('--version', mcVersion);
+                try {
+                    await apiTask(command, args,
+                        `${item.name || item.project}（含依赖） → 资源池`,
+                        isPlugin ? '插件' : '模组');
+                    showToast(`⏳ 已提交下载「${item.name || item.project}」及前置依赖到资源池，进度见下载队列`, 'success');
+                    activateTab('queue');
+                    await loadTasks();
+                } catch (e) {
+                    showToast(`❌ 提交失败: ${e.message}`, 'error');
+                }
+            }
+
             function closeInstallModal() {
                 installModal.classList.remove('active');
                 pendingInstall = null;
                 versionCache = [];
                 depsDecision = null;
+                compatibleSchemes = [];
+                installSchemesArea.style.display = 'none';
+                installNoSchemeWarn.style.display = 'none';
                 installConfirmBtn.disabled = false;
             }
 
@@ -1222,7 +1319,7 @@
                 depsDecision = null;
             }
 
-            async function submitInstall(withDeps) {
+            async function submitInstall(withDeps, schemes) {
                 if (!pendingInstall) return;
                 const item = pendingInstall;
                 const isPlugin = item.kind === 'plugins';
@@ -1239,12 +1336,16 @@
                     args.push('--version-id', String(chosen.id));
                 }
                 if (!withDeps) args.push('--no-auto');
+                // 勾选自动解析且选了方案：下载入池后直接装到所选方案目录
+                const targets = Array.isArray(schemes) ? schemes : [];
+                if (targets.length) args.push('--schemes', targets.join(','));
                 installConfirmBtn.disabled = true;
                 try {
                     await apiTask(command, args,
-                        `${item.name || item.project} → 资源池`,
+                        `${item.name || item.project} → ${targets.length ? '方案' : '资源池'}`,
                         isPlugin ? '插件' : '模组');
-                    showToast(`⏳ 已提交下载「${item.name || item.project}」${withDeps ? '（含前置）' : '（仅本体）'}到公共池，进度见下载队列`, 'success');
+                    const where = targets.length ? `并直接安装到 ${targets.length} 个方案（${targets.join('、')}）` : '到公共池';
+                    showToast(`⏳ 已提交下载「${item.name || item.project}」${withDeps ? '（含前置）' : '（仅本体）'}${where}，进度见下载队列`, 'success');
                     closeDepsModal();
                     closeInstallModal();
                     activateTab('queue');
@@ -1258,8 +1359,9 @@
             function confirmInstall() {
                 if (!pendingInstall) return;
                 if (installAutoResolve.checked) {
-                    // 自动解析：直接递归拉依赖入池
-                    submitInstall(true);
+                    // 自动解析：递归拉依赖入池；若勾选了兼容方案则同时直装到方案
+                    const targets = compatibleSchemes.length ? selectedInstallSchemes() : [];
+                    submitInstall(true, targets);
                     return;
                 }
                 // 关闭自动解析：三选一确认弹窗

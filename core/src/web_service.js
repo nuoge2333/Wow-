@@ -1024,6 +1024,12 @@ function startWeb(options = {}) {
             const poolByLoader = (root) => {
                 const out = [];
                 if (!fs.existsSync(root)) return out;
+                // 根目录散落文件：installUrl 下载入池时把 jar 直接落在 pool/<kind>/ 根目录
+                // （没有 loader/version 子目录），旧逻辑只遍历 loader 子目录导致这些插件/模组
+                // 在资源池页完全看不到（Windows 端最明显）。这里先把根目录文件纳入扫描。
+                for (const f of readFiles(root)) {
+                    out.push({ ...f, loader: '', version: '', uncategorized: true });
+                }
                 let loaders = [];
                 try { loaders = fs.readdirSync(root); } catch (e) { return out; }
                 for (const loader of loaders) {
@@ -2151,6 +2157,28 @@ function startWeb(options = {}) {
         const schemeManager = new SchemeManager();
         const schemes = schemeManager.list();
         res.json({ schemes, current: schemeManager.currentScheme });
+    });
+
+    /**
+     * 兼容方案列表（下载弹窗用）：GET /api/schemes/compatible?kind=mods|plugins
+     * 返回能安装该类资源的方案（模组端 vs 插件端按 loader/type 过滤）。
+     * 前端据此决定「自动选择版本并拉取依赖」复选框是否可用：
+     * 没有任何兼容方案时必须禁用并取消勾选（一律取消勾选）。
+     */
+    app.get('/api/schemes/compatible', (req, res) => {
+        try {
+            const PoolInstaller = require('./pool_installer');
+            const SchemeManager = require('./scheme_manager');
+            const kind = String((req.query && req.query.kind) || 'mods') === 'plugins' ? 'plugins' : 'mods';
+            const sm = new SchemeManager();
+            const all = sm.list();
+            const schemes = all
+                .filter(s => PoolInstaller.isSchemeCompatible(s, kind))
+                .map(s => ({ name: s.name, version: s.version, loader: s.loader, type: s.type, active: !!s.active }));
+            res.json({ success: true, kind, schemes, hasCompatible: schemes.length > 0 });
+        } catch (e) {
+            res.status(500).json({ success: false, error: e.message });
+        }
     });
 
     /**
