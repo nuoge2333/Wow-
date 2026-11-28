@@ -254,12 +254,16 @@ console.log('\n— V3.5.8 启动方式（cli.js）—');
     });
     check('服务器停止后自动退出跟踪，REPL 退出时清理定时器', () => {
         assert.ok(/服务器已停止，已退出 :mc 日志跟踪，回到 :wow 视图/.test(cli), '缺少退出跟踪提示');
-        // V3.7.4：close 回调里多了「归还 stdin 租约」那几行；
-        // P0：又多了「退订提示符订阅」一行。窗口放宽到 1300，断言本身
-        // （两个定时器都要清）不变。
-        const m = cli.match(/rl\.on\('close', async \(\) => \{[\s\S]{0,1300}?following = false;/);
-        assert.ok(m && /clearInterval\(followTimer\)/.test(m[0]) && /clearInterval\(detectTimer\)/.test(m[0]),
-            'close 回调未清理跟踪定时器');
+        // P0（多实例监听泄漏绞杀）：定时器清理升级为统一入口 clearAllReplTimers()，
+        // close 回调在最前面无条件调用它（覆盖 lease.released 提前 return 分支）——
+        // 比逐条 clearInterval 更彻底。断言随之升级：
+        //   1) close 回调开头调用 clearAllReplTimers()；
+        //   2) 该函数内部确实清掉 follow/detect/boot 三个句柄。
+        const m = cli.match(/rl\.on\('close', async \(\) => \{[\s\S]{0,700}?clearAllReplTimers\(\)/);
+        assert.ok(m, 'close 回调未在开头无条件调用 clearAllReplTimers()');
+        const fn = cli.match(/const clearAllReplTimers = \(\) => \{[\s\S]{0,500}?following = false;/);
+        assert.ok(fn && /clearInterval\(followTimer\)/.test(fn[0]) && /clearInterval\(detectTimer\)/.test(fn[0]),
+            'clearAllReplTimers 未清掉 follow/detect 定时器');
     });
     check('进入 REPL 时服务器已在运行也直接跟进', () => {
         assert.ok(/服务器正在运行（由 Web 面板或其它进程启动）/.test(cli), '缺少已运行场景提示');

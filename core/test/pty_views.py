@@ -99,14 +99,23 @@ function bye(reason) {
   process.stdout.write(`[FAKE-MC] Stopping (${reason})\n`);
   setTimeout(() => process.exit(0), 40);
 }
-process.stdin.on('data', d => { if (d.toString().includes('stop')) bye('stdin stop'); });
+// E 场景：把收到的每行指令落盘，供 pty 侧精确统计「一条指令到达几次」。
+const fs = require('fs');
+const cmdLog = process.env.FAKE_CMD_LOG;
+process.stdin.on('data', d => {
+  const text = d.toString();
+  if (cmdLog) {
+    try { fs.appendFileSync(cmdLog, text); } catch (e) {}
+  }
+  if (text.includes('stop')) bye('stdin stop');
+});
 process.on('SIGTERM', () => bye('SIGTERM'));
 process.on('SIGHUP', () => bye('SIGHUP'));
 process.on('SIGINT', () => bye('SIGINT'));
 '''
 
 
-def make_env(root, scenario):
+def make_env(root, scenario, extra_env=None):
     """在 root/<scenario>/ 下造一套独立配置 + dummy 方案，返回 (dir, env)。"""
     d = os.path.join(root, scenario)
     scheme = os.path.join(d, 'scheme')
@@ -149,6 +158,8 @@ def make_env(root, scenario):
     env['TERM'] = 'xterm-256color'
     env['COLUMNS'] = '100'
     env['LINES'] = '30'
+    if extra_env:
+        env.update(extra_env)
     return d, env
 
 
@@ -528,11 +539,63 @@ def scenario_d(root, env):
         guard.__exit__(None, None, None)
 
 
+def scenario_e(root, env):
+    """多实例监听泄漏绞杀：10 次 :mc<->:wow 往返 + say hi 单次到达 + 无双写。"""
+    cmd_log = os.path.join(env['WOW_CONFIG_FILE'].rsplit(os.sep, 1)[0], 'cmd.log')
+    s = Sess(env)
+    try:
+        s.expect('已进入交互模式', 20)
+        s.send('server start\n')
+        s.expect('开服控制台|服务器已启动，PID: \\d+', 20)
+        s.pump(1.2)
+
+        # 10 次 :mc -> :wow -> :mc 往返（用户验收动作）
+        for i in range(10):
+            s.send(':wow\n')
+            s.expect('🧩 :wow 长命令|长命令（服务端仍在运行', 20)
+            s.pump(0.12)
+            s.send(':mc\n')
+            s.expect('🎮 Minecraft 实时日志|开服控制台', 20)
+            s.pump(0.12)
+
+        # 在 :mc 下发一条普通 MC 指令，MC 只能收到一次
+        s.send('say hi\n')
+        s.pump(1.5)
+
+        clean = strip_ansi(s.buf)
+
+        # 1) MC 端指令日志：say hi 必须恰好出现一次（多实例 handler 会翻倍）
+        got = ''
+        if os.path.isfile(cmd_log):
+            with open(cmd_log, 'r', encoding='utf-8', errors='replace') as f:
+                got = f.read()
+        hits = len(re.findall(r'(?m)^say hi\s*$', got))
+        if hits != 1:
+            raise AssertionError('say hi 到达 MC %d 次（应为 1）；cmd.log=%r'
+                                 % (hits, got[-200:]))
+
+        # 2) 终端日志双写：同一 tick 编号不得重复出现
+        ticks = re.findall(r'\[FAKE-MC\] tick (\d+)', clean)
+        dup = [t for t in set(ticks) if ticks.count(t) > 1]
+        if dup:
+            raise AssertionError('终端日志双写：tick 编号重复 %r' % sorted(dup, key=int)[:5])
+
+        # 3) 单例 readline 与输入双写哨兵
+        assert_no_double(clean, 'E')
+        assert_clean_exit(clean, 'E')
+        n = assert_single_readline(clean, 'E', min_lines=8)
+        return ('PASS 10 次 :mc/:wow 往返 + say hi 单次到达 + 无双写；'
+                '探针 %d 行 peak<=1 violations=0' % n)
+    finally:
+        s.close()
+
+
 SCENARIOS = (
     ('A', scenario_a),
     ('B', scenario_b),
     ('C', scenario_c),
     ('D', scenario_d),
+    ('E', scenario_e),
 )
 
 
@@ -549,7 +612,11 @@ def main():
     try:
         for name, fn in todo:
             try:
-                env_dir, env = make_env(root, name)
+                extra = None
+                if name == 'E':
+                    # E 场景要让 fake-java 把收到的指令落盘，便于精确统计次数。
+                    extra = {'FAKE_CMD_LOG': os.path.join(root, name, 'cmd.log')}
+                env_dir, env = make_env(root, name, extra)
                 msg = fn(root, env)
                 if msg.startswith('PASS '):
                     msg = msg[5:]           # 场景返回值不带 PASS，由汇总行统一加

@@ -114,6 +114,23 @@ check('Web 触发启服：:wow 自动切 :mc，:m 不切页只刷状态栏', () 
     if (!/webWatch/.test(itv)) throw new Error('interactive.js 缺状态栏监听');
 });
 
+check('timer_registry.js 存在并被三处视图入口引用', () => {
+    const reg = path.join(srcDir, 'timer_registry.js');
+    if (!fs.existsSync(reg)) throw new Error('缺 timer_registry.js');
+    for (const f of ['cli.js', 'server.js', 'mc_console.js']) {
+        const s = fs.readFileSync(path.join(srcDir, f), 'utf8');
+        if (!/timer_registry/.test(s)) throw new Error(`${f} 未引用 timer_registry`);
+    }
+});
+
+check('pty_views.py 含场景 E（10 往返 + say hi 单次 + 无双写）', () => {
+    const py = fs.readFileSync(pyScript, 'utf8');
+    if (!/def scenario_e/.test(py)) throw new Error('缺 scenario_e');
+    if (!/range\(10\)/.test(py)) throw new Error('缺 10 次往返');
+    if (!/say hi/.test(py)) throw new Error('缺 say hi 验收');
+    if (!/hits != 1/.test(py)) throw new Error('缺 say hi 单次到达断言');
+});
+
 // ---------------- 真 TTY 端到端 ----------------
 
 const pyCheck = spawnSync('python3', ['--version'], { encoding: 'utf8' });
@@ -149,7 +166,7 @@ if (!hasPython || !isLinux) {
         if (r.status !== 0) throw new Error(`exit=${r.status} signal=${r.signal}`);
     });
 
-    for (const name of ['A', 'B', 'C', 'D']) {
+    for (const name of ['A', 'B', 'C', 'D', 'E']) {
         check(`pty 场景 ${name} 通过`, () => {
             const line = out.split('\n').find(l => l.includes(`[SCENARIO ${name}]`));
             if (!line) throw new Error(`没有场景 ${name} 的结果行`);
@@ -157,10 +174,10 @@ if (!hasPython || !isLinux) {
         });
     }
 
-    check('[PTY_RESULT] 汇总 ok=4 fail=0', () => {
+    check('[PTY_RESULT] 汇总 ok=5 fail=0', () => {
         const m = out.match(/\[PTY_RESULT\]\s*ok=(\d+)\s+fail=(\d+)/);
         if (!m) throw new Error('缺汇总行');
-        if (m[1] !== '4' || m[2] !== '0') {
+        if (m[1] !== '5' || m[2] !== '0') {
             throw new Error(`ok=${m[1]} fail=${m[2]}`);
         }
     });

@@ -11,6 +11,10 @@ const path = require('path');
 const { spawn, exec, execSync } = require('child_process');
 const utils = require('./utils');
 const config = require('./config');
+// P0（多实例监听泄漏绞杀）：开服控制台的视图级定时器统一登记，
+// 进程退出 / 视图拆除时一键全清。
+const timerRegistry = require('./timer_registry');
+const SILENCE_TIMER_SCOPE = 'server.console.silence';
 const JreManager = require('./jre_manager');
 const axios = require('axios');
 // V3.6.2（607 指令）：JVM 参数统一构建（parseArgs / GC 互斥 / 内存红线）
@@ -584,6 +588,12 @@ class ServerManager {
         const oldRl = this._rl;
         this._rl = null;
         if (oldRl) {
+            // P0（多实例监听泄漏绞杀）：拆控制台时先摘掉 line/SIGINT 监听，
+            // 再 close——避免 :mc→:wow→:mc 往返时旧 handler 残留导致指令双发。
+            // close 监听留到 lease.release()→stdin_session.teardown() 里在
+            // close 事件派发后再摘，不破坏收尾链路。
+            try { oldRl.removeAllListeners('line'); } catch (e) { /* 忽略 */ }
+            try { oldRl.removeAllListeners('SIGINT'); } catch (e) { /* 忽略 */ }
             try { oldRl.close(); } catch (e) { /* 已关闭 */ }
         }
         const lease = this._consoleLease;
@@ -737,6 +747,10 @@ class ServerManager {
             const finish = async () => {
                 if (done) return;
                 done = true;
+                // P0（多实例监听泄漏绞杀）：离开 :wow 长命令视图时先摘 line/SIGINT
+                // 监听再 close，防止往返切换后旧 handler 把指令处理两遍。
+                try { rl.removeAllListeners('line'); } catch (e) { /* 忽略 */ }
+                try { rl.removeAllListeners('SIGINT'); } catch (e) { /* 忽略 */ }
                 try { rl.close(); } catch (e) { /* 忽略 */ }
                 try { await lease.release(); } catch (e) { /* 忽略 */ }
                 resolve();
@@ -1577,6 +1591,9 @@ class ServerManager {
             // 输入退出指令；绝不靠「多久没读到日志」判定退出。这里只是进程存活但日志
             // 静默时（加载模组 / 等待输出）原地打印灰色提示，证明没有卡死，然后继续挂起。
             this._lastLogAt = Date.now();
+            // P0（多实例监听泄漏绞杀）：同一实例内重复 start 时先清旧心跳，
+            // 保证任何时刻最多只有一个 _mcSilenceTimer 在刷「等待输出」提示。
+            timerRegistry.clearScope(SILENCE_TIMER_SCOPE);
             this._mcSilenceTimer = setInterval(() => {
                 if (this._mode !== 'mc') return;                 // 只在实际停在 :mc 实时日志时提示
                 if (!this.process || this.process.killed) return;
@@ -1585,6 +1602,7 @@ class ServerManager {
                     console.log('\x1b[90m⏳ 正在加载模组/等待服务器输出...（进程存活中）\x1b[39m');
                 }
             }, 10000);
+            timerRegistry.track(SILENCE_TIMER_SCOPE, this._mcSilenceTimer);
             if (this._mcSilenceTimer.unref) this._mcSilenceTimer.unref();
         } else {
             // 非交互模式（Web 面板 / Docker）：
@@ -1640,6 +1658,7 @@ class ServerManager {
                 this._rl = null;
             }
             // V3.8.2：进程退出即停掉 :mc 防假死监视
+            timerRegistry.clearScope(SILENCE_TIMER_SCOPE);
             if (this._mcSilenceTimer) {
                 clearInterval(this._mcSilenceTimer);
                 this._mcSilenceTimer = null;

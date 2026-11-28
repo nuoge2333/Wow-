@@ -2586,14 +2586,34 @@ async function startRepl(options = {}) {
     // 「服务器刚被面板（或其它进程）启动」，然后增量 tail 日志打到终端。
     // 在 REPL 里直接敲 server start 不走这条路：那种情况由开服控制台
     // 接管 stdin（server.js 交互分支），比单纯的日志回显功能更全。
+    // P0（多实例监听泄漏绞杀）：所有视图级定时器统一登记到 timer_registry，
+    // 退出 / 被强制接管时一键全清，杜绝旧回调继续 tail 日志或刷心跳。
+    // 三档 scope 各自独立：stopFollow 只清 follow（detect 仍需监控 Web 再启服），
+    // 而 REPL 真正退出时 clearAllReplTimers 一次全清。
+    const timerReg = load('./timer_registry');
+    const SCOPE_FOLLOW = 'repl.follow';
+    const SCOPE_DETECT = 'repl.detect';
+    const SCOPE_BOOT = 'repl.boot';
+    const allReplScopes = [SCOPE_FOLLOW, SCOPE_DETECT, SCOPE_BOOT];
     let followTimer = null;      // 日志 tail 定时器
     let detectTimer = null;      // 心跳跳变检测定时器
+    let bootTimer = null;        // 进入 REPL 时的 2s 兜底检测（P0：必须可撤销）
     let following = false;
     let followOffset = 0;
     let wasRelayAlive = null;    // null = 尚未采样
     let ownServerOp = false;     // 本终端自己敲的 server start/restart → 开服控制台接管，不跟踪
 
+    /** 退出 REPL：无条件清掉本 REPL 建立的每一个定时器（双保险：注册表 + 本地句柄） */
+    const clearAllReplTimers = () => {
+        if (timerReg) allReplScopes.forEach(s => timerReg.clearScope(s));
+        if (followTimer) { clearInterval(followTimer); followTimer = null; }
+        if (detectTimer) { clearInterval(detectTimer); detectTimer = null; }
+        if (bootTimer) { clearTimeout(bootTimer); bootTimer = null; }
+        following = false;
+    };
+
     const stopFollow = (reason) => {
+        if (timerReg) timerReg.clearScope(SCOPE_FOLLOW);
         if (followTimer) { clearInterval(followTimer); followTimer = null; }
         // 服务器退出：把 REPL 从 :mc 切回 :wow。提示符由 view_state 的 onChange
         // 订阅（见下方 vsMod.onChange）自动恢复为 WOW_PROMPT，printLine 里的
@@ -2700,6 +2720,7 @@ async function startRepl(options = {}) {
                 try { if (fd !== undefined) fs.closeSync(fd); } catch (e) { /* 忽略 */ }
             }
         }, 500);
+        if (timerReg) timerReg.track(SCOPE_FOLLOW, followTimer);
         if (followTimer.unref) followTimer.unref();
     };
 
@@ -2728,14 +2749,20 @@ async function startRepl(options = {}) {
         }
         wasRelayAlive = alive;
     }, 1500);
+    if (timerReg) timerReg.track(SCOPE_DETECT, detectTimer);
     if (detectTimer.unref) detectTimer.unref();
-    // 进入 REPL 时服务器就已在跑（面板先启动、后来才敲 wow L）：直接跟进
-    setTimeout(() => {
+    // 进入 REPL 时服务器就已在跑（面板先启动、后来才敲 wow L）：直接跟进。
+    // P0：这个 2s 兜底定时器过去没保存 id，REPL 退出后仍会触发 startFollow，
+    // 与新视图的定时器并存 → 日志双写 / 心跳复读。现在纳入注册表并可被撤销。
+    bootTimer = setTimeout(() => {
+        if (closed) return;
         const ServerManager = load('./server');
         if (ServerManager && ServerManager.isConsoleRelayAlive() && !following && !ownServerOp) {
             startFollow('📋 服务器正在运行（由 Web 面板或其它进程启动），进入日志跟踪（实时回显 MC 输出）：');
         }
     }, 2000);
+    if (timerReg) timerReg.track(SCOPE_BOOT, bootTimer);
+    if (bootTimer.unref) bootTimer.unref();
 
     rl.prompt();
     rl.on('line', async (line) => {
@@ -2873,26 +2900,27 @@ async function startRepl(options = {}) {
     });
     rl.on('SIGINT', () => { closed = true; rl.close(); });
     rl.on('close', async () => {
+        // ── P0（多实例监听泄漏绞杀）：无条件最先清理 ──
+        // 无论本次 close 是「被 server.console 强制接管」「m 回菜单」「exit 退出」
+        // 哪一路径，只要 REPL 的 stdin 关闭，它建立的 follow/detect/boot 定时器
+        // 就必须全部撤销。旧代码把清理放在函数末尾，导致 lease.released 分支
+        // 直接 return 时三个定时器全部泄漏 → 开服控制台接管后旧回调继续 tail
+        // 日志、连刷「暂无新日志」，与新的 stdout 回显叠加成双写。
+        clearAllReplTimers();
+        closed = true;
         // 退订视图→提示符同步（P0），避免残留订阅在 REPL 关闭后改别处提示符
         try { unsubscribePrompt(); } catch (e) { /* 忽略 */ }
+        // REPL 已关闭：交互式命令不能再借用这个 readline
+        if (replSession && replSession.rl === rl) replSession = null;
         // 被开服控制台的 acquireSync('server.console') 强制接管时，本租约
         // 已被标记 retired：stdin 交给了控制台，而 MC 还在跑。此时绝不能
         // process.exit(0)，否则服务端立刻变孤儿。只静默让出。
-        if (lease.released) {
-            closed = true;
-            if (replSession && replSession.rl === rl) replSession = null;
-            return;
-        }
-        // REPL 已关闭：交互式命令不能再借用这个 readline
-        if (replSession && replSession.rl === rl) replSession = null;
+        // 定时器清理已在函数最前面无条件完成，这里安全 return。
+        if (lease.released) return;
         // 归还 stdin 租约：LEASE 里已经 close 了 rl，这里只负责放行排队者。
         // 必须 await——release() 内部会让出一轮事件循环，保证下一个消费者
         // 拿到 stdin 时内核缓冲里没有残留字节。
         try { await lease.release(); } catch (e) { /* 忽略 */ }
-        // V3.6.2：退出 REPL 前收掉日志跟踪的定时器，别让它们吊住进程
-        if (followTimer) { clearInterval(followTimer); followTimer = null; }
-        if (detectTimer) { clearInterval(detectTimer); detectTimer = null; }
-        following = false;
         // V3.6.1：输入 m 是「回 M 菜单」，不是退出。走这条分支时不打印「再见」、
         // 不关 Web 面板（用户还会回来），也不 process.exit。
         if (toMenu) {

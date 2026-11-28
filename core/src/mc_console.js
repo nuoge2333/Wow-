@@ -13,6 +13,11 @@ const path = require('path');
 const stdinSession = require('./stdin_session');
 const utils = require('./utils');
 const aliveProbe = require('./alive_probe');
+const timerRegistry = require('./timer_registry');
+
+// P0（多实例监听泄漏绞杀）：本视图所有定时器登记到独立 scope，
+// 退出视图时 clearScope 一键全清，杜绝旧 _follow 回调并发刷心跳 / 双写日志。
+const FOLLOW_TIMER_SCOPE = 'mc.console.follow';
 
 const FOLLOW_INTERVAL_MS = 300;
 // 存活检测降频：每 10 个 tick（约 3s）查一次服务器进程是否还在。
@@ -168,8 +173,12 @@ class McConsole {
         initial.forEach(l => console.log(l));
         this.lastSize = this._fileSize();
 
+        // P0（多实例监听泄漏绞杀）：进入 :mc 视图前，先按 scope 清掉本视图
+        // 可能残留的旧定时器（例如上一轮 attach 没走干净 finish 的极端情况）。
+        timerRegistry.clearScope(FOLLOW_TIMER_SCOPE);
         // 纯 Node 轮询跟随日志（跨平台，Windows 无 tail 也能用）
         this.timer = setInterval(() => this._follow(), FOLLOW_INTERVAL_MS);
+        timerRegistry.track(FOLLOW_TIMER_SCOPE, this.timer);
         if (this.timer.unref) this.timer.unref();
 
         // 顶层 `wow :mc` 也是货真价实的 :mc 视图，打上状态标记（退出时清回）。
@@ -188,8 +197,18 @@ class McConsole {
             const finish = async (reason = 'mc.console:detach') => {
                 if (this.closed) return;
                 this.closed = true;
+                // P0（多实例监听泄漏绞杀）：退出视图三连清——
+                //   1) 定时器按 scope 全清（含可能登记但句柄已丢的残留）；
+                //   2) 摘掉本视图在 rl 上挂的 line/SIGINT/close 监听，防止旧
+                //      handler 在租约复用后再把一条指令处理两遍；
+                //   3) 提示符复位到 shell（view_state 同步）。
+                timerRegistry.clearScope(FOLLOW_TIMER_SCOPE);
                 if (this.timer) { clearInterval(this.timer); this.timer = null; }
-                try { await this.lease.release(); } catch (e) { /* 忽略 */ }
+                try { rl.removeAllListeners('line'); } catch (e) { /* 忽略 */ }
+                try { rl.removeAllListeners('SIGINT'); } catch (e) { /* 忽略 */ }
+                try {
+                    await this.lease.release();   // release 内部 teardown 会再清 close 监听并 close
+                } catch (e) { /* 忽略 */ }
                 this.lease = null;
                 try {
                     const vs = require('./view_state');

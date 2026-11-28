@@ -235,6 +235,18 @@ function teardown() {
     liveRl = null;
     liveOwner = null;
     createdCount = Math.max(0, createdCount - 1);
+    // P0（多实例监听泄漏绞杀）：视图切换「先 close 旧的再 create 新的」时，
+    // 必须把旧 rl 上调用方挂的监听全部摘掉。Node 的 rl.close() 只停止读取，
+    // **不会**移除这些监听；若旧 rl 对象仍被闭包持有并再次 emit，残留 handler
+    // 会把一条指令处理两遍。
+    //   - line / SIGINT 是导致「指令双发 / 键盘触发两次」的元凶，先摘掉，
+    //     让正在派发的输入链立即失效；
+    //   - close 上挂着关键收尾逻辑（lease.released 静默让出、避免误杀 MC），
+    //     必须在 close() 触发完 close 事件**之后**再摘，否则收尾链路被跳过。
+    // 注意：这里只清 rl 自身的监听，不碰 stdin 上 emitKeypressEvents 挂的
+    // onData 解码器（那是 stdin 的监听，且幂等常驻，见文件头说明）。
+    try { old.removeAllListeners('line'); } catch (e) { /* 忽略 */ }
+    try { old.removeAllListeners('SIGINT'); } catch (e) { /* 忽略 */ }
     try {
         // 调用方可能给 rl.close 包了一层（见 interactive.createRL 的
         // 「close 顺手还租约」），那一层会反过来再调 release。
@@ -242,6 +254,8 @@ function teardown() {
         if (typeof old.__origClose === 'function') old.__origClose();
         else old.close();
     } catch (e) { /* 已关闭 */ }
+    // close 事件已派发完毕，此刻再摘 close 监听，杜绝对象复用时的二次收尾。
+    try { old.removeAllListeners('close'); } catch (e) { /* 忽略 */ }
     emitProbe('TEARDOWN');
 }
 
@@ -459,6 +473,18 @@ function currentRl() {
     return current ? current.rl : null;
 }
 
+/**
+ * 全局唯一 activeReadline 指针（P0 多实例监听泄漏绞杀）。
+ *
+ * 视图切换的正确姿势：先拿到当前 active，close 并 release 它，确认归零后
+ * 再 claim 新的。返回 null 表示此刻无人持有 stdin。业务代码一般仍应走
+ * claim()/acquireSync()，此访问器仅供切换/退出路径做「先关旧再建新」的守卫
+ * 与诊断断言。
+ */
+function activeReadline() {
+    return liveRl;
+}
+
 /** 诊断快照（测试断言用） */
 function stats() {
     return {
@@ -471,6 +497,9 @@ function stats() {
         peak: peakCount,
         violations: violationSites.length,
         stdinDataListeners: process.stdin.listenerCount('data'),
+        // 旧 rl 残留监听数之和（P0 诊断：视图切换后应为 0）。
+        // teardown 现在会强制摘掉这些监听，正常应为 0。
+        activeLineListeners: liveRl ? liveRl.listenerCount('line') : 0,
         // Node emitKeypressEvents 常驻的按键解码器（见文件头说明）。
         // 它不算第二个 readline，但让诊断能一眼看出「多出来的那个是谁」。
         keypressDecoder: process.stdin.listeners('data')
@@ -495,6 +524,7 @@ module.exports = {
     isBusy,
     ownerName,
     currentRl,
+    activeReadline,
     stats,
     violations,
     makeRl,

@@ -128,6 +128,38 @@
 
 ## 未发版修复（2026-11-28，基于 3.9.0-26.4d）
 
+### 🚨 P0：彻底绞杀多实例监听泄漏（指令双发 / 日志双写 / 心跳连刷）
+
+**现象**：跨进程 `:mc` 视图下输入一条指令（如 `say hi`）被 MC 收到两次、终端回显两遍，
+「⏳ 暂无新日志」心跳提示连刷 4 次。典型的视图切换时旧 readline 监听与旧定时器未清理的单例泄漏。
+
+**根因**：
+- `cli.js` 的 `rl.on('close')` 里，清理 follow/detect 定时器的代码放在函数末尾；当 REPL 被
+  `acquireSync('server.console')` 强制接管（用户在 `wow L` 里敲 `server start`）时，走
+  `lease.released` 分支提前 `return`，**三个定时器全部泄漏**——开服控制台接管 stdin 后旧回调
+  仍在 tail 同一份日志、刷心跳，与新 stdout 回显叠加成双写。
+- 进入 REPL 的 2s 兜底 `setTimeout` 从未保存 id，退出后仍可能触发 `startFollow`。
+- `stdin_session.teardown()` 只 `rl.close()`（Node 不会移除 `line`/`SIGINT` 监听），旧 handler
+  在租约复用后可再次触发，把一条指令处理两遍。
+
+**修法**：
+- 新增 `core/src/timer_registry.js`：视图级定时器统一登记到 Set，按 scope 一键全清；
+  `cli.js` 的 follow/detect/boot 三档、`server.js` 的 `_mcSilenceTimer`、`mc_console.js` 的
+  `_follow` 全部纳入登记，进入视图前先清旧 scope、退出无条件 `clearScope`。
+- `cli.js`：`close` 回调**最前面无条件** `clearAllReplTimers()`（覆盖所有退出分支，含
+  `lease.released`）；2s 兜底定时器保存为 `bootTimer` 并受 `closed` 守卫；`bootTimer` 登记 scope。
+- `stdin_session.js`：`teardown()` 在 `close` 前摘 `line`/`SIGINT`、在 close 事件派发后摘 `close`
+  监听（不破坏 `lease.released` 静默让出链路）；导出全局唯一 `activeReadline()` 指针；
+  `stats()` 增加 `activeLineListeners` 诊断字段。
+- `server.js`：`_releaseConsoleRl` 与 `:wow` 的 `finish` 拆 rl 前显式摘 `line`/`SIGINT`；
+  `_mcSilenceTimer` 登记 scope 且重建前先清，保证任意时刻最多一个心跳定时器。
+- `mc_console.js`：`attach` 进入前清旧 scope、退出 `finish` 清 scope + 摘监听。
+- `.console.queue` 写入路径核对：`:mc` 分支只有**一处** `enqueueConsoleCommand`，开服控制台
+  仍是单一 `stdin.write`，无重复绑定。
+- 验证：新增 `core/test/listener_leak.test.js`（18 项静态+运行时守卫）；PTY 新增场景 E
+  （真 TTY 下 10 次 `:mc`↔`:wow` 往返后 `say hi` 恰好到达 MC 1 次、tick 编号无重复、
+  readline 峰值≤1）；`pty_views.test.js` 汇总升级为 ok=5 fail=0。全量 `npm test` 全绿。
+
 ### sync push 瘦身方案没补齐核心 + config set 值带引号
 
 - **sync push 没补齐核心**：`sync_client.push()` 的清单从「方案目录实体文件」扫描生成，方案若处于瘦身状态
