@@ -864,8 +864,8 @@ rl.close()  →  removeListener('keypress')  →  排空 stdin 残留  →  setR
   用户连按 `22` 时第二键若留在缓冲区，会被二级菜单的 `question` 吃掉；
 - `resume()` 同样先排空再 `activate()`，把 rl 重建回来。
 
-**③ 三视图与 L 模式的归属** —— 把 `wow server start` 的三视图（`:mc` /
-`:wow` / `:lan`）看作「L 模式里 Minecraft 正在运行时的形态」：
+**③ 视图与 L 模式的归属** —— 把 `wow server start` 的控制台视图（`:mc` /
+`:wow`）看作「L 模式里 Minecraft 正在运行时的形态」：
 
 | 指令 | 旧行为 | 新行为 |
 |------|--------|--------|
@@ -1081,7 +1081,7 @@ REPL 里轮询 `ServerManager` 的控制台中继心跳（`isConsoleRelayAlive`�
 两个边界：
 
 - 在 REPL 里**自己敲** `server start` / `restart` 不触发跟踪——那种情况
-  由开服控制台接管 stdin（支持 MC 指令直发与三视图切换），比只读跟踪更全；
+  由开服控制台接管 stdin（支持 MC 指令直发与控制台视图切换），比只读跟踪更全；
 - 跟踪期间 REPL 照常可用：`server stop`、`scheme list` 等指令随时能敲。
 
 ### 测试
@@ -3765,25 +3765,25 @@ PID 文件由 `startWeb()` 写入 `process.pid`，而 `stopWeb()` 无条件优�
 
 ## [3.4.0] — 2026-08-15
 
-### ✨ 新功能：开服控制台三视图切换（Minecraft / wow / 陶瓦）
+### ✨ 新功能：开服控制台双视图切换（Minecraft / wow）
 
-> 需求：开服后的交互终端支持在三个控制台视图之间切换；输入「不属于当前控制台」的指令时，提示「不支持」并引导切到对应控制台；切换后**清屏并显示该控制台最后 10 条日志**（陶瓦视图显示的是陶瓦本地 HTTP API 的返回内容）。
+> 需求：开服后的交互终端支持在控制台视图之间切换；输入「不属于当前控制台」的指令时，提示「不支持」并引导切到对应控制台；切换后**清屏并显示该控制台最后 10 条日志**。
 
-`wow server start` 的交互终端现在内置三个控制台视图，默认停留在 **Minecraft 服务端控制台**：
+`wow server start` 的交互终端内置两个控制台视图，默认停留在 **Minecraft 服务端控制台**：
 
 | 视图 | 切换指令 | 作用 |
 |------|----------|------|
 | 🎮 Minecraft 服务端控制台 | `:mc`（或 `:minecraft` `:1` `:服务端`） | 直接收发 MC 服务端指令（如 `op Steve`、`say hi`、`stop`） |
 | 🧩 wow 指令控制台 | `:wow`（或 `:2`） | 执行 wow 服务端指令（如 `server status`、`scheme list`、`logs analyze`） |
-| 🏠 陶瓦联机控制台 | `:lan`（或 `:terracotta` `:taowa` `:3` `:陶瓦`） | 开房 / 查房间 / 关房，并实时显示陶瓦 HTTP API 返回 |
 
 行为要点：
 
-- **切换即清屏 + 尾 10 条**：输入切换指令后清屏，打印标题栏，并显示该视图最近 10 条日志。Minecraft 视图读 `logs/latest.log`；wow 视图读 `logs/wow-console.log`；陶瓦视图读陶瓦 API 调用流水（`.lan-api.log`）。
-- **指令隔离 + 友好引导**：在 Minecraft 视图输入 `lan host`、在 wow 视图输入 `list`、在陶瓦视图输入 `scheme list` 等「错视图」指令时，会提示「不支持：该指令属于某某控制台，请先输入 `:xx` 切换」，而不会误执行或静默吞掉。
-- **陶瓦视图便捷指令**：在陶瓦视图里 `host` / `status` / `stop` 会自动补 `lan ` 前缀，等价于 `lan host|status|stop`。
+- **切换即清屏 + 尾 10 条**：输入切换指令后清屏，打印标题栏，并显示该视图最近 10 条日志。Minecraft 视图读 `logs/latest.log`；wow 视图读 `logs/wow-console.log`。
+- **指令隔离 + 友好引导**：在 Minecraft 视图输入 wow 指令、在 wow 视图输入 MC 指令等「错视图」指令时，会提示「不支持：该指令属于某某控制台，请先输入 `:xx` 切换」，而不会误执行或静默吞掉。
 - 元指令：`:log` 重新显示当前视图最后 10 条日志，`:help` 显示控制台帮助。
-- 服务端原始 stdout/stderr 始终落盘到 `logs/wow-stdout.log`（逻辑分离见下方修复），但**只有停留在 Minecraft 视图时才回显到终端**，避免切到 wow / 陶瓦视图后被服务端日志刷屏。
+- 服务端原始 stdout/stderr 始终落盘到 `logs/wow-stdout.log`（逻辑分离见下方修复），但**只有停留在 Minecraft 视图时才回显到终端**，避免切到 wow 视图后被服务端日志刷屏。
+
+> 陶瓦联机曾短暂设有独立控制台视图，后已移除；相关功能统一在 `:m` 菜单的 R 页与 `terracotta.js` 中操作。
 
 ### 🐛 修复：陶瓦开房 `lan host` 卡在 `host-scanning` 超时（自 V3.3.0 起的设计性缺陷）
 

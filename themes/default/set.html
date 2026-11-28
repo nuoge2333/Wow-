@@ -102,29 +102,6 @@
         </div>
     </details>
 
-    <!-- ===== V3.8.0 P1：玩家管理 ===== -->
-    <div class="settings-section full" id="players-card">
-        <div class="title">
-            👥 玩家管理
-            <span class="badge" id="players-scheme-badge">-</span>
-            <span class="badge" id="players-server-badge">读取中</span>
-        </div>
-        <div class="set-note">
-            名单来自 <code>scheme/&lt;方案&gt;/logs/latest.log</code> 里的 <code>joined the game</code> 记录，
-            去重后存入 <code>scheme.yaml</code> 的 <code>known_players</code>（含首次加入时间）。<br>
-            <strong>防翻车：</strong>服务器运行时，白/黑名单通过服务器指令即时生效（绝不直接改 JSON，避免与运行中的服务端抢写）；
-            停服时才写入名单文件。
-        </div>
-        <div class="btn-row" style="margin-bottom:12px;flex-wrap:wrap;gap:8px;">
-            <select id="players-scheme-select" class="filter-input" style="max-width:200px;"></select>
-            <button class="btn btn-primary" id="players-scan-btn">🔄 刷新玩家名单</button>
-            <button class="btn btn-secondary" id="players-refresh-btn">↻ 重新加载</button>
-            <input class="filter-input" id="players-filter" placeholder="筛选玩家 ID..." style="flex:1;min-width:160px;" />
-        </div>
-        <div id="players-list"><div class="empty-state">加载中...</div></div>
-        <div class="set-hint" id="players-hint"></div>
-    </div>
-
     <!-- ===== 备用钥匙：设了密码，登录页就多一条「密码登录」通道 ===== -->
     <!-- 验证码登录永远保留，忘密码也能靠邮箱回去。邮箱必须与 mail.admin_email 一致。 -->
     <div class="settings-section full spare-key-card" id="spare-key-card">
@@ -757,118 +734,6 @@
         finally { extensionInstallConfirm.disabled = false; }
     }
 
-    // ==================== V3.8.0 P1：玩家管理 ====================
-    const playersList = $('players-list');
-    const playersFilter = $('players-filter');
-    const playersSelect = $('players-scheme-select');
-    const playersSchemeBadge = $('players-scheme-badge');
-    const playersServerBadge = $('players-server-badge');
-    const playersHint = $('players-hint');
-    let playersCache = [];
-
-    function selectedPlayerScheme() {
-        return playersSelect.value || '';
-    }
-
-    async function loadPlayerSchemes() {
-        try {
-            const data = await apiGet('/api/schemes');
-            const names = (data.schemes || [])
-                .map(s => (typeof s === 'string' ? s : (s && s.name) || ''))
-                .filter(Boolean);
-            const current = selectedPlayerScheme() || data.current || '';
-            playersSelect.innerHTML = '';
-            for (const n of names) {
-                const opt = document.createElement('option');
-                opt.value = n;
-                opt.textContent = n;
-                playersSelect.appendChild(opt);
-            }
-            if (current && names.includes(current)) playersSelect.value = current;
-        } catch (e) {
-            playersHint.textContent = '方案列表加载失败：' + e.message;
-        }
-    }
-
-    async function loadPlayers() {
-        const scheme = selectedPlayerScheme();
-        const q = scheme ? '?scheme=' + encodeURIComponent(scheme) : '';
-        try {
-            const data = await apiGet('/api/players' + q);
-            playersSchemeBadge.textContent = '方案：' + (data.scheme || '-');
-            playersServerBadge.textContent = data.server_running
-                ? '🟢 运行中 · 走服务器指令' : '⚪ 已停服 · 写名单文件';
-            playersCache = data.known_players || [];
-            renderPlayers();
-        } catch (e) {
-            playersList.innerHTML = `<div class="empty-state" style="color:#f44336;">加载失败: ${escapeHtml(e.message)}</div>`;
-        }
-    }
-
-    function renderPlayers() {
-        const filter = playersFilter.value.trim().toLowerCase();
-        const list = filter
-            ? playersCache.filter(p => String(p.id).toLowerCase().includes(filter))
-            : playersCache;
-        if (!list.length) {
-            playersList.innerHTML = '<div class="empty-state">暂无已知玩家。点「🔄 刷新玩家名单」从 latest.log 提取。</div>';
-            return;
-        }
-        playersList.innerHTML = list.map(p => {
-            const state = p.banned ? '⛔ 黑名单' : (p.whitelisted ? '✅ 白名单' : '· 普通');
-            const color = p.banned ? '#f44336' : (p.whitelisted ? '#4CAF50' : '#667788');
-            return `<div class="extension-item">
-                <div class="info">
-                    <span class="name">${escapeHtml(p.id)}</span>
-                    <span class="meta">首次加入: ${escapeHtml(p.first_join || '-')}</span>
-                    <span class="meta" style="color:${color};">${state}</span>
-                </div>
-                <div class="actions">
-                    <button class="btn-sm active" data-paction="whitelist" data-pid="${escapeHtml(p.id)}" ${p.whitelisted ? 'disabled' : ''}>移入白名单</button>
-                    <button class="btn-sm danger" data-paction="ban" data-pid="${escapeHtml(p.id)}" ${p.banned ? 'disabled' : ''}>移入黑名单</button>
-                </div>
-            </div>`;
-        }).join('');
-        playersList.querySelectorAll('[data-paction]').forEach(el => {
-            el.addEventListener('click', async () => {
-                const action = el.dataset.paction;
-                const id = el.dataset.pid;
-                const label = action === 'ban' ? '黑名单' : '白名单';
-                if (!confirm(`确定把玩家「${id}」移入${label}吗？`)) return;
-                el.disabled = true;
-                try {
-                    const r = await apiPost('/api/players/' + action, { scheme: selectedPlayerScheme(), id });
-                    const via = r.via === 'stdin' ? '服务器指令' : '名单文件';
-                    showToast(`已把 ${id} 移入${label}（${via}）`, 'success');
-                    await loadPlayers();
-                } catch (e) {
-                    showToast('操作失败: ' + e.message, 'error');
-                    el.disabled = false;
-                }
-            });
-        });
-    }
-
-    async function scanPlayers() {
-        const btn = $('players-scan-btn');
-        btn.disabled = true;
-        try {
-            const r = await apiPost('/api/players/scan', { scheme: selectedPlayerScheme() });
-            playersHint.textContent = `扫描完成：新增 ${r.added} 个玩家，累计 ${r.total} 个（仅读取日志尾部 ${r.bytesRead} 字节）`;
-            showToast(`扫描完成，新增 ${r.added} 个玩家`, 'success');
-            await loadPlayers();
-        } catch (e) {
-            showToast('扫描失败: ' + e.message, 'error');
-        } finally {
-            btn.disabled = false;
-        }
-    }
-
-    $('players-scan-btn').addEventListener('click', scanPlayers);
-    $('players-refresh-btn').addEventListener('click', loadPlayers);
-    playersFilter.addEventListener('input', renderPlayers);
-    playersSelect.addEventListener('change', loadPlayers);
-
     // ==================== 主题管理 ====================
     const themeList = $('theme-list');
     const themeFilter = $('theme-filter');
@@ -1202,8 +1067,6 @@
         await loadThemes();
         await loadSchemas();
         await loadAuthConfig();
-        await loadPlayerSchemes();
-        await loadPlayers();
     }
     init();
 
@@ -1214,7 +1077,6 @@
             loadConfig();
             loadExtensions();
             loadThemes();
-            loadPlayers();
         }
     });
 })();

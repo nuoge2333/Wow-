@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * 多存档 + 图标画板 Web UI 静态回归：
+ * 多存档 + 图标画板 + 玩家白名单 Web UI 静态回归（均已迁入实例配置页 props.html）：
  * - 原生 Canvas 64x64 + image-rendering:pixelated + 320px 显示
  * - 原生取色器 / 橡皮擦(clearRect) / 清空画板
  * - offsetX/5、offsetY/5 映射 + fillRect(x,y,1,1)
@@ -8,6 +8,8 @@
  * - 新建存档表单（正则校验提示 + level-type 四选项）
  * - 切换存档防呆警告
  * - 素材库双写提示 + 存入素材库勾选
+ * - 玩家白名单/黑名单入口 + /api/players 系列 API
+ * - 原页面（scheme.html / set.html）不再残留这些功能
  * 纯静态源码断言，不启动浏览器。
  */
 const assert = require('assert');
@@ -15,8 +17,10 @@ const fs = require('fs');
 const path = require('path');
 
 const ROOT = path.join(__dirname, '..', '..');
-const HTML = fs.readFileSync(path.join(ROOT, 'web', 'scheme.html'), 'utf8');
-const THEME = fs.readFileSync(path.join(ROOT, 'themes', 'default', 'scheme.html'), 'utf8');
+const HTML = fs.readFileSync(path.join(ROOT, 'web', 'props.html'), 'utf8');
+const THEME = fs.readFileSync(path.join(ROOT, 'themes', 'default', 'props.html'), 'utf8');
+const SCHEME = fs.readFileSync(path.join(ROOT, 'web', 'scheme.html'), 'utf8');
+const SET = fs.readFileSync(path.join(ROOT, 'web', 'set.html'), 'utf8');
 
 let passed = 0, failed = 0;
 function check(name, fn) {
@@ -24,9 +28,9 @@ function check(name, fn) {
     catch (e) { failed++; console.log(`  ❌ ${name}\n     ${e.message}`); }
 }
 
-console.log('\n多存档 + 图标画板 UI\n');
+console.log('\n多存档 + 图标画板 + 玩家白名单 UI\n');
 
-check('web/ 与 themes/default/ 的 scheme.html 一致', () => {
+check('web/ 与 themes/default/ 的 props.html 一致', () => {
     assert.strictEqual(HTML, THEME);
 });
 
@@ -84,6 +88,50 @@ check('存入素材库勾选 + 双写提示', () => {
 check('调用后端 worlds/icons API', () => {
     for (const p of ['/api/worlds', '/api/worlds/create', '/api/worlds/switch', '/api/icons/save', '/api/icons/pool', '/api/icons/apply']) {
         assert.ok(HTML.includes(p), `未调用 ${p}`);
+    }
+});
+
+// ---------- 迁入后的：玩家白名单管理 ----------
+check('玩家白名单管理：入口 + 白/黑名单按钮 + 筛选', () => {
+    assert.ok(HTML.includes('id="players-btn"'), '缺玩家白名单入口');
+    assert.ok(HTML.includes('移入白名单'), '缺移入白名单按钮');
+    assert.ok(HTML.includes('移入黑名单'), '缺移入黑名单按钮');
+    assert.ok(HTML.includes('id="players-filter"'), '缺玩家筛选框');
+});
+
+check('玩家白名单管理：防翻车铁律说明（运行时不直接改 JSON）', () => {
+    assert.ok(/不直接改 JSON/.test(HTML), '缺铁律①的前端说明');
+    assert.ok(/停服时才写入名单文件/.test(HTML), '缺停服写盘说明');
+});
+
+check('玩家白名单管理：调用 /api/players 系列 API', () => {
+    assert.ok(HTML.includes('/api/players'), '未调用 /api/players');
+    assert.ok(HTML.includes('/api/players/scan'), '未调用 /api/players/scan');
+    // whitelist/ban 由 data-paction + '/api/players/' + action 动态拼接
+    assert.ok(/data-paction="whitelist"/.test(HTML), '缺 whitelist 动作');
+    assert.ok(/data-paction="ban"/.test(HTML), '缺 ban 动作');
+    assert.ok(HTML.includes("'/api/players/' + action"), '未调用 /api/players/<action>');
+});
+
+check('三块功能均已从原页面移除（scheme / set）', () => {
+    for (const id of ['worlds-btn', 'icon-btn', 'icon-canvas', 'world-new-name']) {
+        assert.ok(!SCHEME.includes(id), `scheme.html 仍残留 ${id}`);
+    }
+    for (const id of ['players-card', 'players-list', 'players-scan-btn', 'loadPlayers']) {
+        assert.ok(!SET.includes(id), `set.html 仍残留 ${id}`);
+    }
+});
+
+check('三份页面主题副本逐字节一致', () => {
+    for (const [web, theme] of [
+        ['scheme.html', 'scheme.html'],
+        ['set.html', 'set.html']
+    ]) {
+        assert.strictEqual(
+            fs.readFileSync(path.join(ROOT, 'web', web), 'utf8'),
+            fs.readFileSync(path.join(ROOT, 'themes', 'default', theme), 'utf8'),
+            `${web} 主题副本不一致`
+        );
     }
 });
 

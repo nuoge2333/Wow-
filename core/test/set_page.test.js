@@ -137,33 +137,16 @@ check('两套 HTML 转义函数合并为一个 escapeHtml（无 escHtml 残留�
     assert.ok(html.includes("function $ =") || html.includes("const $ ="), '缺 DOM 助手');
 });
 
-console.log('\n[3.5] V3.8.0 玩家管理卡片');
+console.log('\n[3.5] 玩家白名单管理已迁入实例配置页（props.html）');
 
-check('玩家管理卡片 DOM 节点齐全且位于折叠区之外', () => {
+check('set.html 不再残留玩家管理 UI', () => {
     for (const id of [
-        'players-card', 'players-scheme-badge', 'players-server-badge',
-        'players-scheme-select', 'players-scan-btn', 'players-refresh-btn',
-        'players-filter', 'players-list', 'players-hint'
+        'players-card', 'players-scheme-select', 'players-scan-btn',
+        'players-refresh-btn', 'players-filter', 'players-list', 'players-hint'
     ]) {
-        assert.ok(html.includes(`id="${id}"`), `缺少玩家管理节点 ${id}`);
+        assert.ok(!html.includes(`id="${id}"`), `set.html 仍残留玩家管理节点 ${id}`);
     }
-    const advEnd = html.indexOf('</details>');
-    assert.ok(advEnd > 0 && html.indexOf('id="players-card"') > advEnd,
-        '玩家管理是常用功能，不应被收进折叠的高级管理区');
-});
-
-check('玩家管理接入 4 个后端接口并在 init 中加载', () => {
-    for (const frag of [
-        "apiGet('/api/players'",
-        "apiPost('/api/players/scan'",
-        "'/api/players/' + action",
-        'loadPlayerSchemes();',
-        'loadPlayers();'
-    ]) {
-        assert.ok(html.includes(frag), `缺少前端调用 ${frag}`);
-    }
-    // 防翻车提示必须写进界面，避免用户以为运行时是直接改 JSON
-    assert.ok(html.includes('绝不直接改 JSON'), '缺少铁律①的前端说明');
+    assert.ok(!html.includes('loadPlayers'), 'set.html 仍残留玩家管理逻辑');
 });
 
 check('后端注册 /api/players 四个路由', () => {
