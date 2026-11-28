@@ -246,31 +246,35 @@ wow scheme status survival
 
 ---
 
-### `scheme clone-client <path>`
+### `clone [path]`
 
-把一个 Minecraft 客户端实例克隆成 wow 方案。
+把 Minecraft 客户端目录克隆成 wow 方案。**版本与核心类型由你指定**，工具不猜。
 
 ```bash
-wow scheme clone-client ~/.minecraft/versions/1.20.1-forge-47.2.0 [options]
+wow clone ~/.minecraft                 # 交互询问版本与类型
+wow clone ~/.minecraft -v 1.20.1 -t fabric   # 非交互
 ```
 
 | 选项 | 说明 |
 |------|------|
-| `-n, --name <name>` | 方案名（默认取实例目录名） |
-| `-t, --type <type>` | 手动指定核心类型（识别失败时用） |
-| `-v, --version <version>` | 手动指定 Minecraft 版本（识别失败时用） |
-| `--save <name>` | 要迁移的存档名；填 `-` 表示不迁移 |
-| `--dry-run` | 只做识别与检查，不创建任何东西 |
-| `--yes` | 不进行任何交互，全部使用默认值 |
-| `--extra-client-mods <list>` | 追加的客户端模组 modid，逗号分隔 |
-| `--keep-mods <list>` | 强制保留的模组 modid，逗号分隔（优先级最高） |
+| `-n, --name <name>` | 方案名（默认取客户端目录名） |
+| `-t, --type <type>` | `forge` / `fabric` / `neoforge` / `vanilla` / `paper` |
+| `-v, --version <version>` | Minecraft 版本，如 `1.20.1` |
+| `--save <name>` | 迁移指定存档到 `world/`（**默认不迁移**；`-` 表示明确不迁移） |
+| `--dry-run` | 只校验参数，不创建任何东西 |
+| `--yes` | 不交互，全部使用参数值（非 TTY 环境必须给全 `-v` / `-t`） |
+| `--extra-client-mods <list>` | 追加的客户端模组 id，逗号分隔 |
+| `--keep-mods <list>` | 强制保留的模组 id（优先级最高） |
 
 **关键行为：**
 
-- **产物是方案**，克隆完成后 `scheme list` / `switch` / `server start` 全套可用
-- 核心走方案的**核心装配流程**，Forge/NeoForge 会跑官方安装器
-- **不删除任何文件**：客户端核心改名 `.client-jar.bak`、模组移到 `mods-disabled/`、`world/` 冲突时挪成 `.bak`
-- 关键文件复制失败时**中止并回滚**方案目录
+- **不嗅探**：不读 `versions/*.json`、不解析 jar 元数据、不判断实例结构——版本和类型只认你给的；
+- **只搬白名单目录**：`mods` / `config` / `defaultconfigs` / `kubejs` / `scripts` / `datapacks`，其余（`assets`、`libraries`、`versions`、日志、`options.txt`…）一概不进方案；
+- **客户端模组按文件名剔除**：命中内置名单的模组移进 `mods-disabled/`，**不删除**；
+- **产物是方案**：核心走 installer 装配，完成后 `scheme list` / `switch` / `server start` 全套可用；
+- 关键步骤失败时**中止并回滚**方案目录。
+
+> 旧入口 `wow scheme clone-client <path>` 仍然可用（从 `--help` 隐藏），语义相同。
 
 详见 [`CLONE_CLIENT.md`](scheme/CLONE_CLIENT.md)。
 

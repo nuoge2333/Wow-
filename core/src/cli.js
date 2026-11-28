@@ -909,84 +909,150 @@ function borrowRl() {
     return replSession ? replSession.rl : null;
 }
 
-schemeCmd
-    .command('clone-client <path>')
-    .description('把一个 Minecraft 客户端实例克隆成 wow 方案')
-    .option('-n, --name <name>', '方案名（默认取实例目录名）')
-    .option('-t, --type <type>', '手动指定核心类型（识别失败时用）')
-    .option('-v, --version <version>', '手动指定 Minecraft 版本（识别失败时用）')
-    .option('--save <name>', '要迁移的存档名（不填则交互选择；填 - 表示不迁移）')
-    .option('--dry-run', '只做识别与检查，不创建任何东西')
-    .option('--yes', '不进行任何交互，全部使用默认值')
-    .option('--extra-client-mods <list>', '追加的客户端模组 modid，逗号分隔')
-    .option('--keep-mods <list>', '强制保留的模组 modid，逗号分隔（优先级最高）')
-    .action(async (clientPath, options) => {
-        const clone = load('./client_clone');
-        if (!clone) return;
+// ==================== wow clone（客户端克隆） ====================
+//
+// V3.9.1：彻底简化。不再猜「这个客户端是哪个加载器 / 哪个版本」——
+// 猜错的代价（建错核心、白下几百兆、报一堆无法归因的错）远高于让用户选两下。
+// 用户给的版本与类型就是唯一真相；复制只搬白名单目录，不做任何目录结构嗅探。
 
-        const isTTY = Boolean(process.stdin.isTTY);
-        // V3.6.2：在 REPL 里优先借用它的 readline，避免 stdin 双消费者
-        let io;
-        if (options.yes || !isTTY) io = clone.makeSilentIO();
-        else if (replSession) io = makeReplIO(replSession);
-        else io = clone.makeTerminalIO();
-        // REPL 可能已由 line handler 统一 suspend；避免重复挂起导致恢复时序错乱
-        const ownsSuspend = !!(replSession && !replSession.suspended);
-        if (ownsSuspend) replSession.suspend();
+const CLONE_TYPES = [
+    { label: 'Forge', value: 'forge' },
+    { label: 'Fabric', value: 'fabric' },
+    { label: 'NeoForge', value: 'neoforge' },
+    { label: 'Vanilla（纯净）', value: 'vanilla' },
+    { label: 'Paper（插件端）', value: 'paper' }
+];
 
-        // --save 未给 = undefined（交互询问）；给 '-' = 不迁移
+async function runClone(clientPath, options = {}) {
+    const clone = load('./client_clone');
+    if (!clone) return;
+
+    const isTTY = Boolean(process.stdin.isTTY);
+    let io;
+    if (options.yes || !isTTY) io = clone.makeSilentIO();
+    else if (replSession) io = makeReplIO(replSession);
+    else io = clone.makeTerminalIO();
+
+    // REPL 可能已由 line handler 统一 suspend；避免重复挂起导致恢复时序错乱
+    const ownsSuspend = !!(replSession && !replSession.suspended);
+    if (ownsSuspend) replSession.suspend();
+
+    const splitList = (v) => String(v || '').split(',').map(x => x.trim()).filter(Boolean);
+
+    try {
+        let clientDir = clientPath;
+        if (!clientDir && io.interactive) {
+            clientDir = (await io.ask('请输入客户端目录（含 mods 的那一层）: ')).trim();
+        }
+        if (!clientDir) {
+            console.error('❌ 需要客户端目录：wow clone <目录>');
+            process.exitCode = 1;
+            return;
+        }
+
+        let version = options.version;
+        if (!version && io.interactive) {
+            version = (await io.ask('请输入该客户端的 Minecraft 版本（如 1.20.1）: ')).trim();
+        }
+        version = String(version || '').trim();
+        if (!version) {
+            console.error('❌ 缺少 MC 版本：加 --version 1.20.1（非交互环境必须显式给）');
+            process.exitCode = 1;
+            return;
+        }
+        if (!/^\d+\.\d+(\.\d+)?$/.test(version)) {
+            console.error(`❌ 版本格式不对：${version}（应形如 1.20.1）`);
+            process.exitCode = 1;
+            return;
+        }
+
+        let type = options.type;
+        if (!type && io.interactive) {
+            type = await io.choose('请选择服务端核心类型：', CLONE_TYPES, 0);
+        }
+        type = String(type || '').trim().toLowerCase();
+        if (!type) {
+            console.error(`❌ 缺少核心类型：--type <${CLONE_TYPES.map(t => t.value).join('|')}>`);
+            process.exitCode = 1;
+            return;
+        }
+        if (!CLONE_TYPES.some(t => t.value === type)) {
+            console.error(`❌ 不支持的类型：${type}（可选 ${CLONE_TYPES.map(t => t.value).join(' / ')}）`);
+            process.exitCode = 1;
+            return;
+        }
+
+        // 默认不迁移存档：用户没提就不动。要迁移用 --save <名字>。
         let saveName;
         if (options.save !== undefined) {
             saveName = options.save.trim() === '-' ? '' : options.save.trim();
         }
 
-        const splitList = (s) => String(s || '').split(',').map(x => x.trim()).filter(Boolean);
+        const r = await clone.cloneClient({
+            clientPath: clientDir,
+            name: options.name,
+            mcVersion: version,
+            type,
+            saveName,
+            dryRun: options.dryRun === true,
+            io,
+            extraClientMods: splitList(options.extraClientMods),
+            forceKeepMods: splitList(options.keepMods)
+        });
 
-        try {
-            const r = await clone.cloneClient({
-                clientPath,
-                name: options.name,
-                typeOverride: options.type,
-                versionOverride: options.version,
-                saveName,
-                dryRun: options.dryRun === true,
-                io,
-                extraClientMods: splitList(options.extraClientMods),
-                forceKeepMods: splitList(options.keepMods)
-            });
-
-            if (!r.ok) {
-                console.error(`\n❌ 克隆失败：${r.reason}`);
-                if (r.rolledBack) console.error('   已回滚，未留下半残方案。');
-                process.exitCode = 1;
-                return;
-            }
-
-            if (r.dryRun) {
-                const p = r.plan;
-                console.log('\n🔍 预检结果（--dry-run，未创建任何东西）');
-                console.log('─'.repeat(52));
-                console.log(`   源实例  ：${p.instanceDir}`);
-                console.log(`   MC 版本 ：${p.mcVersion}${p.guessed ? '（推测）' : ''}`);
-                console.log(`   加载器  ：${p.type}${p.loaderVersion ? ' ' + p.loaderVersion : ''}`);
-                console.log(`   方案名  ：${p.schemeName}`);
-                console.log('─'.repeat(52));
-                console.log('   确认无误后去掉 --dry-run 即可正式克隆。');
-                return;
-            }
-
-            console.log(r.report);
-        } catch (e) {
-            console.error(`\n❌ 克隆异常：${e.message}`);
+        if (!r.ok) {
+            console.error(`\n❌ 克隆失败：${r.reason}`);
+            if (r.rolledBack) console.error('   已回滚，未留下半残方案。');
             process.exitCode = 1;
-        } finally {
-            // await：release() 内部要让出一轮事件循环，确保 stdin 交接干净
-            if (io.close) await io.close();
-            // 只解除挂起，提示符由 REPL 的 line handler 统一打印一次
-            // （这里若调 resume() 会再打一个，终端就出现 `wow> wow>`）
-            if (replSession) replSession.unsuspend();
+            return;
         }
-    });
+
+        if (r.dryRun) {
+            const p = r.plan;
+            console.log('\n🔍 预检结果（--dry-run，未创建任何东西）');
+            console.log('─'.repeat(52));
+            console.log(`   客户端目录：${p.instanceDir}`);
+            console.log(`   MC 版本  ：${p.mcVersion}`);
+            console.log(`   核心类型 ：${p.type}`);
+            console.log(`   方案名   ：${p.schemeName}`);
+            console.log('─'.repeat(52));
+            console.log('   确认无误后去掉 --dry-run 即可正式克隆。');
+            return;
+        }
+
+        console.log(r.report);
+    } catch (e) {
+        console.error(`\n❌ 克隆异常：${e.message}`);
+        process.exitCode = 1;
+    } finally {
+        // await：release() 内部要让出一轮事件循环，确保 stdin 交接干净
+        if (io.close) await io.close();
+        // 只解除挂起，提示符由 REPL 的 line handler 统一打印一次
+        if (replSession) replSession.unsuspend();
+    }
+}
+
+/** 两个入口共用同一组参数 */
+function withCloneOptions(cmd) {
+    return cmd
+        .option('-n, --name <name>', '方案名（默认取客户端目录名）')
+        .option('-t, --type <type>', '核心类型：forge | fabric | neoforge | vanilla | paper')
+        .option('-v, --version <version>', 'Minecraft 版本，如 1.20.1')
+        .option('--save <name>', '要迁移的存档名（默认不迁移；- 表示明确不迁移）')
+        .option('--dry-run', '只校验参数，不创建任何东西')
+        .option('--yes', '不交互，全部使用参数值')
+        .option('--extra-client-mods <list>', '额外的客户端模组 id，逗号分隔')
+        .option('--keep-mods <list>', '强制保留的模组 id，逗号分隔');
+}
+
+withCloneOptions(
+    program.command('clone [path]').description('把 Minecraft 客户端目录克隆成 wow 方案（版本与类型由你指定）')
+).action(runClone);
+
+// 兼容旧入口：wow scheme clone-client <path>（从 --help 隐藏）
+withCloneOptions(
+    schemeCmd.command('clone-client <path>').description('（旧入口）客户端克隆，等同 wow clone')
+).action(runClone)._hidden = true;
 
 // ==================== sync（跨设备方案同步） ====================
 

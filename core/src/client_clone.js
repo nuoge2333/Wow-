@@ -1,39 +1,29 @@
 /**
- * 客户端一键克隆为方案（V3）
+ * 客户端一键克隆为方案（V4，极简版）
  * ----------------------------------------------------------------
- * 规则一句话：**产物是方案，不是目录。**
+ * 规则一句话：**用户说是什么，就是什么。**
  *
- * 与「把 .minecraft 复制一份」的根本区别：
- *   1. 先建方案骨架（走 scheme create 同一套目录 / scheme.yaml 逻辑），再往里面填内容；
- *   2. 核心走方案的「核心装配流程」（installer 模块），不是调 wow install 命令；
- *   3. 结束时入池登记、状态转 full —— 之后 scheme list / switch / server start 全套可用。
+ * V3 那一版试图从 versions/*.json、mods 的 jar 元数据里"猜"出版本和加载器。
+ * 猜得中很省事，猜不中就造出一个核心错配的方案——用户看到的是一堆无法归因的
+ * 报错。V4 把这段全删了：版本和类型由用户指定，本模块只做四件事：
  *
- * 九步流水线（对应需求里的第 0~8 步）：
- *   0. 定位实例      resolveInstance()
- *   1. 建骨架        createSkeleton()
- *   2. 白名单复制    copyWhitelisted()
- *   3. 核心装配      installCore()
- *   4. 存档迁移      migrateWorld()
- *   5. 模组清洗      cleanMods()
- *   6. 平台兜底      fillPlatformDefaults()
- *   7. 入池登记      registerToPool()
- *   8. 报告          buildReport()
+ *   1. 建方案骨架（走 scheme create 同一套 scheme.yaml 逻辑）
+ *   2. 把 mods / config / kubejs 等白名单目录原样复制过来
+ *   3. 按内置名单把仅供客户端使用的模组移进 mods-disabled/
+ *   4. 按用户指定的类型与版本，走 installer 装配服务端核心
  *
- * 三条硬约束（写死在代码里，不是文档里的口头约定）：
- *   - **不出现 wow install 命令**：核心一律走 installer.install()；
- *   - **不自动删除任何文件**：只复制、移动、生成。客户端 jar 用「改名 .client-jar.bak」处理，
- *     源码目录里的任何东西都原样留着；
- *   - **关键步骤失败即回滚**：第 2~3 步出错删除刚建的 scheme/<name>/，不留半残方案。
+ * 三条硬约束：
+ *   - **不嗅探**：不读 versions/、不解析 jar 元数据、不判断实例结构；
+ *   - **不自动删除**：客户端模组是"移走"，不是删除；
+ *   - **关键步骤失败即回滚**：删掉刚建的 scheme/<name>/，不留半残方案。
  *
- * 只依赖 Node 标准库 + 项目已有的 fs-extra / adm-zip / yaml。
+ * 只依赖 Node 标准库 + 项目已有的 fs-extra / yaml。
  */
 
 const fs = require('fs-extra');
 const path = require('path');
 const os = require('os');
-const crypto = require('crypto');
 const yaml = require('js-yaml');
-const AdmZip = require('adm-zip');
 
 const utils = require('./utils');
 const config = require('./config');
@@ -41,22 +31,7 @@ const { logger } = require('./log');
 
 // ==================== 常量 ====================
 
-/**
- * 直接剔除的条目（一级判断，命中即整棵子树跳过）。
- * 注意 saves/ 不在这里 —— 它由第 4 步单独处理，需要用户先选存档。
- */
-const EXCLUDE_NAMES = new Set([
-    // 客户端运行数据
-    'assets', 'libraries', 'versions',
-    'logs', 'crash-reports', '.cache',
-    // 客户端资源
-    'resourcepacks', 'shaderpacks', 'texturepacks', 'screenshots',
-    // 客户端状态文件
-    'options.txt', 'optionsof.txt', 'optionsshaders.txt',
-    'usercache.json', 'usernamecache.json', 'servers.dat', 'realms_persistence.json'
-]);
-
-/** 必须保留的目录（不在 EXCLUDE_NAMES 里也显式列出，便于阅读与后续扩展） */
+/** 白名单：只复制这几棵子树，其余（assets/libraries/versions/日志…）一律不看 */
 const KEEP_DIRS = new Set([
     'mods', 'config', 'defaultconfigs',
     'kubejs', 'scripts', 'datapacks'
@@ -168,297 +143,6 @@ function expandPath(raw) {
     return path.normalize(p);
 }
 
-/**
- * 读一个 versions/<实例>/ 目录，识别加载器与 MC 版本。
- * @returns {{ok:boolean, reason?:string, mcVersion:string, loader:string, loaderVersion:string,
- *            type:string, guessed:boolean, versionJsonPath:string|null}}
- */
-function detectInstanceMeta(instanceDir) {
-    const instName = path.basename(instanceDir);
-    const jsonPath = path.join(instanceDir, `${instName}.json`);
-    const empty = { mcVersion: '', loader: '', loaderVersion: '', type: '', guessed: false, versionJsonPath: null };
-
-    if (!fs.existsSync(jsonPath)) {
-        // 没有版本 json：回退读 mods/ 里第一个 jar 的元数据
-        const guess = guessFromMods(path.join(instanceDir, 'mods'));
-        if (guess) {
-            return { ok: true, ...guess, guessed: true, versionJsonPath: null };
-        }
-        return { ok: false, reason: `未找到版本描述文件 ${instName}.json，且 mods/ 里没有可识别的模组`, ...empty };
-    }
-
-    let json;
-    try {
-        json = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
-    } catch (e) {
-        const guess = guessFromMods(path.join(instanceDir, 'mods'));
-        if (guess) return { ok: true, ...guess, guessed: true, versionJsonPath: jsonPath };
-        return { ok: false, reason: `版本描述文件解析失败（${e.message}）`, ...empty };
-    }
-
-    const inheritsFrom = json.inheritsFrom || '';
-    const mainClass = String(json.mainClass || '');
-    const id = String(json.id || instName);
-
-    // ---- 加载器识别 ----
-    let loader = '';
-    let loaderVersion = '';
-    let type = '';
-
-    const lc = mainClass.toLowerCase();
-    if (lc.includes('net.fabricmc') || lc.includes('fabricmc')) {
-        loader = 'fabric'; type = 'fabric';
-    } else if (lc.includes('quiltmc') || lc.includes('org.quiltmc')) {
-        loader = 'quilt'; type = 'quilt';
-    } else if (lc.includes('neoforge') || lc.includes('net.neoforged')) {
-        loader = 'neoforge'; type = 'neoforge';
-    } else if (lc.includes('forge') || lc.includes('minecraftforge')) {
-        loader = 'forge'; type = 'forge';
-    } else if (lc.includes('bukkit') || lc.includes('craftbukkit')) {
-        loader = 'paper'; type = 'paper';
-    }
-
-    // mainClass 认不出来时，看 libraries 里挂了哪个加载器
-    if (!loader && Array.isArray(json.libraries)) {
-        for (const lib of json.libraries) {
-            const n = String((lib && lib.name) || '');
-            if (n.includes('net.fabricmc:fabric-loader')) { loader = 'fabric'; type = 'fabric'; }
-            else if (n.includes('org.quiltmc:quilt-loader')) { loader = 'quilt'; type = 'quilt'; }
-            else if (n.includes('net.neoforged.fancymodloader') || n.includes('net.neoforged:neoforge')) { loader = 'neoforge'; type = 'neoforge'; }
-            else if (n.includes('net.minecraftforge:forge') || n.includes('net.minecraftforge:fmlloader')) { loader = 'forge'; type = 'forge'; }
-            if (loader) break;
-        }
-    }
-
-    // 现代 Forge / NeoForge 的 mainClass 是 cpw.mods.bootstraplauncher.BootstrapLauncher，
-    // 名字里不含 "forge"；libraries 里也可能只有 fmlcore/mclanguageproviders 之类的分包。
-    // 真正可靠的信号是启动参数里的 launchTarget / fml.forgeVersion。
-    if (!loader) {
-        const gameArgs = Array.isArray(json.arguments && json.arguments.game) ? json.arguments.game : [];
-        const argStr = gameArgs.join(' ');
-        if (/--fml\.neoForgeVersion|--launchTarget\s+neoforge/i.test(argStr)) {
-            loader = 'neoforge'; type = 'neoforge';
-        } else if (/--fml\.forgeVersion|--launchTarget\s+forge/i.test(argStr)) {
-            loader = 'forge'; type = 'forge';
-        } else if (/net\.minecraftforge|cpw\.mods\.modlauncher/i.test(argStr)) {
-            loader = 'forge'; type = 'forge';
-        }
-    }
-
-    // 最后一道：从实例名里看（1.20.1-forge-47.2.0 / 1.20.1-Forge_47.2.0）
-    if (!loader) {
-        const n = instName.toLowerCase();
-        if (/neoforge/.test(n)) { loader = 'neoforge'; type = 'neoforge'; }
-        else if (/[-_]forge[-_ ]?\d/.test(n) || /forge-\d/.test(n)) { loader = 'forge'; type = 'forge'; }
-        else if (/fabric/.test(n)) { loader = 'fabric'; type = 'fabric'; }
-        else if (/quilt/.test(n)) { loader = 'quilt'; type = 'quilt'; }
-    }
-
-    if (!loader) {
-        // 加载器未知 → 按「无加载器」处理，第 1 步会要求用户手动指定
-        loader = '';
-        type = '';
-    }
-
-    // ---- 加载器版本号 ----
-    // fabric-loader:x.y.z / neoforge:21.1.80 / forge:1.20.1-47.2.0 / quilt-loader:x.y.z
-    if (Array.isArray(json.libraries)) {
-        for (const lib of json.libraries) {
-            const n = String((lib && lib.name) || '');
-            const m = n.match(/^(net\.fabricmc:fabric-loader|org\.quiltmc:quilt-loader|net\.neoforged:neoforge|net\.minecraftforge:forge):([^:]+)/);
-            if (m) {
-                loaderVersion = m[2];
-                // forge 的版本形如 1.20.1-47.2.0，取后半段
-                if (m[1].includes('minecraftforge') && loaderVersion.includes('-')) {
-                    loaderVersion = loaderVersion.split('-').pop();
-                }
-                break;
-            }
-        }
-    }
-    // Forge 的 arguments 里常带 --fml.forgeVersion
-    if (!loaderVersion && Array.isArray(json.arguments && json.arguments.game)) {
-        const args = json.arguments.game;
-        for (let i = 0; i < args.length - 1; i++) {
-            if (args[i] === '--fml.forgeVersion' || args[i] === '--fml.neoForgeVersion') {
-                loaderVersion = String(args[i + 1]);
-                break;
-            }
-        }
-    }
-    // 最后兜底：从实例目录名里抠，如 1.20.1-forge-47.2.0 / 1.20.1-Forge_47.2.0
-    if (!loaderVersion) {
-        const m = instName.match(/(\d+\.\d+(?:\.\d+)?)(?:-|_)?(?:forge|Forge|fabric|Fabric|neoforge|NeoForge|quilt|Quilt)[-_ ]?(\d[\w.\-+]*)/);
-        if (m) loaderVersion = m[2];
-    }
-
-    // ---- MC 版本 ----
-    let mcVersion = inheritsFrom;
-    if (!mcVersion) {
-        // 没有 inheritsFrom：从 id 或目录名里抠 1.xx.x
-        const m = (id + ' ' + instName).match(/\b(1\.\d+(?:\.\d+)?)\b/);
-        if (m) mcVersion = m[1];
-    }
-
-    if (!mcVersion) {
-        return { ok: false, reason: '无法从版本描述文件里识别 Minecraft 版本（缺 inheritsFrom）', ...empty, versionJsonPath: jsonPath };
-    }
-
-    return {
-        ok: true,
-        mcVersion,
-        loader,
-        loaderVersion,
-        type: type || (loader ? loader : 'vanilla'),
-        guessed: false,
-        versionJsonPath: jsonPath,
-        mainClass,
-        inheritsFrom
-    };
-}
-
-/**
- * 兜底：从 mods/ 里第一个能读出元数据的 jar 推测加载器。
- * 只能猜出加载器，猜不出 MC 版本 —— 所以调用方要标注「版本基于模组元数据推测」。
- */
-function guessFromMods(modsDir) {
-    if (!fs.existsSync(modsDir)) return null;
-    let files;
-    try {
-        files = fs.readdirSync(modsDir).filter(f => /\.jar$/i.test(f)).sort().slice(0, 5);
-    } catch (e) { return null; }
-
-    for (const f of files) {
-        try {
-            const zip = new AdmZip(path.join(modsDir, f));
-            const names = zip.getEntries().map(e => String(e.entryName).toLowerCase());
-            if (names.includes('fabric.mod.json')) {
-                let mc = '';
-                try {
-                    const j = JSON.parse(zip.getEntry('fabric.mod.json').getData().toString('utf8'));
-                    mc = (j.depends && j.depends.minecraft) || (j.depends && j.depends['minecraft']) || '';
-                    if (typeof mc !== 'string') mc = '';
-                } catch (e) {}
-                return { mcVersion: mc, loader: 'fabric', loaderVersion: '', type: 'fabric' };
-            }
-            if (names.includes('meta-inf/mods.toml') || names.includes('meta-inf/neoforge.mods.toml')) {
-                const isNeo = names.includes('meta-inf/neoforge.mods.toml');
-                return { mcVersion: '', loader: isNeo ? 'neoforge' : 'forge', loaderVersion: '', type: isNeo ? 'neoforge' : 'forge' };
-            }
-            if (names.includes('quilt.mod.json')) {
-                return { mcVersion: '', loader: 'quilt', loaderVersion: '', type: 'quilt' };
-            }
-        } catch (e) { /* 读不了就试下一个 */ }
-    }
-    return null;
-}
-
-/**
- * 第 0 步：把用户给的任意路径解析成「一个具体的实例目录」。
- *
- * 判定顺序（严格按需求）：
- *   含 versions/ 子目录      → 游戏根目录，列实例让用户选
- *   本身是 versions/<实例>   → 实例目录，直接用
- *   含 mods/ 或 config/ 但没有 versions/ → 疑似实例，提示确认
- *   都不是                   → 向上找最多 2 级，重复判断
- *
- * @param {string} rawPath
- * @param {object} io
- * @returns {Promise<{ok:boolean, reason?:string, instanceDir?:string, rootDir?:string, isolated?:boolean}>}
- */
-async function resolveInstance(rawPath, io = makeSilentIO()) {
-    const p = expandPath(rawPath);
-    if (!p) return { ok: false, reason: '路径为空' };
-    if (!fs.existsSync(p)) return { ok: false, reason: `路径不存在: ${p}` };
-    if (!fs.statSync(p).isDirectory()) return { ok: false, reason: `不是目录: ${p}` };
-
-    // 直接判定一次
-    let hit = await judgePath(p, io);
-    if (hit) return hit;
-
-    // 向上找最多 2 级
-    let cur = p;
-    for (let i = 1; i <= 2; i++) {
-        const parent = path.dirname(cur);
-        if (parent === cur) break;
-        cur = parent;
-        hit = await judgePath(cur, io);
-        if (hit) return hit;
-    }
-
-    return { ok: false, reason: '这里不像 Minecraft 实例目录（没找到 versions/、mods/ 或 config/）' };
-}
-
-/**
- * 对单个目录做一次判定。
- * @returns {Promise<object|null>} null = 这个目录不是候选，交给上层继续往上找
- */
-async function judgePath(dir, io) {
-    const base = path.basename(dir);
-    const parentBase = path.basename(path.dirname(dir));
-
-    // 形态 1：版本隔离的实例目录 versions/<实例>/
-    if (parentBase === 'versions') {
-        return { ok: true, instanceDir: dir, rootDir: path.dirname(path.dirname(dir)), isolated: true };
-    }
-
-    // 形态 2：游戏根目录（含 versions/）
-    const versionsDir = path.join(dir, 'versions');
-    if (fs.existsSync(versionsDir) && fs.statSync(versionsDir).isDirectory()) {
-        const instances = listInstances(versionsDir);
-        if (instances.length === 0) {
-            return { ok: false, reason: `${versionsDir} 里没有任何实例` };
-        }
-        if (instances.length === 1) {
-            return { ok: true, instanceDir: instances[0].dir, rootDir: dir, isolated: true };
-        }
-        const chosen = await io.choose(
-            `找到 ${instances.length} 个客户端实例，请选择要克隆的一个：`,
-            instances.map(i => ({ label: i.name, value: i.dir })),
-            0
-        );
-        return { ok: true, instanceDir: chosen, rootDir: dir, isolated: true };
-    }
-
-    // 形态 3：含 mods/ 或 config/，但没有 versions/ —— 疑似「未开版本隔离」的实例
-    const hasMods = fs.existsSync(path.join(dir, 'mods')) && fs.statSync(path.join(dir, 'mods')).isDirectory();
-    const hasConfig = fs.existsSync(path.join(dir, 'config')) && fs.statSync(path.join(dir, 'config')).isDirectory();
-    if (hasMods || hasConfig) {
-        const hasRootMods = hasMods;
-        const msg = hasRootMods
-            ? `⚠️ 该目录没有 versions/，但如果它就是 .minecraft 根目录，说明未启用版本隔离。\n` +
-              `   继续将把根目录下所有模组视为该整合包的一部分。`
-            : `⚠️ 该目录没有 versions/，按「未开版本隔离的实例」处理。`;
-        io.warn(msg);
-        if (io.interactive) {
-            const ans = await io.ask('确认继续？(y/N): ', 'n');
-            if (!/^y(es)?$/i.test(String(ans).trim())) {
-                return { ok: false, reason: '用户取消' };
-            }
-        }
-        return { ok: true, instanceDir: dir, rootDir: dir, isolated: false };
-    }
-
-    return null;
-}
-
-/** 列出 versions/ 下的所有实例（目录 + 同名 json） */
-function listInstances(versionsDir) {
-    const out = [];
-    let entries = [];
-    try { entries = fs.readdirSync(versionsDir); } catch (e) { return out; }
-    for (const name of entries.sort()) {
-        const dir = path.join(versionsDir, name);
-        try {
-            if (!fs.statSync(dir).isDirectory()) continue;
-        } catch (e) { continue; }
-        let size = 0;
-        try { size = fs.statSync(path.join(dir, `${name}.json`)).size; } catch (e) { size = 0; }
-        out.push({ name, dir, hasJson: size > 0 });
-    }
-    return out;
-}
-
 // ==================== 方案名校验 ====================
 
 /**
@@ -553,155 +237,80 @@ function createSkeleton(opts = {}) {
 // ==================== 第 2 步：白名单复制 ====================
 
 /**
- * 递归复制，按 EXCLUDE_NAMES 剔除。
+ * 第 2 步：白名单复制。
  *
- * @param {object} opts
- *   srcDir, destDir, io
- * @returns {{copied:number, skipped:Array, failed:Array, critical:Array, bytes:number}}
+ * 只搬 KEEP_DIRS 里那几棵子树，其余一律不看。
+ * 不再判断「这是版本隔离目录还是游戏根目录」——那正是上一版最脆的地方：
+ * 一旦猜错，用户会看到「已复制 1 个文件」而模组一个没进来。
+ *
+ * @param {object} opts srcDir, destDir, io
+ * @returns {{copied:number, skipped:Array, failed:Array, critical:Array, permissionFailed:Array, bytes:number}}
  */
 function copyWhitelisted(opts = {}) {
     const { srcDir, destDir } = opts;
     const io = opts.io || makeSilentIO();
-    // 额外剔除名单（如客户端版本 jar：服务端用不到，常见于只读实例目录）
-    const extraExclude = opts.excludeNames instanceof Set ? opts.excludeNames : new Set();
-    // 目标根目录：若它在复制源内部（用户把方案库放在客户端目录下），必须跳过，
-    // 否则会「复制自己正在写的目录」→ 无限递归直到 ENAMETOOLONG。
-    const destRoot = opts.destRoot ? path.resolve(opts.destRoot) : null;
     const result = { copied: 0, skipped: [], failed: [], critical: [], permissionFailed: [], bytes: 0 };
 
     if (!fs.existsSync(srcDir)) return result;
 
-    let entries = [];
-    try {
-        entries = fs.readdirSync(srcDir).sort();
-    } catch (e) {
-        result.failed.push({ path: '.', reason: e.message });
-        return result;
-    }
-
-    for (const name of entries) {
-        const srcPath = path.join(srcDir, name);
-        const destPath = path.join(destDir, name);
-
-        // 剔除以「本级名字」判断，因此 mods/assets 这类整棵子树一起跳过
-        if (EXCLUDE_NAMES.has(name)) {
-            result.skipped.push({ path: name, reason: '按剔除规则跳过' });
+    for (const name of KEEP_DIRS) {
+        const src = path.join(srcDir, name);
+        const dest = path.join(destDir, name);
+        if (!fs.existsSync(src)) {
+            result.skipped.push({ path: name, reason: '客户端没有该目录' });
             continue;
         }
-        if (extraExclude.has(name)) {
-            result.skipped.push({ path: name, reason: '客户端版本文件，服务端不需要' });
-            continue;
-        }
-        if (destRoot && path.resolve(srcPath) === destRoot) {
-            result.skipped.push({ path: name, reason: '目标目录，跳过以免递归复制' });
-            continue;
-        }
-        // saves/ 留给第 4 步
-        if (name === 'saves') continue;
-
-        let stat;
-        try { stat = fs.statSync(srcPath); } catch (e) {
-            result.failed.push({ path: name, reason: e.message });
-            continue;
-        }
-
-        if (stat.isDirectory()) {
-            fs.ensureDirSync(destPath);
-            const sub = copyWhitelisted({ srcDir: srcPath, destDir: destPath, io, excludeNames: extraExclude, destRoot });
-            result.copied += sub.copied;
-            result.bytes += sub.bytes;
-            // 子层路径统一加前缀，便于报告里定位
-            const addPrefix = (arr, kind) => {
-                for (const item of sub[kind]) {
-                    result[kind].push({ ...item, path: path.join(name, item.path) });
-                }
-            };
-            addPrefix(result.skipped, 'skipped');
-            addPrefix(result.failed, 'failed');
-            addPrefix(result.permissionFailed, 'permissionFailed');
-            addPrefix(result.critical, 'critical');
-            continue;
-        }
-
-        if (!stat.isFile()) {
-            result.skipped.push({ path: name, reason: '不是普通文件（符号链接 / 设备）' });
-            continue;
-        }
-
-        // 单文件复制
         try {
-            fs.ensureDirSync(path.dirname(destPath));
-            fs.copySync(srcPath, destPath, { overwrite: false, errorOnExist: false });
-            result.copied++;
-            result.bytes += stat.size;
+            result.copied += copyTreeInto(src, dest, result, name);
         } catch (e) {
-            // V3.8.2：EACCES 是系统底层权限保护（源文件属于其他用户），非 wow 的 Bug。
-            // 保持 try-catch、继续跳过该文件（程序不崩溃），但给出明确指引，
-            // 并在报告中单独标记为「因系统权限跳过」，避免用户误判。
-            if (e.code === 'EACCES' || /EACCES|permission denied/i.test(e.message)) {
-                const base = path.basename(srcPath);
-                const entry = {
-                    path: name,
-                    reason: `权限拒绝（EACCES）：源文件可能属于其他用户，请在终端使用 sudo 重新运行，或修改源目录权限（chmod -R 755 <源目录>）`
-                };
-                // 只计入 permissionFailed（单独标记，不混入通用 failed，避免重复列出）
-                result.permissionFailed.push(entry);
-                io.warn(`   ⚠️ 复制失败（继续）: ${base} —— 权限拒绝。👉 请用 sudo 重跑，或 chmod -R 755 <源目录>`);
-            } else {
-                const entry = { path: name, reason: e.message };
-                if (isCriticalPath(name) || isCriticalPath(destPath)) {
-                    result.critical.push(entry);
-                    result.failed.push(entry);
-                } else {
-                    result.failed.push(entry);
-                    io.warn(`   ⚠️ 复制失败（继续）: ${entry.path} —— ${entry.reason}`);
-                }
-            }
+            const entry = { path: name, reason: e.message };
+            result.failed.push(entry);
+            result.critical.push(entry);
+            io.warn(`   ⚠️ 复制失败: ${name} —— ${e.message}`);
         }
     }
-
     return result;
 }
 
-// ==================== 第 3 步：核心装配 ====================
-
-/**
- * 从方案目录里找出「客户端残留的核心」并改名留档。
- *
- * 为什么不删：需求总则「不自动删除任何文件」。客户端塞进来的 <实例名>.jar
- * 如果留在根目录，server._getServerJar() 可能把它误认成服务端核心，
- * 于是改名成 <name>.jar.client-jar.bak 既消除了干扰，又留了后路。
- *
- * @returns {Array<{file:string, renamedTo:string}>}
- */
-function renameClientJars(schemePath, instanceName) {
-    const out = [];
-    if (!instanceName) return out;
-    const target = path.join(schemePath, `${instanceName}.jar`);
-    if (!fs.existsSync(target)) return out;
-    const renamed = path.join(schemePath, `${instanceName}.jar.client-jar.bak`);
-    try {
-        fs.moveSync(target, renamed, { overwrite: false });
-        out.push({ file: `${instanceName}.jar`, renamedTo: path.basename(renamed) });
-    } catch (e) {
-        /* 改名失败不致命：核心装配成功后 _getServerJar 会优先认新核心 */
+/** 递归复制一棵子树：单个文件失败只记账，不中断整棵树 */
+function copyTreeInto(src, dest, result, baseRel) {
+    fs.ensureDirSync(dest);
+    let n = 0;
+    for (const name of fs.readdirSync(src)) {
+        const s = path.join(src, name);
+        const d = path.join(dest, name);
+        const rel = path.join(baseRel, name);
+        let st;
+        try { st = fs.lstatSync(s); } catch (e) { result.failed.push({ path: rel, reason: e.message }); continue; }
+        if (st.isSymbolicLink()) { result.skipped.push({ path: rel, reason: '符号链接跳过' }); continue; }
+        if (st.isDirectory()) { n += copyTreeInto(s, d, result, rel); continue; }
+        if (!st.isFile()) continue;
+        try {
+            fs.copySync(s, d, { overwrite: true });
+            n++;
+            result.bytes += st.size;
+        } catch (e) {
+            const entry = { path: rel, reason: e.message };
+            if (/EACCES|permission denied/i.test(e.message)) result.permissionFailed.push(entry);
+            else if (isCriticalPath(rel)) result.critical.push(entry);
+            result.failed.push(entry);
+        }
     }
-    return out;
+    return n;
 }
+// ==================== 第 3 步：核心装配 ====================
 
 /**
  * 第 3 步：走 installer 模块装配服务端核心（与 scheme create 同一套逻辑）。
  *
  * @param {object} opts
- *   schemePath, type, mcVersion, loaderVersion, instanceName, installer
+ *   schemePath, type, mcVersion, loaderVersion, installer
  * @returns {Promise<{ok:boolean, reason?:string, corePath?:string, coreRel?:string, renamed?:Array}>}
  */
 async function installCore(opts = {}) {
-    const { schemePath, type, mcVersion, loaderVersion, instanceName } = opts;
+    const { schemePath, type, mcVersion, loaderVersion } = opts;
     const installer = opts.installer;
     if (!installer) return { ok: false, reason: '内部错误：未提供 installer' };
-
-    const renamed = renameClientJars(schemePath, instanceName);
 
     // V3.6.2：创建方案统一「优先找 pool」——池里已有同 type/version 的单文件核心
     // 就直接复用，不再下载。安装器型（forge 等）由该方法内部拒绝，仍走安装器。
@@ -709,7 +318,7 @@ async function installCore(opts = {}) {
         const pooled = opts.schemeManager.materializePoolCore(type, mcVersion, schemePath);
         if (pooled) {
             console.log(`♻️  复用 pool 中的核心: ${pooled.coreRel}，跳过下载`);
-            return { ok: true, corePath: pooled.corePath, coreRel: pooled.coreRel, reused: true, renamed };
+            return { ok: true, corePath: pooled.corePath, coreRel: pooled.coreRel, reused: true };
         }
     }
 
@@ -720,15 +329,15 @@ async function installCore(opts = {}) {
         //   - forge / neoforge / fabric / quilt → _installModLoader 跑官方安装器
         corePath = await installer.install(type, mcVersion, loaderVersion || null, schemePath);
     } catch (e) {
-        return { ok: false, reason: e.message, renamed };
+        return { ok: false, reason: e.message };
     }
 
     if (!corePath || !fs.existsSync(corePath)) {
-        return { ok: false, reason: '核心装配流程未产出可用的核心文件', renamed };
+        return { ok: false, reason: '核心装配流程未产出可用的核心文件' };
     }
 
     const coreRel = path.relative(schemePath, corePath).split(path.sep).join('/');
-    return { ok: true, corePath, coreRel, renamed };
+    return { ok: true, corePath, coreRel };
 }
 
 // ==================== 第 4 步：存档迁移 ====================
@@ -822,77 +431,14 @@ function copyTree(src, dest) {
 // ==================== 第 5 步：模组清洗 ====================
 
 /**
- * 读 Forge 的 side 信息。
+ * 第 5 步：按名单剔除仅供客户端使用的模组。
  *
- * mods.toml 里**没有**全局 `side = "CLIENT"` 这种字段 —— 那是误解。
- * 真实语义是 `[[dependencies.<modid>]]` 段里的 `side="CLIENT"`，表示
- * 「这条依赖只在客户端需要」，并不代表模组本身不能加载。
- * 所以这里不拿它当判定依据，只在报告里作为附带信息。
- * 旧版 Forge 的 mcmod.info 里倒是有真正可靠的 `clientSideOnly: true`。
+ * 只看文件名，不读 jar 内容。上一版会解析 mods.toml / fabric.mod.json，
+ * 准是准，但要为每种加载器各写一套解析——这正是"能省几十行代码和无数个
+ * 潜在 Bug"的那部分。文件名匹配对 sodium / iris / xaero 这类名字稳定的
+ * 客户端模组足够用。
  *
- * @returns {{clientSideOnly:boolean, side:'CLIENT'|'BOTH'|'', note:string}}
- */
-function readForgeSide(jarPath) {
-    let zip;
-    try { zip = new AdmZip(jarPath); } catch (e) {
-        return { clientSideOnly: false, side: '', note: '无法打开 jar' };
-    }
-
-    const find = (n) => {
-        const t = n.toLowerCase();
-        return zip.getEntries().find(e => String(e.entryName).toLowerCase() === t) || null;
-    };
-
-    const readText = (entry) => {
-        try {
-            const size = entry.header && entry.header.size ? entry.header.size : 0;
-            if (size > 256 * 1024) return null;
-            return entry.getData().toString('utf8');
-        } catch (e) { return null; }
-    };
-
-    // 1) 老 Forge / 部分现代模组仍带的 mcmod.info：clientSideOnly 是可靠的
-    const infoEntry = find('mcmod.info');
-    if (infoEntry) {
-        const text = readText(infoEntry);
-        if (text) {
-            try {
-                let json = JSON.parse(text);
-                const arr = Array.isArray(json) ? json : (json && Array.isArray(json.modList) ? json.modList : []);
-                if (arr.some(m => m && m.clientSideOnly === true)) {
-                    return { clientSideOnly: true, side: 'CLIENT', note: 'mcmod.info 标记 clientSideOnly' };
-                }
-            } catch (e) { /* 1.12 的 mcmod.info 常不是严格 JSON */ }
-        }
-    }
-
-    // 2) 现代 Forge：看 [[dependencies]] 的 side，仅作附带信息
-    const tomlEntry = find('META-INF/mods.toml') || find('META-INF/neoforge.mods.toml');
-    if (tomlEntry) {
-        const text = readText(tomlEntry);
-        if (text && /^\s*side\s*=\s*["']CLIENT["']/m.test(text)) {
-            return { clientSideOnly: false, side: 'CLIENT', note: '依赖段声明 side=CLIENT（不代表模组只能客户端加载）' };
-        }
-    }
-
-    return { clientSideOnly: false, side: '', note: '' };
-}
-
-/**
- * 第 5 步：清洗方案 mods/ 里的客户端模组。
- *
- * 判定优先级（需求原文「元数据为主、内置列表为兜底、用户配置为最高」）：
- *   1. force_keep_mods   用户强制保留 —— 最高优先级，后面的判断全部跳过
- *   2. 元数据铁证        fabric/quilt 的 environment=client 或只有 client entrypoints；
- *                        forge 的 mcmod.info clientSideOnly
- *   3. 内置黑名单        extra_client_mods + 内置表
- *
- * 处理方式：移到方案目录下的 mods-disabled/（需求指定这个名字，与 server.js
- * 启动时用的 mods_client_disabled/ 是两个不同的隔离区，互不影响）。
- *
- * @param {object} opts
- *   modsDir, disabledDir, extraClientMods, forceKeepMods
- * @returns {{scanned:number, disabled:Array, kept:Array, errors:Array}}
+ * 优先级：force_keep_mods > 用户扩展名单 > 内置黑名单。
  */
 function cleanMods(opts = {}) {
     const modsDir = opts.modsDir;
@@ -903,8 +449,8 @@ function cleanMods(opts = {}) {
     const out = { scanned: 0, disabled: [], kept: [], errors: [] };
     if (!fs.existsSync(modsDir)) return out;
 
-    // 复用 client_mod_filter 的元数据读取与内置名单，避免两套判定标准漂移
     const cmf = require('./client_mod_filter');
+    const builtin = Object.keys(cmf.BUILTIN_CLIENT_MODS || {}).map(s => String(s).toLowerCase());
 
     let jars = [];
     try {
@@ -915,68 +461,45 @@ function cleanMods(opts = {}) {
     }
     out.scanned = jars.length;
 
+    const tokenHit = (fileName, id) => {
+        if (!id) return false;
+        const base = fileName.toLowerCase().replace(/\.jar$/, '');
+        return base.split(/[^a-z0-9]+/).includes(id) || base.includes(id);
+    };
+
     for (const file of jars) {
-        const full = path.join(modsDir, file);
-        let meta;
-        try {
-            meta = cmf.readModMeta(full);
-        } catch (e) {
-            out.errors.push({ file, reason: e.message });
+        const base = file.replace(/\.jar$/i, '');
+        const modId = base.split(/[^A-Za-z0-9]+/)[0] || base;
+
+        let reason = '';
+        if (Array.from(keep).some(id => tokenHit(file, id))) {
+            out.kept.push({ file, modId, reason: 'force_keep_mods 强制保留' });
+            continue;
+        }
+        if (Array.from(extra).some(id => tokenHit(file, id))) {
+            reason = '用户扩展名单';
+        } else {
+            const hit = builtin.find(id => tokenHit(file, id));
+            if (hit) reason = `内置黑名单（${hit}）`;
+        }
+
+        if (!reason) {
+            out.kept.push({ file, modId, reason: '' });
             continue;
         }
 
-        const ids = meta.ok ? meta.mods.map(m => String(m.modId).toLowerCase()).filter(Boolean) : [];
-        const displayId = meta.ok && meta.mods[0] ? meta.mods[0].modId : '';
-
-        // 1) 强制保留
-        if (ids.some(id => keep.has(id))) {
-            out.kept.push({ file, modId: displayId, reason: 'force_keep_mods 强制保留' });
-            continue;
-        }
-
-        // 2) 元数据
-        let verdict = null;
-        if (meta.ok && meta.clientOnly) {
-            verdict = { reason: '元数据标记 client' };
-        }
-        if (!verdict && (meta.loader === 'forge' || meta.loader === 'neoforge')) {
-            const side = readForgeSide(full);
-            if (side.clientSideOnly) {
-                verdict = { reason: `元数据标记 client（${side.note}）` };
-            }
-        }
-
-        // 3) 名单（用户扩展 + 内置）
-        if (!verdict) {
-            for (const id of ids) {
-                if (extra.has(id)) { verdict = { reason: '用户扩展名单' }; break; }
-                if (cmf.isBuiltinClientMod(id)) { verdict = { reason: '内置黑名单' }; break; }
-            }
-        }
-
-        if (!verdict) {
-            out.kept.push({ file, modId: displayId, reason: '' });
-            continue;
-        }
-
-        // 移动
         try {
             fs.ensureDirSync(disabledDir);
             let target = path.join(disabledDir, file);
-            if (fs.existsSync(target)) {
-                const ext = path.extname(file);
-                target = path.join(disabledDir, `${path.basename(file, ext)}.${Date.now()}${ext}`);
-            }
-            fs.moveSync(full, target, { overwrite: false });
-            out.disabled.push({ file, modId: displayId, reason: verdict.reason, target });
+            if (fs.existsSync(target)) target = path.join(disabledDir, `${base}.${Date.now()}.jar`);
+            fs.moveSync(path.join(modsDir, file), target, { overwrite: false });
+            out.disabled.push({ file, modId, reason, target });
         } catch (e) {
             out.errors.push({ file, reason: `移动失败: ${e.message}` });
         }
     }
-
     return out;
 }
-
 // ==================== 第 6 步：平台兜底 ====================
 
 /**
@@ -1228,56 +751,33 @@ async function cloneClient(opts = {}) {
     const SchemeManager = require('./scheme_manager');
     const injectedSM = opts.schemeManager || null;
 
-    // ---- 第 0 步 ----
-    io.log('\n📂 第 0 步：定位客户端实例');
-    const resolved = await resolveInstance(opts.clientPath, io);
-    if (!resolved.ok) return { ok: false, reason: resolved.reason };
-    const instanceDir = resolved.instanceDir;
-    io.log(`   实例目录：${instanceDir}`);
+    // ---- 第 0 步：参数（不嗅探）----
+    // 放弃「猜客户端是哪个加载器 / 哪个版本」：猜错的代价（建错核心、白下几百兆）
+    // 远高于让用户敲两行字。用户说了算。
+    const srcDir = expandPath(opts.clientPath);
+    let _stat = null;
+    try { _stat = fs.statSync(srcDir); } catch (e) { /* 下面统一报错 */ }
+    if (!srcDir || !_stat || !_stat.isDirectory()) {
+        return { ok: false, reason: `客户端目录不存在或不是目录：${opts.clientPath}` };
+    }
+    const mcVersion = String(opts.mcVersion || opts.versionOverride || '').trim();
+    const type = String(opts.type || opts.typeOverride || '').trim().toLowerCase();
+    if (!mcVersion) return { ok: false, reason: '缺少 Minecraft 版本（--version，或交互输入）' };
+    if (!type) return { ok: false, reason: '缺少服务端类型（--type，或交互选择）' };
 
-    // V3.6.2 修复：版本隔离的客户端，versions/<实例>/ 里只有版本 json 与客户端 jar，
-    // 真正的 mods / config / saves 在「游戏根目录」（.minecraft 根）下。
-    // 旧实现把复制源固定成 instanceDir，导致「已复制 1 个文件」、模组一个没进方案、
-    // 存档也找不到（用户报告：检查文件时根本没有模组）。这里把两者拆开：
-    //   instanceDir —— 版本元数据 / 客户端 jar（识别版本、留档用）
-    //   gameDir     —— 游戏数据（mods / config / saves 的真实来源）
-    const hasGameData = (dir) => {
-        if (!dir || !fs.existsSync(dir)) return false;
-        return ['mods', 'config', 'saves', 'defaultconfigs', 'kubejs']
-            .some(n => fs.existsSync(path.join(dir, n)));
-    };
-    const gameDir = (resolved.rootDir && resolved.rootDir !== instanceDir &&
-        hasGameData(resolved.rootDir)) ? resolved.rootDir : instanceDir;
-    if (gameDir !== instanceDir) {
-        io.log(`   游戏数据目录：${gameDir}（版本隔离：模组/配置/存档取自游戏根目录）`);
-    }
+    // 兼容旧变量名：复制源就是用户给的那个目录，不再区分实例目录 / 游戏根目录。
+    const instanceDir = srcDir;
+    const gameDir = srcDir;
+    const loaderVersion = opts.loaderVersion || null;
+    const det = { loader: type, loaderVersion, guessed: false };
 
-    const det = detectInstanceMeta(instanceDir);
-    let mcVersion = opts.versionOverride || det.mcVersion;
-    let type = opts.typeOverride || det.type || det.loader;
-    let loaderVersion = det.loaderVersion;
-
-    if (!mcVersion && !opts.versionOverride) {
-        return {
-            ok: false,
-            reason: `无法识别 Minecraft 版本，请用 --version 手动指定（例如 --version 1.20.1）`
-        };
-    }
-    if (!type) {
-        return {
-            ok: false,
-            reason: '无法识别加载器，请用 --type 手动指定（vanilla/forge/fabric/neoforge/quilt/paper…）'
-        };
-    }
-    if (det.guessed) {
-        io.warn('   ⚠️ 版本信息基于模组元数据推测，可能与实际不符');
-    }
-    io.log(`   MC ${mcVersion} / ${type}${loaderVersion ? ' ' + loaderVersion : ''}`);
+    io.log(`\n📂 客户端目录：${srcDir}`);
+    io.log(`   MC ${mcVersion} / ${type}（由用户指定）`);
 
     // ---- 方案名 ----
     let schemeName = opts.name;
     if (!schemeName) {
-        const base = path.basename(instanceDir).replace(/[\\/:*?"<>|]/g, '_');
+        const base = path.basename(srcDir).replace(/[\\/:*?"<>|]/g, '_');
         schemeName = await io.ask(`   方案名 (默认: ${base}): `, base);
     }
     const nameCheck = validateSchemeName(schemeName);
@@ -1288,7 +788,7 @@ async function cloneClient(opts = {}) {
         return {
             ok: true,
             dryRun: true,
-            plan: { instanceDir, mcVersion, type, loaderVersion, schemeName, guessed: det.guessed }
+            plan: { instanceDir: srcDir, mcVersion, type, loaderVersion, schemeName, guessed: false }
         };
     }
 
@@ -1324,14 +824,10 @@ async function cloneClient(opts = {}) {
         io.log('\n📋 第 2 步：复制客户端内容（白名单）');
         // 客户端版本 jar（<实例名>.jar）是客户端启动用的，服务端不需要；
         // 而且它常常属于另一个用户 / 只读（EACCES），无谓复制只会制造失败噪声。
-        const versionJarName = `${path.basename(instanceDir)}.jar`;
         const copyStats = copyWhitelisted({
             srcDir: gameDir,
             destDir: schemePath,
-            io,
-            destRoot: schemePath,
-            excludeNames: new Set([versionJarName, 'launcher_profiles.json', 'launcher_accounts.json',
-                'launcher_log.txt', 'launcher_settings.json', 'TLauncherLogs'])
+            io
         });
         io.log(`   复制源：${gameDir}`);
         io.log(`   已复制 ${copyStats.copied} 个文件（${(copyStats.bytes / 1024 / 1024).toFixed(1)} MB），跳过 ${copyStats.skipped.length} 项`);
@@ -1355,15 +851,11 @@ async function cloneClient(opts = {}) {
                 type,
                 mcVersion,
                 loaderVersion,
-                instanceName: path.basename(instanceDir),
                 installer: inst,
                 schemeManager: sm
             });
             if (!core.ok) return rollback(`核心装配失败：${core.reason}`);
             io.log(`   核心：${core.coreRel}`);
-            if (core.renamed && core.renamed.length) {
-                io.log(`   客户端核心已改名留档：${core.renamed.map(r => r.renamedTo).join(', ')}`);
-            }
 
             // Java 检查（只提示，不自动下载 —— 下载动作交给 server start）
             try {
@@ -1390,7 +882,9 @@ async function cloneClient(opts = {}) {
         // 同样要用游戏数据目录：版本隔离时 saves/ 在 .minecraft 根，不在 versions/<实例>/
         const savesDir = path.join(gameDir, 'saves');
         const saves = listSaves(savesDir);
-        let saveName = opts.saveName;
+        // 简化后默认不迁移存档：用户没提就不做，避免"克隆完发现 world 被换掉"。
+        // 需要时用 --save <名字> 显式指定。
+        let saveName = opts.saveName === undefined ? '' : opts.saveName;
         if (saveName === undefined) {
             if (saves.length === 0) {
                 io.log('   客户端没有存档，跳过');
@@ -1521,7 +1015,6 @@ async function cloneClient(opts = {}) {
 
 module.exports = {
     // 常量
-    EXCLUDE_NAMES,
     KEEP_DIRS,
     // 工具
     expandPath,
@@ -1530,17 +1023,12 @@ module.exports = {
     makeSilentIO,
     makeTerminalIO,
     // 各步骤（可单独测试）
-    listInstances,
-    detectInstanceMeta,
-    guessFromMods,
-    resolveInstance,
     createSkeleton,
     copyWhitelisted,
+    copyTreeInto,
     installCore,
-    renameClientJars,
     listSaves,
     migrateWorld,
-    readForgeSide,
     cleanMods,
     fillPlatformDefaults,
     registerToPool,
