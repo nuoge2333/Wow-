@@ -188,6 +188,31 @@ function removeWorld(schemePath, name) {
     return { ok: true };
 }
 
+/**
+ * 系统启动时对所有方案做一次旧存档迁移（幂等、防丢档）。
+ * 遍历 scheme 根目录下的每个方案目录，调用 migrateLegacyWorld。
+ * 只搬满足「根目录有 world/ 且 level-name 指向 world」的方案，其余一律跳过。
+ * @param {string} schemesDir scheme 根目录绝对路径
+ * @returns {{scanned:number, migrated:Array<{scheme:string, moved:string[]}>}}
+ */
+function migrateAllLegacyWorlds(schemesDir) {
+    const result = { scanned: 0, migrated: [] };
+    try {
+        if (!schemesDir || !fs.existsSync(schemesDir)) return result;
+        for (const name of fs.readdirSync(schemesDir)) {
+            if (name.startsWith('.')) continue; // 跳过回收站等隐藏目录
+            const schemePath = path.join(schemesDir, name);
+            try { if (!fs.statSync(schemePath).isDirectory()) continue; } catch (e) { continue; }
+            result.scanned++;
+            try {
+                const r = migrateLegacyWorld(schemePath);
+                if (r.migrated) result.migrated.push({ scheme: name, moved: r.moved });
+            } catch (e) { /* 单个方案迁移失败不影响其它方案与启动流程 */ }
+        }
+    } catch (e) { /* 全局扫描失败静默降级，绝不影响系统启动 */ }
+    return result;
+}
+
 // ==================== 服务器图标 ====================
 
 /** 素材库目录（core/pool/icons），独立于哈希池 */
@@ -305,6 +330,7 @@ module.exports = {
     levelNameToRel,
     listWorlds,
     migrateLegacyWorld,
+    migrateAllLegacyWorlds,
     createWorld,
     switchWorld,
     removeWorld,

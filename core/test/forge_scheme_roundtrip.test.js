@@ -91,12 +91,17 @@ sm._loadSchemeMeta = (n) => meta;
 console.log('— 瘦身（prune）—');
 sm._pruneScheme(SCHEME);
 
-check('2 瘦身后方案内的深层核心被删除', () => {
-    assert.ok(!fs.existsSync(coreAbs), `深层核心仍在: ${coreAbs}`);
+// V3.9.x 封版指令模块一.2：模组端（forge/neoforge/fabric/quilt）依赖库结构复杂，
+// 严禁拆分入池瘦身——瘦身后核心必须原地保留、状态标记 full。旧版「删核心入池」行为已废弃。
+// 这里也用 _isModLoaderScheme 打桩确保走模组端守卫（meta.loader=47.2.0 不含类型词，
+// 但 type=forge 会命中守卫；同时保留 _loadSchemeMeta 打桩返回同一 meta）。
+check('2 模组端瘦身后深层核心原地保留（不再拆分入池）', () => {
+    assert.ok(fs.existsSync(coreAbs), `模组端核心不应被删: ${coreAbs}`);
 });
 
-check('3 瘦身后元数据标记为 in_pool', () => {
-    assert.strictEqual(meta.resources.core.in_pool, true);
+check('3 模组端瘦身后状态标记为 full、in_pool 不变', () => {
+    assert.strictEqual(meta.state, 'full');
+    assert.strictEqual(meta.resources.core.in_pool, false);
 });
 
 check('4 瘦身不会误删方案根目录（无同名文件干扰）', () => {

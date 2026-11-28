@@ -158,6 +158,10 @@ const DEFAULT_CONFIG = {
         mirror: null
     },
     auto_scheme: true,
+    // 模组端（forge/neoforge/fabric/quilt）libraries 整体压缩（默认关闭）
+    // 开启后瘦身时把整棵 libraries/ 打成单个 tar.gz 入池，切换时整包解压还原；
+    // 牺牲切换速度换空间。绝不逐文件增量解压。
+    compress_mod_libraries: false,
     // 联机 / 内网穿透（陶瓦 Terracotta）配置 V3.3.0
     // 陶瓦(Terracotta) 基于 EasyTier，为 Minecraft: Java Edition 提供内网/局域网穿透联机。
     // 项目: https://github.com/burningtnt/Terracotta  国内镜像: https://gitee.com/burningtnt/Terracotta/releases

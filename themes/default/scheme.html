@@ -252,6 +252,23 @@
             .modal .form-row { flex-direction: column; }
         }
 
+        /* 瘦身选项（模组端依赖库处理） */
+        .prune-options {
+            margin-top: 16px;
+            padding: 14px 18px;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 8px;
+        }
+        .prune-options-title { font-weight: 600; font-size: 15px; margin-bottom: 8px; }
+        .prune-note { font-size: 13px; opacity: 0.85; line-height: 1.6; margin-bottom: 10px; }
+        .prune-toggle {
+            display: flex; align-items: center; gap: 8px;
+            font-size: 13px; cursor: pointer; line-height: 1.5;
+        }
+        .prune-toggle input { width: 16px; height: 16px; cursor: pointer; }
+        .prune-subnote { font-size: 12px; opacity: 0.6; margin-top: 8px; line-height: 1.6; padding-left: 24px; }
+
     </style>
 </head>
 <body>
@@ -281,6 +298,17 @@
                     <tr><td colspan="6" class="empty-state">加载中...</td></tr>
                 </tbody>
             </table>
+        </div>
+
+        <!-- 瘦身选项（V3.9.x：模组端依赖库处理） -->
+        <div class="prune-options">
+            <div class="prune-options-title">🧹 瘦身选项</div>
+            <div class="prune-note">模组端（Forge / NeoForge / Fabric / Quilt）依赖库结构复杂，为保障稳定默认不拆分瘦身。下方开关默认关闭。</div>
+            <label class="prune-toggle">
+                <input type="checkbox" id="compress-mod-libs" />
+                <span>整体压缩 libraries 目录（牺牲切换速度换取空间）</span>
+            </label>
+            <div class="prune-subnote">开启后，瘦身会把整棵 libraries 打成单个压缩包，切换方案时整包解压还原——绝不逐文件增量解压。</div>
         </div>
 
         <!-- 创建方案模态框 -->
@@ -784,6 +812,26 @@
 
             // ==================== 初始化 ====================
             loadSchemes();
+            initPruneOptions();
+
+            // 瘦身选项：整体压缩 libraries（默认关闭）
+            async function initPruneOptions() {
+                const cb = document.getElementById('compress-mod-libs');
+                if (!cb) return;
+                try {
+                    const data = await apiGet('/api/config/compress_mod_libraries');
+                    cb.checked = !!(data && (data.value === true || data.value === 'true'));
+                } catch (e) { cb.checked = false; }
+                cb.addEventListener('change', async () => {
+                    try {
+                        await apiPost('/api/config', { key: 'compress_mod_libraries', value: cb.checked });
+                        showToast(cb.checked ? '已开启：瘦身时整体压缩 libraries 目录' : '已关闭：模组端保持完整不拆分', 'success');
+                    } catch (e) {
+                        cb.checked = !cb.checked; // 回滚
+                        showToast('保存瘦身选项失败：' + ((e && e.message) || '未知错误'), 'error');
+                    }
+                });
+            }
 
             // 监听来自父框架的消息（可选）
             window.addEventListener('message', (e) => {

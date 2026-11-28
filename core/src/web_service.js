@@ -479,6 +479,15 @@ function startWeb(options = {}) {
         return;
     }
 
+    // V3.9.x：打开 Web 面板时对所有方案做一次旧存档自动迁移（幂等、防丢档）。
+    // GET /api/worlds 也会对当前方案兜底迁移；这里覆盖「尚未打开存档页」的所有方案。
+    try {
+        const WM = require('./world_manager');
+        if (typeof WM.migrateAllLegacyWorlds === 'function') {
+            WM.migrateAllLegacyWorlds(utils.resolvePath('../scheme'));
+        }
+    } catch (e) { /* 存档迁移失败绝不能阻断 Web 面板启动 */ }
+
     // ===== V3.5.16 安全闸门 =====
     // 对外暴露 + web.auth_token 为空 => 强制拒绝启动。
     // 没有签名密钥时，JWT 校验形同虚设，暴露到公网等同于把服务器控制权交出去。

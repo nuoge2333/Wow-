@@ -16,6 +16,7 @@ const config = require('./config');
 const Installer = require('./installer');
 const ModManager = require('./mod_manager');
 const ServerManager = require('./server');
+const tarGz = require('./tar_gz');
 
 // 资源状态常量
 const STATE = {
@@ -29,6 +30,13 @@ const STATE = {
  * 不能只靠 pool 里的单个核心文件启动。创建方案时必须仍走安装器流程。
  */
 const MOD_LOADER_TYPES = new Set(['forge', 'neoforge', 'fabric', 'quilt']);
+
+/**
+ * Bukkit 系核心：只有这些类型才需要 bukkit.yml / spigot.yml。
+ * V3.9.x 修复祖传 bug：纯净端（vanilla/forge/neoforge/fabric/quilt）过去也被无条件
+ * 生成这两份文件，会让 Fabric/Forge 误判运行环境、引发插件加载器冲突。
+ */
+const BUKKIT_CONFIG_TYPES = new Set(['paper', 'purpur', 'leaves', 'spigot', 'bukkit', 'mohist', 'catserver']);
 
 class SchemeManager {
     constructor() {
@@ -158,11 +166,11 @@ class SchemeManager {
             if (fabricApi) mods.push(fabricApi);
         }
 
-        // 6. 生成默认配置文件
-        this._generateDefaultFiles(schemePath, version);
+        // 6. 生成默认配置文件（按核心类型白名单：纯净端不生成 bukkit.yml/spigot.yml）
+        this._generateDefaultFiles(schemePath, version, type);
 
-        // 7. 判定方案状态
-        const state = this._determineInitialState(mods, plugins);
+        // 7. 判定方案状态（模组端一律 FULL，不做拆分入池）
+        const state = this._determineInitialState(mods, plugins, type);
 
         // 8. 保存方案元数据
         const meta = {
@@ -500,6 +508,18 @@ class SchemeManager {
 
         console.log(`📥 拉取资源补齐方案: ${name}`);
         await this._materializeScheme(name);
+
+        // 模组端方案拉取后同样清理历史残留的安装器 jar / 冗余原版核心。
+        // 注意：模组端已不做瘦身拆分（见 _pruneScheme），补齐全量资源就在方案目录内。
+        try {
+            const pullMeta = this._loadSchemeMeta(name);
+            if (this._isModLoaderScheme(pullMeta)) {
+                const schemePath = this._getSchemePath(name);
+                let coreAbs = null;
+                try { coreAbs = this._resolveCoreTarget(schemePath, pullMeta.resources.core); } catch (e) {}
+                this.installer.cleanupInstallerArtifacts(schemePath, pullMeta.type || pullMeta.loader, { serverJarAbs: coreAbs });
+            }
+        } catch (e) { /* 清理是收尾动作，失败不影响补齐结果 */ }
 
         // 禁用auto_scheme（手动控制）
         if (this.autoScheme) {
@@ -955,9 +975,10 @@ class SchemeManager {
         }
 
         // 删除未被引用的资源
-        // 白名单：图标素材库（pool/icons/）只做物理复制、不进哈希系统，绝不能被清理误删。
-        // 即便历史数据曾误把 icons 下的路径登记进 index.yaml，也在这里豁免。
-        const POOL_KEEP_DIRS = new Set(['icons']);
+        // 白名单：图标素材库（pool/icons/）与模组端整体压缩包（pool/modlibs/）
+        // 只做物理复制、不进哈希系统，绝不能被清理误删。
+        // 即便历史数据曾误把这些路径登记进 index.yaml，也在这里豁免。
+        const POOL_KEEP_DIRS = new Set(['icons', 'modlibs']);
         let removed = 0;
         for (const [hash, pathStr] of Object.entries(this.poolIndex.resources)) {
             const topDir = String(pathStr).replace(/\\/g, '/').split('/')[0];
@@ -983,7 +1004,12 @@ class SchemeManager {
 
     // ==================== 状态管理 ====================
 
-    _determineInitialState(mods, plugins) {
+    _determineInitialState(mods, plugins, type) {
+        // 模组端方案（forge/neoforge/fabric/quilt）核心依赖 libraries/ 整体结构，
+        // 不做拆分入池，自始至终保持完整实例，避免切换后核心路径丢失。
+        if (MOD_LOADER_TYPES.has(String(type || '').toLowerCase())) {
+            return STATE.FULL;
+        }
         // 新方案初始状态由资源的共享情况决定
         let sharedCount = 0;
         let totalCount = 1; // 核心
@@ -1014,6 +1040,15 @@ class SchemeManager {
         const schemePath = this._getSchemePath(name);
 
         console.log(`  补齐方案: ${name} (当前状态: ${meta.state})`);
+
+        // 模组端整体压缩包：整包解压还原，绝不逐文件增量；处理后直接落盘返回。
+        if (meta.libBundle) {
+            const handled = this._materializeModLibrariesBundle(meta, schemePath);
+            if (handled) {
+                this._saveSchemeMeta(name, meta);
+                return;
+            }
+        }
 
         let copied = 0;
 
@@ -1083,6 +1118,23 @@ class SchemeManager {
     async _pruneScheme(name) {
         const meta = this._loadSchemeMeta(name);
         const schemePath = this._getSchemePath(name);
+
+        // 模组端（forge/neoforge/fabric/quilt）的依赖库结构复杂：核心位于 libraries/ 深层，
+        // 还依赖启动脚本与整棵 libraries 目录。严禁把它逐文件拆分入池，否则切换后无法启动。
+        // 默认策略：标记为完整实例 (FULL)，不做任何瘦身拆分。
+        // 仅当 compress_mod_libraries 显式开启时，才走「整体压缩 libraries」——整包入池、
+        // 切换时整包解压（见 _materializeScheme），绝不逐文件增量。
+        if (this._isModLoaderScheme(meta)) {
+            if (config.getConfig('compress_mod_libraries', false) === true) {
+                await this._pruneModLibrariesAsBundle(name, meta, schemePath);
+            } else {
+                console.log(`  方案 ${name} 是模组端（${meta.type || meta.loader}），依赖库结构复杂，为保障稳定默认不拆分瘦身`);
+                meta.state = STATE.FULL;
+                meta.updated_at = new Date().toISOString();
+                this._saveSchemeMeta(name, meta);
+            }
+            return;
+        }
 
         if (meta.state === STATE.MINIMAL) {
             console.log(`  方案 ${name} 已是最小实例 (MINIMAL)`);
@@ -1168,6 +1220,69 @@ class SchemeManager {
         console.log(`  方案 ${name} 已转为 ${meta.state} 状态`);
     }
 
+    /**
+     * 模组端「整体压缩 libraries」：把整棵 libraries/ 打成单个 tar.gz 存入 pool/modlibs/，
+     * 然后删除方案目录里的 libraries/。这是可选项（compress_mod_libraries 开启才走），
+     * 与逐文件拆分入池完全不同——切换时整包解压还原（见 _materializeModLibrariesBundle）。
+     */
+    async _pruneModLibrariesAsBundle(name, meta, schemePath) {
+        const libsDir = path.join(schemePath, 'libraries');
+        if (!fs.existsSync(libsDir)) {
+            console.log(`  方案 ${name} 无 libraries/ 目录，无需压缩`);
+            meta.state = STATE.FULL;
+            this._saveSchemeMeta(name, meta);
+            return;
+        }
+        const bundleDir = path.join(this.poolDir, 'modlibs');
+        fs.ensureDirSync(bundleDir);
+        // 用核心 hash 前 12 位做包名：同版本模组端共享同一份压缩包
+        const coreHash = String(meta.resources?.core?.hash || name);
+        const fileName = `${coreHash.slice(0, 12)}-${meta.version || 'v'}.tar.gz`;
+        const bundlePath = path.join(bundleDir, fileName);
+
+        try {
+            const size = tarGz.packDirToFile(libsDir, bundlePath);
+            fs.removeSync(libsDir);
+            meta.libBundle = { file: `modlibs/${fileName}`, size, packed_at: new Date().toISOString() };
+            meta.state = STATE.MINIMAL;
+            meta.updated_at = new Date().toISOString();
+            this._saveSchemeMeta(name, meta);
+            console.log(`  方案 ${name} 的 libraries/ 已整体压缩 (${(size / 1024 / 1024).toFixed(1)}MB)，切换时整包解压还原`);
+        } catch (e) {
+            // 打包失败绝不删原目录：保持 FULL，方案仍可正常启动
+            console.warn(`  ⚠️ 方案 ${name} libraries 整体压缩失败（已跳过，方案保持完整）: ${e.message}`);
+            meta.state = STATE.FULL;
+            this._saveSchemeMeta(name, meta);
+        }
+    }
+
+    /**
+     * 模组端整包解压还原：materialize 时若发现 libBundle 记录，整包解压回 libraries/，
+     * 绝不逐文件增量。解压成功后清除 libBundle 标记、状态转 FULL。
+     * @returns {boolean} 是否处理了整包（true 时调用方应跳过常规逐文件补齐）
+     */
+    _materializeModLibrariesBundle(meta, schemePath) {
+        if (!meta.libBundle || !meta.libBundle.file) return false;
+        const bundlePath = path.join(this.poolDir, meta.libBundle.file);
+        const libsDir = path.join(schemePath, 'libraries');
+        if (!fs.existsSync(bundlePath)) {
+            console.warn(`  ⚠️ 方案 ${meta.name} 的 libraries 整体压缩包缺失（${meta.libBundle.file}），方案可能无法启动`);
+            return false;
+        }
+        try {
+            // 整包解压（覆盖同名文件；不清空 libraries，避免误删用户手动加的文件）
+            const r = tarGz.unpackFileTo(bundlePath, libsDir);
+            delete meta.libBundle;
+            meta.state = STATE.FULL;
+            meta.updated_at = new Date().toISOString();
+            console.log(`  已从整体压缩包还原 libraries/（${r.files} 个文件，整包解压非增量）`);
+            return true;
+        } catch (e) {
+            console.warn(`  ⚠️ 方案 ${meta.name} libraries 整包解压失败: ${e.message}`);
+            return false;
+        }
+    }
+
     // ==================== 辅助方法 ====================
 
     _getRequiredJava(version) {
@@ -1192,7 +1307,18 @@ class SchemeManager {
         return true;
     }
 
-    _generateDefaultFiles(schemePath, version) {
+    /**
+     * 是否为模组端方案（forge / neoforge / fabric / quilt）。
+     * 这类方案的核心依赖 libraries/ 与启动脚本的整体结构，不能按单文件拆分入池瘦身。
+     */
+    _isModLoaderScheme(meta) {
+        if (!meta) return false;
+        const type = String(meta.type || '').toLowerCase();
+        const loader = String(meta.loader || '').toLowerCase();
+        return MOD_LOADER_TYPES.has(type) || MOD_LOADER_TYPES.has(loader);
+    }
+
+    _generateDefaultFiles(schemePath, version, type = 'vanilla') {
         // server.properties
         const propsPath = path.join(schemePath, 'server.properties');
         if (!fs.existsSync(propsPath)) {
@@ -1206,16 +1332,20 @@ class SchemeManager {
             fs.writeFileSync(eulaPath, this._generateEula(), 'utf8');
         }
 
-        // bukkit.yml (默认模板)
-        const bukkitPath = path.join(schemePath, 'bukkit.yml');
-        if (!fs.existsSync(bukkitPath)) {
-            fs.writeFileSync(bukkitPath, this._generateBukkitYml(), 'utf8');
-        }
+        // bukkit.yml / spigot.yml：仅 Bukkit 系核心需要。
+        // 纯净端（vanilla/forge/neoforge/fabric/quilt）绝不生成；
+        // 老方案若已存在这两份文件，静默保留（不主动删除，避免破坏用户手改内容）。
+        const engineType = String(type || 'vanilla').toLowerCase();
+        if (BUKKIT_CONFIG_TYPES.has(engineType)) {
+            const bukkitPath = path.join(schemePath, 'bukkit.yml');
+            if (!fs.existsSync(bukkitPath)) {
+                fs.writeFileSync(bukkitPath, this._generateBukkitYml(), 'utf8');
+            }
 
-        // spigot.yml (默认模板)
-        const spigotPath = path.join(schemePath, 'spigot.yml');
-        if (!fs.existsSync(spigotPath)) {
-            fs.writeFileSync(spigotPath, this._generateSpigotYml(), 'utf8');
+            const spigotPath = path.join(schemePath, 'spigot.yml');
+            if (!fs.existsSync(spigotPath)) {
+                fs.writeFileSync(spigotPath, this._generateSpigotYml(), 'utf8');
+            }
         }
     }
 

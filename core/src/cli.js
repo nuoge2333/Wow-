@@ -2992,6 +2992,15 @@ async function autoStartWebIfEnabled() {
     // 每次启动 CLI（无参数菜单 / 任意子命令 / L REPL）都先轮换 Web 登录密钥
     rotateWebAuthTokenOnStart();
 
+    // V3.9.x：系统启动时对所有方案做一次旧存档自动迁移（幂等、防丢档）。
+    // 只搬「根目录有 world/ 且 level-name 指向 world」的方案；失败静默降级，不影响启动。
+    try {
+        const WM = load('./world_manager');
+        if (WM && typeof WM.migrateAllLegacyWorlds === 'function') {
+            WM.migrateAllLegacyWorlds(utils.resolvePath('../scheme'));
+        }
+    } catch (e) { /* 存档迁移失败绝不能阻断 CLI 启动 */ }
+
     // V3.5.8：无参数运行（如 ./wow.sh / wow.bat）直接进入数字选择菜单。
     // 长命令 REPL 已移至 `wow L`（见上方命令定义）。
     if (process.argv.length <= 2) {

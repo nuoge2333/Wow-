@@ -35,6 +35,12 @@ const SCHEMA = [
         desc: '开启后，创建方案会自动切换过去，并自动补齐 / 瘦身资源；关闭后一切由你手动决定（执行 pull / prune 后会自动关闭）。'
     },
     {
+        key: 'compress_mod_libraries', type: 'boolean', group: '基础',
+        label: '整体压缩模组依赖库',
+        desc: '模组端（Forge/NeoForge/Fabric/Quilt）依赖库结构复杂，为保障稳定默认不拆分瘦身。开启此项后，瘦身为「整体压缩 libraries 目录」：把整棵 libraries 打成单个压缩包，切换方案时整包解压还原（牺牲切换速度换取空间），绝不逐文件增量解压。默认关闭。',
+        advanced: true
+    },
+    {
         key: 'verbose', type: 'boolean', group: '基础', label: '详细日志',
         desc: '开启后 CLI 会输出更多调试信息，排查问题时有用，平时建议关闭。'
     },

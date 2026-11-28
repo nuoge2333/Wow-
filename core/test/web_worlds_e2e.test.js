@@ -56,10 +56,9 @@ const PNG_B64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8D
     // 让 scheme_manager / utils 把方案根指向测试目录：
     // 由于 utils.resolvePath 固定到项目 scheme/，测试方案即 scheme/<TEST_SCHEME>，已由 root 提供。
     fs.writeFileSync(path.join(root, 'scheme.yaml'), `name: ${TEST_SCHEME}\nversion: 1.20.1\nloader: vanilla\n`);
-    fs.writeFileSync(path.join(root, 'server.properties'), '# 测试配置\nlevel-name=world\n');
-    fs.ensureDirSync(path.join(root, 'world'));
-    fs.writeFileSync(path.join(root, 'world', 'level.dat'), 'OLD');
 
+    // V3.9.x：startWeb 现在会在启动时对所有方案做一次全局旧存档迁移。
+    // 因此在 startWeb 之后再造旧 world，专门验证 GET /api/worlds 的兜底迁移路径。
     await webService.startWeb({ port: PORT, host: '127.0.0.1' });
     await new Promise(r => setTimeout(r, 800));
 
@@ -67,6 +66,9 @@ const PNG_B64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8D
 
     // ── 存档列表 + 自动迁移 ──
     console.log('— GET /api/worlds —');
+    fs.writeFileSync(path.join(root, 'server.properties'), '# 测试配置\nlevel-name=world\n');
+    fs.ensureDirSync(path.join(root, 'world'));
+    fs.writeFileSync(path.join(root, 'world', 'level.dat'), 'OLD');
     let r = await req('GET', '/api/worlds');
     check('列表成功', r.status === 200 && r.data.success, JSON.stringify(r.data));
     check('自动迁移旧 world', r.data && r.data.migration && r.data.migration.migrated === true, JSON.stringify(r.data && r.data.migration));

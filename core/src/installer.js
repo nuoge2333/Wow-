@@ -497,9 +497,52 @@ class Installer {
 
         await this._copyToPool(type, mc, serverJarAbs);
 
-        // 清理安装器 jar（可选，保留也无妨；这里删除避免混淆）
-        try { fs.removeSync(installerPath); } catch (e) {}
+        // 安装完成后的废弃文件清理（installer jar + Forge/NeoForge 不再需要的根目录原版核心）
+        this.cleanupInstallerArtifacts(installDir, type, { serverJarAbs });
         return serverJarAbs;
+    }
+
+    /**
+     * 模组端安装/拉取完成后的废弃文件清理。
+     *
+     * 1) 安装器 jar（*-installer.jar）：下载完就没用了，一律删除，避免混淆与误选核心。
+     * 2) 根目录原版核心 minecraft_server.*.jar：
+     *    - Forge/NeoForge 用 @args 方式启动、原版核心已在 libraries/ 内，根目录副本不再需要 → 删除。
+     *    - Fabric/Quilt 的运行启动器需要复用根目录原版核心（见 _ensureVanillaAtRoot）→ 保留。
+     *    - 仅当确认模组核心已成功生成（serverJarAbs 存在）才删，避免安装异常时误删兜底核心。
+     *
+     * 全流程幂等、吞掉单文件删除异常，绝不影响主安装流程。
+     * @param {string} installDir 方案/安装目录
+     * @param {string} type       核心类型（forge/neoforge/fabric/quilt）
+     * @param {{serverJarAbs?:string}} opts
+     * @returns {{removed:string[], kept:string[]}}
+     */
+    cleanupInstallerArtifacts(installDir, type, opts = {}) {
+        const result = { removed: [], kept: [] };
+        try {
+            if (!installDir || !fs.existsSync(installDir)) return result;
+            const isForgeFamily = type === 'forge' || type === 'neoforge';
+            const coreReady = Boolean(opts.serverJarAbs && fs.existsSync(opts.serverJarAbs));
+
+            for (const name of fs.readdirSync(installDir)) {
+                const full = path.join(installDir, name);
+                let isFile = false;
+                try { isFile = fs.statSync(full).isFile(); } catch (e) { continue; }
+                if (!isFile) continue;
+
+                // 安装器 jar：所有类型都删（forge-/neoforge-/fabric-/quilt- installer）
+                if (/-installer(?:-[^\\/]*)?\.jar$/i.test(name)) {
+                    try { fs.removeSync(full); result.removed.push(name); } catch (e) { result.kept.push(name); }
+                    continue;
+                }
+
+                // 根目录原版核心：仅 Forge/NeoForge 且确认核心已就位时删除
+                if (isForgeFamily && coreReady && /^minecraft_server\..*\.jar$/i.test(name)) {
+                    try { fs.removeSync(full); result.removed.push(name); } catch (e) { result.kept.push(name); }
+                }
+            }
+        } catch (e) { /* 清理是收尾动作，失败不影响主流程 */ }
+        return result;
     }
 
     /**
